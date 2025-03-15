@@ -21,6 +21,11 @@ public class FeeStructureController {
         return ResponseEntity.ok(feeStructureService.getAllRecords());
     }
 
+    @GetMapping("/{academicYear}/{className}")
+    public ResponseEntity<FeeStructure> getAllRecords(@PathVariable String academicYear, @PathVariable String className) {
+        return ResponseEntity.ok(feeStructureService.getFeeStructuresByAcademicYearAndClassName(academicYear, className));
+    }
+
     @GetMapping("/{academicYear}")
     public ResponseEntity<List<FeeStructure>> getFeeStructuresByYear(@PathVariable String academicYear) {
         List<FeeStructure> feeStructures = feeStructureService.getFeeStructuresByAcademicYear(academicYear);

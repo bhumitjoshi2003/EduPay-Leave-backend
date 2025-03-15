@@ -23,6 +23,10 @@ public class FeeStructureService {
         return feeStructureRepository.findByAcademicYear(academicYear);
     }
 
+    public FeeStructure getFeeStructuresByAcademicYearAndClassName(String academicYear, String className) {
+        return feeStructureRepository.findByAcademicYearAndClassName(academicYear, className);
+    }
+
     @Transactional
     public List<FeeStructure> updateFeeStructures(String academicYear, List<FeeStructure> updatedFees) {
         List<FeeStructure> existingFees = feeStructureRepository.findByAcademicYear(academicYear);
