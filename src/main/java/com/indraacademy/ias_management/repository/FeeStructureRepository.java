@@ -11,5 +11,7 @@ public interface FeeStructureRepository extends JpaRepository<FeeStructure, Long
 
     List<FeeStructure> findByAcademicYear(String academicYear);
 
+    FeeStructure findByAcademicYearAndClassName(String academicYear, String className);
+
     void deleteByAcademicYear(String academicYear);
 }

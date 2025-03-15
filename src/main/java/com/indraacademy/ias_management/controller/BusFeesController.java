@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @RestController
@@ -26,6 +27,11 @@ public class BusFeesController {
     public ResponseEntity<List<BusFees>> getFeesByYear(@PathVariable String academicYear) {
         List<BusFees> fees = busFeesService.getBusFeesByAcademicYear(academicYear);
         return ResponseEntity.ok(fees);
+    }
+
+    @GetMapping("/{distance}/{academicYear}")
+    public BigDecimal getBusFees(@PathVariable Double distance, @PathVariable String academicYear) {
+        return busFeesService.getBusFeesOfDistance(distance, academicYear);
     }
 
     @PutMapping("/{academicYear}")
