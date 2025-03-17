@@ -1,13 +1,11 @@
 package com.indraacademy.ias_management.controller;
 
-
 import com.indraacademy.ias_management.service.RazorpayService;
-import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
-
 
 @RestController
 @RequestMapping("/api/payments")
@@ -18,13 +16,36 @@ public class PaymentController {
     private RazorpayService razorpayService;
 
     @PostMapping("/create")
-    public Map<String, Object> createOrder(@RequestBody Map<String, Integer> data) {
-        int amount = data.get("amount");
-        return razorpayService.createOrder(amount);
+    public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, Object> requestBody) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> paymentData = (Map<String, Object>) requestBody.get("paymentData");
+
+        int amount = (int) paymentData.get("totalAmount");
+        String studentId = (String) paymentData.get("studentId");
+        String studentName = (String) paymentData.get("studentName");
+        String className = (String) paymentData.get("className");
+        String session = (String) paymentData.get("session");
+        String month = (String) paymentData.get("monthSelectionString");
+        System.out.println(paymentData);
+        int busFee = (int) paymentData.get("totalBusFee");
+        int tuitionFee = (int) paymentData.get("totalTuitionFee");
+        int annualCharges = (int) paymentData.get("totalAnnualCharges");
+        int labCharges = (int) paymentData.get("totalLabCharges");
+        int ecaProject = (int) paymentData.get("totalEcaProject");
+        int examinationFee = (int) paymentData.get("totalExaminationFee");
+
+        Map<String, Object> order = razorpayService.createOrder(amount, studentId, studentName, className, session, month, busFee, tuitionFee, annualCharges, labCharges, ecaProject, examinationFee);
+        return ResponseEntity.ok(order);
     }
 
     @PostMapping("/verify")
-    public Map<String, Object> verifyPayment(@RequestBody Map<String, String> paymentData) {
-        return razorpayService.verifyPayment(paymentData);
+    public ResponseEntity<Map<String, Object>> verifyPayment(@RequestBody Map<String, Object> requestBody) {
+        @SuppressWarnings("unchecked")
+        Map<String, String> paymentData = (Map<String, String>) requestBody.get("paymentResponse");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> orderDetails = (Map<String, Object>) requestBody.get("orderDetails");
+
+        Map<String, Object> result = razorpayService.verifyPayment(paymentData, orderDetails);
+        return ResponseEntity.ok(result);
     }
 }
