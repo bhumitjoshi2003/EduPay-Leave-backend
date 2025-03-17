@@ -16,4 +16,8 @@ public class StudentService {
     public Optional<Student> getStudent(String studentId) {
         return studentRepository.findById(studentId);
     }
+
+    public Student updateStudent(Student student) {
+        return studentRepository.save(student);
+    }
 }

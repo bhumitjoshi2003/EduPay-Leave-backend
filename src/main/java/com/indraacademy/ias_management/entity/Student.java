@@ -35,6 +35,9 @@ public class Student {
     @Column(name = "gender")
     private String gender;
 
+    @Column(name = "new_admission")
+    private boolean newAdmission;
+
     @Column(name = "father_name")
     private String fatherName;
 
@@ -63,6 +66,10 @@ public class Student {
         this.motherName = motherName;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+    }
+
+    public boolean isNewAdmission() {
+        return newAdmission;
     }
 
     public String getStudentId() {
@@ -135,6 +142,10 @@ public class Student {
 
     public void setGender(String gender) {
         this.gender = gender;
+    }
+
+    public void setNewAdmission(boolean newAdmission) {
+        this.newAdmission = newAdmission;
     }
 
     public void setFatherName(String fatherName) {

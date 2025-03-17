@@ -22,4 +22,16 @@ public class StudentController {
         return student.map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
+
+    @PutMapping("/{studentId}")
+    public ResponseEntity<Student> updateStudent(@PathVariable String studentId, @RequestBody Student updatedStudent) {
+        Optional<Student> existingStudent = studentService.getStudent(studentId);
+        if (existingStudent.isPresent()) {
+            Student savedStudent = studentService.updateStudent(updatedStudent);
+            return ResponseEntity.ok(savedStudent);
+        } else {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
+
