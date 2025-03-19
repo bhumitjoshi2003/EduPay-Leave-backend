@@ -1,10 +1,14 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.dto.PaymentHistoryDTO;
+import com.indraacademy.ias_management.dto.PaymentResponseDTO;
+import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -14,6 +18,9 @@ public class PaymentController {
 
     @Autowired
     private RazorpayService razorpayService;
+
+    @Autowired
+    private PaymentService paymentService;
 
     @PostMapping("/create")
     public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, Object> requestBody) {
@@ -47,5 +54,21 @@ public class PaymentController {
 
         Map<String, Object> result = razorpayService.verifyPayment(paymentData, orderDetails);
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/history/{studentId}")
+    public ResponseEntity<List<PaymentHistoryDTO>> getPaymentHistory(
+            @PathVariable String studentId) {
+        List<PaymentHistoryDTO> history = paymentService.getPaymentHistory(studentId);
+        return ResponseEntity.ok(history);
+    }
+
+    @GetMapping("/history/details/{paymentId}")
+    public ResponseEntity<PaymentResponseDTO> getPaymentHistoryDetails(@PathVariable String paymentId) {
+        PaymentResponseDTO dto = paymentService.getPaymentHistoryDetails(paymentId);
+        if (dto == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(dto);
     }
 }

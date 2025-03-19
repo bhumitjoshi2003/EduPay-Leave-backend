@@ -82,7 +82,7 @@ public class RazorpayService {
                 payment.setLabCharges((Integer) orderDetails.get("labCharges"));
                 payment.setEcaProject((Integer) orderDetails.get("ecaProject"));
                 payment.setExaminationFee((Integer) orderDetails.get("examinationFee"));
-
+                payment.setRazorpaySignature(signature);
                 System.out.println("working for hari");
 
                 paymentRepository.save(payment);
