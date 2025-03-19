@@ -61,6 +61,9 @@ public class Payment {
     @Column(name = "examination_fee")
     private int examinationFee;
 
+    @Column(name = "razorpay_signature", nullable = false)
+    private String razorpaySignature;
+
     // Constructors, getters, setters
     public Payment() {
         this.paymentDate = LocalDateTime.now();
@@ -154,6 +157,10 @@ public class Payment {
         return examinationFee;
     }
 
+    public String getRazorpaySignature() {
+        return razorpaySignature;
+    }
+
     public void setStudentId(String studentId) {
         this.studentId = studentId;
     }
@@ -216,5 +223,9 @@ public class Payment {
 
     public void setEcaProject(int ecaProject) {
         this.ecaProject = ecaProject;
+    }
+
+    public void setRazorpaySignature(String razorpaySignature) {
+        this.razorpaySignature = razorpaySignature;
     }
 }
