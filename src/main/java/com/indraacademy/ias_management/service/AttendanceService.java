@@ -6,7 +6,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class AttendanceService {
@@ -21,5 +23,15 @@ public class AttendanceService {
 
     public List<Attendance> getAttendanceByDateAndClass(LocalDate absentDate, String className) {
         return attendanceRepository.findByAbsentDateAndClassName(absentDate, className);
+    }
+
+    public Map<String, Long> getAttendanceCounts(String studentId, int year, int month) {
+        long studentAbsentCount = attendanceRepository.countAbsences(studentId, year, month);
+        long totalAbsentCount = attendanceRepository.countAbsences("X", year, month);
+
+        Map<String, Long> counts = new HashMap<>();
+        counts.put("studentAbsent", studentAbsentCount);
+        counts.put("totalAbsent", totalAbsentCount);
+        return counts;
     }
 }

@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+
 
 @RestController
 @RequestMapping("/attendance")
@@ -35,5 +37,11 @@ public class AttendanceController {
             @PathVariable String className) {
         List<Attendance> attendanceList = attendanceService.getAttendanceByDateAndClass(absentDate, className);
         return ResponseEntity.ok(attendanceList);
+    }
+
+    @GetMapping("/counts/{studentId}/{year}/{month}")
+    public ResponseEntity<Map<String, Long>> getAttendanceCounts(@PathVariable String studentId, @PathVariable int year, @PathVariable int month) {
+        Map<String, Long> counts = attendanceService.getAttendanceCounts(studentId, year, month);
+        return ResponseEntity.ok(counts);
     }
 }
