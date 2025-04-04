@@ -26,8 +26,6 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(new AntPathRequestMatcher("/api/auth/**")).permitAll()
-                        .requestMatchers(new AntPathRequestMatcher("/bus-fees/**")).permitAll()
-                        .requestMatchers("/fee-structure").authenticated()
                         .requestMatchers(new AntPathRequestMatcher("/api/**")).authenticated()
                         .anyRequest().authenticated()
                 )
