@@ -24,9 +24,6 @@ public class AuthController {
     @Autowired private JavaMailSender mailSender;
     @Autowired private JwtUtil jwtUtil; //add this autowired
 
-    @Value("${jwt.secret-key}")
-    private String secretKey;
-
     @GetMapping("/hari")
     public String message() {
         return "HARIBOL";
