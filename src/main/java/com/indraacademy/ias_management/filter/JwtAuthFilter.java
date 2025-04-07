@@ -1,11 +1,13 @@
 package com.indraacademy.ias_management.filter;
 
 import com.indraacademy.ias_management.util.JwtUtil;
+import io.jsonwebtoken.ExpiredJwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -36,27 +38,38 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader("Authorization");
         String token = null;
-        String studentId = null; // Changed to studentId
+        String studentId = null;
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             token = authHeader.substring(7);
-            studentId = jwtUtil.extractStudentId(token); // Changed to extractStudentId
-            System.out.println("JWT from Request: " + token); // Log the JWT
-            System.out.println("Extracted studentId: " + studentId); // Log the extracted studentId
+            try {
+                studentId = jwtUtil.extractStudentId(token);
+                System.out.println("JWT from Request: " + token);
+                System.out.println("Extracted studentId: " + studentId);
+            } catch (ExpiredJwtException e) {
+                response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                response.getWriter().write("{\"message\": \"Token Expired\"}");
+                return;
+            } catch (Exception e) {
+                // Other JWT parsing errors
+                response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                return;
+            }
+
         }
 
         if (studentId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
-                UserDetails userDetails = userDetailsService.loadUserByUsername(studentId); // Changed to studentId
+                UserDetails userDetails = userDetailsService.loadUserByUsername(studentId);
                 if (jwtUtil.validateToken(token, userDetails)) {
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authToken);
-                    System.out.println("JWT Valid"); // log if JWT is valid
+                    System.out.println("JWT Valid");
                 } else {
-                    System.out.println("JWT Invalid"); // log if JWT is invalid
+                    System.out.println("JWT Invalid");
                 }
-            } catch (Exception e){
+            } catch (Exception e) {
                 System.out.println("Error loading user: " + e.getMessage());
             }
         }
