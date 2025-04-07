@@ -19,9 +19,6 @@ public class StudentFees {
     @Column(name = "class_name")
     private String className;
 
-    @Column(name = "discount")
-    private Double discount;
-
     @Column(name = "month")
     private Integer month;
 
@@ -39,10 +36,9 @@ public class StudentFees {
 
     public StudentFees() { }
 
-    public StudentFees(String studentId, String className, Double discount, Integer month, Boolean paid, Boolean takesBus, String year, Double distance) {
+    public StudentFees(String studentId, String className, Integer month, Boolean paid, Boolean takesBus, String year, Double distance) {
         this.studentId = studentId;
         this.className = className;
-        this.discount = discount;
         this.month = month;
         this.paid = paid;
         this.takesBus = takesBus;
@@ -60,10 +56,6 @@ public class StudentFees {
 
     public String getClassName() {
         return className;
-    }
-
-    public Double getDiscount() {
-        return discount;
     }
 
     public Integer getMonth() {
@@ -96,10 +88,6 @@ public class StudentFees {
 
     public void setClassName(String className) {
         this.className = className;
-    }
-
-    public void setDiscount(Double discount) {
-        this.discount = discount;
     }
 
     public void setMonth(Integer month) {
