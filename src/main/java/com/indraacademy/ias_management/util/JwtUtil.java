@@ -7,7 +7,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
 
-import java.security.Key;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -80,7 +79,7 @@ public class JwtUtil {
                 .compact();
     }
 
-    public PrivateKey getPrivateKey() { // Make public
+    public PrivateKey getPrivateKey() {
         try {
             byte[] keyBytes = Base64.getDecoder().decode(privateKey);
             PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
@@ -91,7 +90,7 @@ public class JwtUtil {
         }
     }
 
-    public PublicKey getPublicKey() { // Make public
+    public PublicKey getPublicKey() {
         try {
             byte[] keyBytes = Base64.getDecoder().decode(publicKey);
             X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
