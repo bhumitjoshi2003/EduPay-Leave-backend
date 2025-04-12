@@ -38,14 +38,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader("Authorization");
         String token = null;
-        String studentId = null;
+        String userId = null;
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             token = authHeader.substring(7);
             try {
-                studentId = jwtUtil.extractStudentId(token);
+                userId = jwtUtil.extractUserId(token);
                 System.out.println("JWT from Request: " + token);
-                System.out.println("Extracted studentId: " + studentId);
+                System.out.println("Extracted studentId: " + userId);
             } catch (ExpiredJwtException e) {
                 response.setStatus(HttpStatus.UNAUTHORIZED.value());
                 response.getWriter().write("{\"message\": \"Token Expired\"}");
@@ -58,9 +58,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         }
 
-        if (studentId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+        if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
-                UserDetails userDetails = userDetailsService.loadUserByUsername(studentId);
+                UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
                 if (jwtUtil.validateToken(token, userDetails)) {
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                     authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
