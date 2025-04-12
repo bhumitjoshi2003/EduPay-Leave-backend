@@ -28,6 +28,14 @@ INSERT INTO student (student_id, name, email, phone_number, dob, class_name, gen
 ('S110', 'Julia Thomas', 'julia.thomas@example.com', '888-999-0000', '2010-07-08', '1', 'Female', 'Christopher Thomas', 'Margaret Thomas');
 
 
+INSERT INTO teacher (teacher_id, name, email, phone_number, dob, gender, class_teacher, created_at, updated_at) VALUES
+('T101', 'Mr. John Smith', 'john.smith@example.com', '987-654-3210', '1985-08-20', 'Male', '1', NOW(), NOW()),
+('T102', 'Ms. Jane Doe', 'jane.doe@example.com', '555-123-4567', '1992-03-10', 'Female', '2', NOW(), NOW()),
+('T103', 'Mr. David Lee', 'david.lee@example.com', '111-222-3333', '1988-11-25', 'Male', '3', NOW(), NOW()),
+('T104', 'Ms. Sarah Williams', 'sarah.williams@example.com', '444-555-6666', '1990-07-01', 'Female', '4', NOW(), NOW()),
+('T105', 'Mr. Michael Brown', 'michael.brown@example.com', '777-888-9999', '1987-04-05', 'Male', NULL, NOW(), NOW());
+
+
 
 INSERT INTO sibling (student_id, sibling_id) VALUES
 ('S101', 'S102'),
