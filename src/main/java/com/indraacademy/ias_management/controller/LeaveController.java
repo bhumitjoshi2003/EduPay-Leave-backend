@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/leaves")
@@ -40,5 +41,25 @@ public class LeaveController {
     @GetMapping("/{studentId}")
     public ResponseEntity<List<Leave>> getLeavesByStudentId(@PathVariable String studentId){
         return ResponseEntity.ok(leaveService.getLeavesByStudentId(studentId));
+    }
+
+    @GetMapping("/all")
+    public ResponseEntity<List<Leave>> getAllLeaves() {
+        return ResponseEntity.ok(leaveService.getAllLeaves());
+    }
+
+    @GetMapping("/class/{className}")
+    public ResponseEntity<List<Leave>> getLeavesByClass(@PathVariable String className) {
+        return ResponseEntity.ok(leaveService.getLeavesByClass(className));
+    }
+
+    @DeleteMapping("/{leaveId}")
+    public ResponseEntity<String> deleteLeaveById(@PathVariable Long leaveId) {
+        Optional<Leave> leaveOptional = leaveService.getLeaveById(leaveId);
+        if (leaveOptional.isEmpty()) {
+            return new ResponseEntity<>("Leave application not found", HttpStatus.NOT_FOUND);
+        }
+        leaveService.deleteLeaveById(leaveId);
+        return new ResponseEntity<>("Leave application deleted successfully", HttpStatus.OK);
     }
 }
