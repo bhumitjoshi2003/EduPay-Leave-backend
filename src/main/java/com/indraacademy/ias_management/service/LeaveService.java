@@ -10,6 +10,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class LeaveService {
@@ -32,5 +33,21 @@ public class LeaveService {
 
     public List<Leave> getLeavesByStudentId(String studentId){
         return leaveRepository.findByStudentId(studentId);
+    }
+
+    public List<Leave> getAllLeaves() {
+        return leaveRepository.findAll();
+    }
+
+    public List<Leave> getLeavesByClass(String className) {
+        return leaveRepository.findByClassName(className);
+    }
+
+    public void deleteLeaveById(Long leaveId) {
+        leaveRepository.deleteById(leaveId);
+    }
+
+    public Optional<Leave> getLeaveById(Long leaveId) {
+        return leaveRepository.findById(leaveId);
     }
 }

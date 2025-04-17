@@ -18,4 +18,6 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
     void deleteByStudentIdAndLeaveDate(String studentId, String leaveDate);
 
     List<Leave> findByStudentId(String studentId);
+
+    List<Leave> findByClassName(String className);
 }
