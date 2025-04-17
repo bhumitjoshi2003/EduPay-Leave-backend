@@ -1,0 +1,54 @@
+package com.indraacademy.ias_management.controller;
+
+import com.indraacademy.ias_management.entity.Admin;
+import com.indraacademy.ias_management.service.AdminService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Optional;
+import java.util.List;
+
+@RestController
+@RequestMapping("/admins")
+@CrossOrigin(origins = "http://localhost:4200")
+public class AdminController {
+
+    @Autowired
+    private AdminService adminService;
+
+    @GetMapping("/{adminId}")
+    public ResponseEntity<Admin> getAdmin(@PathVariable String adminId) {
+        Optional<Admin> admin = adminService.getAdminById(adminId);
+        return admin.map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @GetMapping
+    public ResponseEntity<List<Admin>> getAllAdmins() {
+        List<Admin> admins = adminService.getAllAdmins();
+        return ResponseEntity.ok(admins);
+    }
+
+    @PostMapping
+    public ResponseEntity<Admin> createAdmin(@RequestBody Admin admin) {
+        Admin createdAdmin = adminService.createAdmin(admin);
+        return ResponseEntity.ok(createdAdmin);
+    }
+
+    @PutMapping("/{adminId}")
+    public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin) {
+        Admin updatedAdmin = adminService.updateAdmin(adminId, admin);
+        if (updatedAdmin != null) {
+            return ResponseEntity.ok(updatedAdmin);
+        } else {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/{adminId}")
+    public ResponseEntity<Void> deleteAdmin(@PathVariable String adminId) {
+        adminService.deleteAdmin(adminId);
+        return ResponseEntity.noContent().build();
+    }
+}

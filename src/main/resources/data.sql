@@ -36,6 +36,10 @@ INSERT INTO teacher (teacher_id, name, email, phone_number, dob, gender, class_t
 ('T105', 'Mr. Michael Brown', 'michael.brown@example.com', '777-888-9999', '1987-04-05', 'Male', NULL, NOW(), NOW());
 
 
+INSERT INTO admin (admin_id, name, email, phone_number, dob, gender, created_at, updated_at) VALUES
+('A101', 'Jane Doe', 'jane.doe@example.com', '555-123-4567', '1990-05-15', 'Female', NOW(), NOW()),
+('A102', 'John Smith', 'john.smith@example.com', '987-654-3210', '1988-10-22', 'Male', NOW(), NOW());
+
 
 INSERT INTO sibling (student_id, sibling_id) VALUES
 ('S101', 'S102'),
