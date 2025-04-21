@@ -64,13 +64,21 @@ public class Payment {
     @Column(name = "razorpay_signature", nullable = false)
     private String razorpaySignature;
 
+    @Column(name= "paid_manually")
+    private boolean paidManually;
+
+    @Column(name= "amount_paid")
+    private int amountPaid;
+
+
+
     // Constructors, getters, setters
     public Payment() {
         this.paymentDate = LocalDateTime.now();
         this.status = "success";
     }
 
-    public Payment(String studentId, String studentName, String className, String session, String month, int amount, String paymentId, String orderId, LocalDateTime paymentDate, String status, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee) {
+    public Payment(String studentId, String studentName, String className, String session, String month, int amount, String paymentId, String orderId, LocalDateTime paymentDate, String status, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, boolean paidManually, int amountPaid) {
         this.studentId = studentId;
         this.studentName = studentName;
         this.className = className;
@@ -87,6 +95,8 @@ public class Payment {
         this.labCharges = labCharges;
         this.ecaProject = ecaProject;
         this.examinationFee = examinationFee;
+        this.paidManually = paidManually;
+        this.amountPaid = amountPaid;
     }
 
     public Long getId() {
@@ -227,5 +237,21 @@ public class Payment {
 
     public void setRazorpaySignature(String razorpaySignature) {
         this.razorpaySignature = razorpaySignature;
+    }
+
+    public int getAmountPaid() {
+        return amountPaid;
+    }
+
+    public boolean isPaidManually() {
+        return paidManually;
+    }
+
+    public void setPaidManually(boolean paidManually) {
+        this.paidManually = paidManually;
+    }
+
+    public void setAmountPaid(int amountPaid) {
+        this.amountPaid = amountPaid;
     }
 }

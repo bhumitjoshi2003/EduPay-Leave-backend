@@ -50,6 +50,8 @@ public class RazorpayService {
             response.put("labCharges", labCharges);
             response.put("ecaProject", ecaProject);
             response.put("examinationFee", examinationFee);
+            response.put("paidManually", false);
+            response.put("amountPaid", order.get("amount"));
             return response;
         } catch (Exception e) {
             throw new RuntimeException("Razorpay Order Creation Failed", e);
@@ -82,6 +84,8 @@ public class RazorpayService {
                 payment.setLabCharges((Integer) orderDetails.get("labCharges"));
                 payment.setEcaProject((Integer) orderDetails.get("ecaProject"));
                 payment.setExaminationFee((Integer) orderDetails.get("examinationFee"));
+                payment.setPaidManually(false);
+                payment.setAmountPaid((Integer) orderDetails.get("amount")/100);
                 payment.setRazorpaySignature(signature);
                 System.out.println("working for hari");
 

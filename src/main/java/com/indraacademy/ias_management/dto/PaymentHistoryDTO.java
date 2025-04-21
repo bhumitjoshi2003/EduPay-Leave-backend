@@ -3,22 +3,40 @@ package com.indraacademy.ias_management.dto;
 import java.time.LocalDateTime;
 
 public class PaymentHistoryDTO {
+    private String studentId;
+    private String studentName;
     private String paymentId;
-    private String orderId;
-    private int amount;
+    private int amountPaid;
     private LocalDateTime paymentDate;
     private String status;
+    private String className;
 
+    public PaymentHistoryDTO() { }
 
-    public PaymentHistoryDTO() {
-    }
-
-    public PaymentHistoryDTO(String paymentId, String orderId, int amount, LocalDateTime paymentDate, String status) {
+    public PaymentHistoryDTO(String studentId, String studentName, String paymentId, int amountPaid, LocalDateTime paymentDate, String status, String className) {
+        this.studentId = studentId;
+        this.studentName = studentName;
         this.paymentId = paymentId;
-        this.orderId = orderId;
-        this.amount = amount;
+        this.amountPaid = amountPaid;
         this.paymentDate = paymentDate;
         this.status = status;
+        this.className = className;
+    }
+
+    public String getStudentId() {
+        return studentId;
+    }
+
+    public void setStudentId(String studentId) {
+        this.studentId = studentId;
+    }
+
+    public String getStudentName() {
+        return studentName;
+    }
+
+    public void setStudentName(String studentName) {
+        this.studentName = studentName;
     }
 
     public String getPaymentId() {
@@ -29,20 +47,12 @@ public class PaymentHistoryDTO {
         this.paymentId = paymentId;
     }
 
-    public String getOrderId() {
-        return orderId;
+    public int getAmountPaid() {
+        return amountPaid;
     }
 
-    public void setOrderId(String orderId) {
-        this.orderId = orderId;
-    }
-
-    public int getAmount() {
-        return amount;
-    }
-
-    public void setAmount(int amount) {
-        this.amount = amount;
+    public void setAmountPaid(int amountPaid) {
+        this.amountPaid = amountPaid;
     }
 
     public LocalDateTime getPaymentDate() {
@@ -59,5 +69,13 @@ public class PaymentHistoryDTO {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getClassName() {
+        return className;
+    }
+
+    public void setClassName(String className) {
+        this.className = className;
     }
 }
