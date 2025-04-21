@@ -71,4 +71,17 @@ public class PaymentController {
         }
         return ResponseEntity.ok(dto);
     }
+
+    @GetMapping("/history/all")
+    public ResponseEntity<List<PaymentHistoryDTO>> getAllPaymentHistory() {
+        List<PaymentHistoryDTO> allHistory = paymentService.getAllPaymentHistory();
+        return ResponseEntity.ok(allHistory);
+    }
+
+    @GetMapping("/history/class/{className}")
+    public ResponseEntity<List<PaymentHistoryDTO>> getPaymentHistoryByClass(
+            @PathVariable String className) {
+        List<PaymentHistoryDTO> classHistory = paymentService.getPaymentHistoryByClass(className);
+        return ResponseEntity.ok(classHistory);
+    }
 }
