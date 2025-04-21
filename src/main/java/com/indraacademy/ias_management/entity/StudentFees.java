@@ -34,7 +34,16 @@ public class StudentFees {
     @Column(name = "distance")
     private Double distance;
 
-    public StudentFees() { }
+    @Column(name = "manually_paid")
+    private Boolean manuallyPaid;
+
+    @Column(name = "manual_payment_received")
+    private BigDecimal manualPaymentReceived;
+
+    public StudentFees() {
+        this.manuallyPaid = false;
+        this.manualPaymentReceived = null;
+    }
 
     public StudentFees(String studentId, String className, Integer month, Boolean paid, Boolean takesBus, String year, Double distance) {
         this.studentId = studentId;
@@ -44,6 +53,8 @@ public class StudentFees {
         this.takesBus = takesBus;
         this.year = year;
         this.distance = distance;
+        this.manuallyPaid = false; // Initialize to false
+        this.manualPaymentReceived = null; // Initialize to null
     }
 
     public Long getId() {
@@ -78,6 +89,14 @@ public class StudentFees {
         return distance;
     }
 
+    public Boolean getManuallyPaid() {
+        return manuallyPaid;
+    }
+
+    public BigDecimal getManualPaymentReceived() {
+        return manualPaymentReceived;
+    }
+
     public void setDistance(Double distance) {
         this.distance = distance;
     }
@@ -104,5 +123,13 @@ public class StudentFees {
 
     public void setYear(String year) {
         this.year = year;
+    }
+
+    public void setManuallyPaid(Boolean manuallyPaid) {
+        this.manuallyPaid = manuallyPaid;
+    }
+
+    public void setManualPaymentReceived(BigDecimal manualPaymentReceived) {
+        this.manualPaymentReceived = manualPaymentReceived;
     }
 }
