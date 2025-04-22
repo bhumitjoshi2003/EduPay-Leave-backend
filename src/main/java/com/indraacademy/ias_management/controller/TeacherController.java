@@ -22,5 +22,4 @@ public class TeacherController {
         return teacher.map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
-
 }

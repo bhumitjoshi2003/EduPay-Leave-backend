@@ -20,6 +20,9 @@ public class StudentFeesService {
     }
 
     public StudentFees updateStudentFees(StudentFees studentFees) {
+        studentFees.setManuallyPaid(studentFees.getManuallyPaid());
+        studentFees.setManualPaymentReceived(studentFees.getManualPaymentReceived());
+        System.out.println("Saving fees with manualPaymentReceived: " + studentFees.getManualPaymentReceived());
         return studentFeesRepository.save(studentFees);
     }
 
