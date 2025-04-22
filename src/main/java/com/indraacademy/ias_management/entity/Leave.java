@@ -20,6 +20,9 @@ public class Leave {
     @Column(name = "student_id", nullable = false)
     private String studentId;
 
+    @Column(name = "student_name", nullable = false)
+    private String studentName;
+
     @Column(name = "leave_date", nullable = false)
     private String leaveDate;
 
@@ -35,13 +38,13 @@ public class Leave {
 
     public Leave(){}
 
-    public Leave(String studentId, String leaveDate, String reason, String className) {
+    public Leave(String studentId, String studentName, String leaveDate, String reason, String className) {
         this.studentId = studentId;
+        this.studentName = studentName;
         this.leaveDate = leaveDate;
         this.reason = reason;
         this.className = className;
     }
-
 
     public Long getId() {
         return id;
@@ -79,11 +82,13 @@ public class Leave {
         this.reason = reason;
     }
 
-    public void setAppliedDate(LocalDateTime appliedDate) {
-        this.appliedDate = appliedDate;
-    }
+    public void setAppliedDate(LocalDateTime appliedDate) { this.appliedDate = appliedDate; }
 
     public void setClassName(String className) {
         this.className = className;
     }
+
+    public String getStudentName() { return studentName; }
+
+    public void setStudentName(String studentName) { this.studentName = studentName; }
 }

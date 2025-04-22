@@ -45,7 +45,7 @@ public class StudentFees {
         this.manualPaymentReceived = null;
     }
 
-    public StudentFees(String studentId, String className, Integer month, Boolean paid, Boolean takesBus, String year, Double distance) {
+    public StudentFees(String studentId, String className, Integer month, Boolean paid, Boolean takesBus, String year, Double distance, BigDecimal manualPaymentReceived) {
         this.studentId = studentId;
         this.className = className;
         this.month = month;
@@ -53,8 +53,8 @@ public class StudentFees {
         this.takesBus = takesBus;
         this.year = year;
         this.distance = distance;
-        this.manuallyPaid = false; // Initialize to false
-        this.manualPaymentReceived = null; // Initialize to null
+        this.manuallyPaid = false;
+        this.manualPaymentReceived = manualPaymentReceived;
     }
 
     public Long getId() {

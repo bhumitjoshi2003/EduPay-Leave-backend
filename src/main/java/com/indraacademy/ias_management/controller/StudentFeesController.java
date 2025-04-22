@@ -94,6 +94,7 @@ public class StudentFeesController {
 
     @PutMapping("/")
     public ResponseEntity<StudentFees> updateStudentFees(@RequestBody StudentFees studentFees) {
+        System.out.println("Received updatedFees: " + studentFees); // Add this logging
         return ResponseEntity.ok(studentFeesService.updateStudentFees(studentFees));
     }
 
