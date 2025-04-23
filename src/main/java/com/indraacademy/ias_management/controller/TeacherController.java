@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.service.TeacherService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,6 +17,16 @@ public class TeacherController {
 
     @Autowired
     private TeacherService teacherService;
+
+    @PostMapping
+    public ResponseEntity<?> registerTeacher(@RequestBody Teacher newTeacher) {
+        try {
+            Teacher savedTeacher = teacherService.addTeacher(newTeacher);
+            return new ResponseEntity<>(savedTeacher, HttpStatus.CREATED);
+        } catch (IllegalArgumentException e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.CONFLICT); // 409 Conflict
+        }
+    }
 
     @GetMapping("/{teacherId}")
     public ResponseEntity<Teacher> getTeacher(@PathVariable String teacherId) {

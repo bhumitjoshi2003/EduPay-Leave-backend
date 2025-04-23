@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.service.StudentService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,6 +24,15 @@ public class StudentController {
     @Autowired
     private StudentRepository studentRepository;
 
+    @PostMapping
+    public ResponseEntity<?> registerStudent(@RequestBody Student newStudent) {
+        try {
+            Student savedStudent = studentService.addStudent(newStudent);
+            return new ResponseEntity<>(savedStudent, HttpStatus.CREATED);
+        } catch (IllegalArgumentException e) {
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.CONFLICT);
+        }
+    }
 
     @GetMapping("/{studentId}")
     public ResponseEntity<Student> getStudent(@PathVariable String studentId) {
