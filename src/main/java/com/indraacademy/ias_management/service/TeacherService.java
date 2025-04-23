@@ -25,4 +25,12 @@ public class TeacherService {
     public Teacher updateTeacher(Teacher teacher) {
         return teacherRepository.save(teacher);
     }
+
+    public Teacher addTeacher(Teacher teacher) {
+        Optional<Teacher> existingTeacher = teacherRepository.findById(teacher.getTeacherId());
+        if (existingTeacher.isPresent()) {
+            throw new IllegalArgumentException("Teacher with ID " + teacher.getTeacherId() + " already exists.");
+        }
+        return teacherRepository.save(teacher);
+    }
 }
