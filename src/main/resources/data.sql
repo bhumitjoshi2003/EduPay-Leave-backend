@@ -16,7 +16,7 @@ VALUES
 
 
 INSERT INTO student (student_id, name, email, phone_number, dob, class_name, gender, father_name, mother_name) VALUES
-('S101', 'Alice Johnson', 'alice.johnson@example.com', '123-456-7890', '2010-05-15', '1', 'Female', 'Robert Johnson', 'Susan Johnson'),
+('S101', 'Alice Johnson', 'bhashitbhumit@gmail.com', '7906341843', '2010-05-15', '1', 'Female', 'Robert Johnson', 'Susan Johnson'),
 ('S102', 'Bob Smith', 'bob.smith@example.com', '987-654-3210', '2009-12-01', '2', 'Male', 'Michael Smith', 'Linda Smith'),
 ('S103', 'Charlie Brown', 'charlie.brown@example.com', '555-123-4567', '2011-03-20', '3', 'Male', 'David Brown', 'Karen Brown'),
 ('S104', 'Diana Miller', 'diana.miller@example.com', '111-222-3333', '2010-08-10', '1', 'Female', 'William Miller', 'Patricia Miller'),
@@ -29,7 +29,7 @@ INSERT INTO student (student_id, name, email, phone_number, dob, class_name, gen
 
 
 INSERT INTO teacher (teacher_id, name, email, phone_number, dob, gender, class_teacher, created_at, updated_at) VALUES
-('T101', 'Mr. John Smith', 'john.smith@example.com', '987-654-3210', '1985-08-20', 'Male', '1', NOW(), NOW()),
+('T101', 'Mr. John Smith', 'bhumitjoshi2003@gmail.com', '7906341843', '1985-08-20', 'Male', '1', NOW(), NOW()),
 ('T102', 'Ms. Jane Doe', 'jane.doe@example.com', '555-123-4567', '1992-03-10', 'Female', '2', NOW(), NOW()),
 ('T103', 'Mr. David Lee', 'david.lee@example.com', '111-222-3333', '1988-11-25', 'Male', '3', NOW(), NOW()),
 ('T104', 'Ms. Sarah Williams', 'sarah.williams@example.com', '444-555-6666', '1990-07-01', 'Female', '4', NOW(), NOW()),

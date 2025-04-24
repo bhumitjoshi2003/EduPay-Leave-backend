@@ -37,8 +37,12 @@ public class SecurityConfig {
                 }))
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/register")).permitAll() // Allow only register
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/login")).permitAll()    // Allow only login
+                        .requestMatchers(new AntPathRequestMatcher("/api/auth/register")).permitAll()
+                        .requestMatchers(new AntPathRequestMatcher("/api/auth/login")).permitAll()
+                        .requestMatchers(new AntPathRequestMatcher("/api/auth/request-password-reset")).permitAll() // Allow this without auth
+                        .requestMatchers(new AntPathRequestMatcher("/api/auth/reset-password")).permitAll()    // Allow this without auth
+                        .requestMatchers(new AntPathRequestMatcher("/api/auth/change-password")).authenticated()
+                        .requestMatchers(new AntPathRequestMatcher("/api/auth/**")).authenticated() // Secure other /api/auth/** endpoints
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
