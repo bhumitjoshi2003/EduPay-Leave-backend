@@ -3,6 +3,8 @@ package com.indraacademy.ias_management.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.util.Date;
+
 @Entity
 @Table(name = "users")
 @Data
@@ -13,27 +15,40 @@ public class User {
     @Column(unique = true)
     private String userId;
 
-    public Long getId() {
-        return id;
-    }
+    private String password;
+
+    private String role;
+
+    private String email;
+
+    private String resetToken;
+
+    @Temporal(TemporalType.TIMESTAMP)
+    private Date resetTokenExpiry;
 
     public String getUserId() {
         return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
     }
 
     public String getPassword() {
         return password;
     }
 
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
     public String getRole() {
         return role;
     }
 
-    private String password;
-
-    private String role;
-
-    private String email;
+    public void setRole(String role) {
+        this.role = role;
+    }
 
     public String getEmail() {
         return email;
@@ -43,15 +58,19 @@ public class User {
         this.email = email;
     }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
+    public String getResetToken() {
+        return resetToken;
     }
 
-    public void setPassword(String password) {
-        this.password = password;
+    public void setResetToken(String resetToken) {
+        this.resetToken = resetToken;
     }
 
-    public void setRole(String role) {
-        this.role = role;
+    public Date getResetTokenExpiry() {
+        return resetTokenExpiry;
+    }
+
+    public void setResetTokenExpiry(Date resetTokenExpiry) {
+        this.resetTokenExpiry = resetTokenExpiry;
     }
 }
