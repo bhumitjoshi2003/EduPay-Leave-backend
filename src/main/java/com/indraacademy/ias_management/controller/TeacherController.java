@@ -1,7 +1,10 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.service.TeacherService;
+import com.indraacademy.ias_management.service.UserDetailsServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +20,9 @@ public class TeacherController {
 
     @Autowired
     private TeacherService teacherService;
+
+    @Autowired
+    private UserDetailsServiceImpl userDetailsService;
 
     @PostMapping
     public ResponseEntity<?> registerTeacher(@RequestBody Teacher newTeacher) {
@@ -46,9 +52,19 @@ public class TeacherController {
 
     @PutMapping("/{teacherId}")
     public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @RequestBody Teacher updatedTeacher) {
-        Optional<Teacher> existingTeacher = teacherService.getTeacher(teacherId);
-        if (existingTeacher.isPresent()) {
-            updatedTeacher.setTeacherId(teacherId); // Ensure ID is consistent
+        Optional<Teacher> existingTeacherOptional = teacherService.getTeacher(teacherId);
+        if (existingTeacherOptional.isPresent()) {
+            Teacher existingTeacher = existingTeacherOptional.get();
+
+            boolean emailChanged = !existingTeacher.getEmail().equals(updatedTeacher.getEmail());
+
+            if (emailChanged) {
+                Optional<User> userOptional = userDetailsService.findUserByUserId(teacherId);
+                userOptional.ifPresent(user -> {
+                    user.setEmail(updatedTeacher.getEmail());
+                    userDetailsService.save(user);
+                });
+            }
             Teacher savedTeacher = teacherService.updateTeacher(updatedTeacher);
             return ResponseEntity.ok(savedTeacher);
         } else {
