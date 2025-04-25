@@ -37,12 +37,10 @@ public class SecurityConfig {
                 }))
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/register")).permitAll()
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/login")).permitAll()
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/request-password-reset")).permitAll() // Allow this without auth
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/reset-password")).permitAll()    // Allow this without auth
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/change-password")).authenticated()
-                        .requestMatchers(new AntPathRequestMatcher("/api/auth/**")).authenticated() // Secure other /api/auth/** endpoints
+                        .requestMatchers("/api/auth/register",
+                                "/api/auth/login",
+                                "/api/auth/request-password-reset",
+                                "/api/auth/reset-password").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -50,7 +48,6 @@ public class SecurityConfig {
 
         return http.build();
     }
-
 
     @Bean
     public PasswordEncoder passwordEncoder() {
