@@ -41,6 +41,12 @@ public class Student {
     @Column(name = "mother_name")
     private String motherName;
 
+    @Column(name = "takes_bus")
+    private Boolean takesBus;
+
+    @Column(name = "distance")
+    private Double distance;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -49,9 +55,12 @@ public class Student {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    public Student(){ }
+    public Student() {
+        this.takesBus = false; // Default value
+        this.distance = 0.0;    // Default value
+    }
 
-    public Student(String studentId, String name, String email, String phoneNumber, LocalDate dob, String className, String gender, String fatherName, String motherName, LocalDateTime createdAt, LocalDateTime updatedAt) {
+    public Student(String studentId, String name, String email, String phoneNumber, LocalDate dob, String className, String gender, String fatherName, String motherName, Boolean takesBus, Double distance, LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.studentId = studentId;
         this.name = name;
         this.email = email;
@@ -61,6 +70,8 @@ public class Student {
         this.gender = gender;
         this.fatherName = fatherName;
         this.motherName = motherName;
+        this.takesBus = takesBus;
+        this.distance = distance;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
     }
@@ -99,6 +110,14 @@ public class Student {
 
     public String getMotherName() {
         return motherName;
+    }
+
+    public Boolean getTakesBus() {
+        return takesBus;
+    }
+
+    public Double getDistance() {
+        return distance;
     }
 
     public LocalDateTime getCreatedAt() {
@@ -145,6 +164,14 @@ public class Student {
         this.motherName = motherName;
     }
 
+    public void setTakesBus(Boolean takesBus) {
+        this.takesBus = takesBus;
+    }
+
+    public void setDistance(Double distance) {
+        this.distance = distance;
+    }
+
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
@@ -153,3 +180,4 @@ public class Student {
         this.updatedAt = updatedAt;
     }
 }
+

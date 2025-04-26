@@ -65,6 +65,8 @@ public class AuthController {
 
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
+        System.out.println("HARI HARA");
+
         Optional<User> userOptional = userRepository.findByUserId(request.getUserId());
         if (userOptional.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
@@ -150,5 +152,6 @@ public class AuthController {
         message.setText("To reset your password, please click on the following link: " + resetLink);
         mailSender.send(message);
     }
+
 }
 
