@@ -41,6 +41,8 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/request-password-reset",
                                 "/api/auth/reset-password").permitAll()
+                        .requestMatchers("/api/auth/change-password").authenticated()
+                        .requestMatchers("/api/auth/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

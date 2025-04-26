@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.ChangePasswordRequest;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
@@ -15,6 +16,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -23,19 +26,15 @@ import java.util.stream.Collectors;
 @CrossOrigin(origins = "http://localhost:4200")
 public class StudentController {
 
-    @Autowired
-    private StudentService studentService;
+    @Autowired private StudentService studentService;
 
     @Autowired private PasswordEncoder passwordEncoder;
 
-    @Autowired
-    private UserDetailsServiceImpl userDetailsService;
+    @Autowired private StudentRepository studentRepository;
 
-    @Autowired
-    private StudentRepository studentRepository;
+    @Autowired private UserRepository userRepository;
 
-    @Autowired
-    private UserRepository userRepository;
+    @Autowired private ObjectMapper objectMapper;
 
     @PostMapping
     public ResponseEntity<?> registerStudent(@RequestBody Student newStudent) {
@@ -55,25 +54,17 @@ public class StudentController {
     }
 
     @PutMapping("/{studentId}")
-    public ResponseEntity<Student> updateStudent(@PathVariable String studentId, @RequestBody Student updatedStudent) {
-        Optional<Student> existingStudentOptional = studentService.getStudent(studentId);
-
-        if (existingStudentOptional.isPresent()) {
-            Student existingStudent = existingStudentOptional.get();
-            boolean emailChanged = !existingStudent.getEmail().equals(updatedStudent.getEmail());
-            if (emailChanged) {
-                Optional<User> userOptional = userDetailsService.findUserByUserId(studentId);
-                userOptional.ifPresent(user -> {
-                    user.setEmail(updatedStudent.getEmail());
-                    userDetailsService.save(user);
-                });
-            }
-            Student savedStudent = studentService.updateStudent(updatedStudent);
+    public ResponseEntity<Student> updateStudent(@PathVariable String studentId, @RequestBody Map<String, Object> requestBody) {
+        try {
+            Student updatedStudent = objectMapper.convertValue(requestBody.get("studentDetails"), Student.class);
+            Integer effectiveFromMonth = (Integer) requestBody.get("effectiveFromMonth");
+            Student savedStudent = studentService.updateStudent(studentId, updatedStudent, effectiveFromMonth);
             return ResponseEntity.ok(savedStudent);
-        } else {
+        } catch (NoSuchElementException e) {
             return ResponseEntity.notFound().build();
         }
     }
+
 
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
