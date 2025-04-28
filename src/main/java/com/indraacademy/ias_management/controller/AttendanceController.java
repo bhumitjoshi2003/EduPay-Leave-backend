@@ -44,4 +44,12 @@ public class AttendanceController {
         Map<String, Long> counts = attendanceService.getAttendanceCounts(studentId, year, month);
         return ResponseEntity.ok(counts);
     }
+
+    @GetMapping("/unapplied-leave-count/{studentId}/session/{session}")
+    public ResponseEntity<Long> getTotalUnappliedLeaveCount(
+            @PathVariable String studentId,
+            @PathVariable String session) {
+        long count = attendanceService.getTotalUnappliedLeaveCount(studentId, session);
+        return ResponseEntity.ok(count);
+    }
 }
