@@ -34,4 +34,11 @@ public class AttendanceService {
         counts.put("totalAbsent", totalAbsentCount);
         return counts;
     }
+
+    public long getTotalUnappliedLeaveCount(String studentId, String session) {
+        String[] years = session.split("-");
+        int startYear = Integer.parseInt(years[0]);
+        int endYear = Integer.parseInt(years[1]);
+        return attendanceRepository.countUnappliedLeavesForAcademicYear(studentId, startYear, endYear);
+    }
 }
