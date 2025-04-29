@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -33,5 +34,22 @@ public class AttendanceService {
         counts.put("studentAbsent", studentAbsentCount);
         counts.put("totalAbsent", totalAbsentCount);
         return counts;
+    }
+
+    public long getTotalUnappliedLeaveCount(String studentId, String session) {
+        String[] years = session.split("-");
+        int startYear = Integer.parseInt(years[0]);
+        int endYear = Integer.parseInt(years[1]);
+        return attendanceRepository.countUnappliedLeavesForAcademicYear(studentId, startYear, endYear);
+    }
+
+    @Transactional
+    public void updateChargePaidAfterPayment(String studentId, String session) {
+        String[] years = session.split("-");
+        int startYear = Integer.parseInt(years[0]);
+        int endYear = Integer.parseInt(years[1]);
+        LocalDate startDate = LocalDate.of(startYear, 4, 1);
+        LocalDate endDate = LocalDate.of(endYear, 3, 31);
+        attendanceRepository.updateChargePaidForSession(studentId, startDate, endDate);
     }
 }

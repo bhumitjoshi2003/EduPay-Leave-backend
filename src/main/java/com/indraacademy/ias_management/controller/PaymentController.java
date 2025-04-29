@@ -26,7 +26,7 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, Object> requestBody) {
         @SuppressWarnings("unchecked")
         Map<String, Object> paymentData = (Map<String, Object>) requestBody.get("paymentData");
-
+        System.out.println("RESQUEST BODY=> " + requestBody);
         int amount = (int) paymentData.get("totalAmount");
         String studentId = (String) paymentData.get("studentId");
         String studentName = (String) paymentData.get("studentName");
@@ -41,7 +41,13 @@ public class PaymentController {
         int ecaProject = (int) paymentData.get("totalEcaProject");
         int examinationFee = (int) paymentData.get("totalExaminationFee");
 
-        Map<String, Object> order = razorpayService.createOrder(amount, studentId, studentName, className, session, month, busFee, tuitionFee, annualCharges, labCharges, ecaProject, examinationFee);
+        Number additionalChargesNum = (Number) paymentData.get("additionalCharges");
+        int additionalCharges = additionalChargesNum != null ? additionalChargesNum.intValue() : 0;
+
+        Number lateFeesNum = (Number) paymentData.get("lateFees");
+        int lateFees = lateFeesNum != null ? lateFeesNum.intValue() : 0;
+
+        Map<String, Object> order = razorpayService.createOrder(amount, studentId, studentName, className, session, month, busFee, tuitionFee, annualCharges, labCharges, ecaProject, examinationFee, additionalCharges, lateFees);
         return ResponseEntity.ok(order);
     }
 
