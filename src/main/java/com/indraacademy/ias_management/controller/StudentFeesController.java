@@ -57,6 +57,11 @@ public class StudentFeesController {
             int totalEcaProject = totalEcaProjectNumber != null ? totalEcaProjectNumber.intValue() : 0;
             Number totalExaminationFeeNumber = (Number) paymentData.get("totalExaminationFee");
             int totalExaminationFee = totalExaminationFeeNumber != null ? totalExaminationFeeNumber.intValue() : 0;
+            Number additionalChargesNumber = (Number) paymentData.get("additionalCharges");
+            int additionalCharges = additionalChargesNumber != null ? additionalChargesNumber.intValue() : 0;
+            Number lateFeesNumber = (Number) paymentData.get("lateFees");
+            int lateFees = lateFeesNumber != null ? lateFeesNumber.intValue() : 0;
+
 
             Payment payment = new Payment(
                     studentId,
@@ -76,7 +81,9 @@ public class StudentFeesController {
                     totalEcaProject,
                     totalExaminationFee,
                     true,
-                    amountPaid
+                    amountPaid,
+                    additionalCharges,
+                    lateFees
             );
 
             payment.setRazorpaySignature("MANUAL-PAYMENT"); // Set placeholder for manual payments

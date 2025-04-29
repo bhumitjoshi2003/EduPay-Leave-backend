@@ -27,10 +27,10 @@ public class RazorpayService {
         this.razorpayClient = new RazorpayClient(KEY_ID, KEY_SECRET);
     }
 
-    public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee) {
+    public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int additionalCharges, int lateFees) {
         try {
             JSONObject options = new JSONObject();
-            options.put("amount", amount); // Amount in paisa
+            options.put("amount", amount);
             options.put("currency", "INR");
             options.put("receipt", "txn_12345");
             options.put("payment_capture", 1); // Auto capture
@@ -52,6 +52,8 @@ public class RazorpayService {
             response.put("examinationFee", examinationFee);
             response.put("paidManually", false);
             response.put("amountPaid", order.get("amount"));
+            response.put("additionalCharges", additionalCharges);
+            response.put("lateFees", lateFees);
             return response;
         } catch (Exception e) {
             throw new RuntimeException("Razorpay Order Creation Failed", e);
@@ -87,7 +89,8 @@ public class RazorpayService {
                 payment.setPaidManually(false);
                 payment.setAmountPaid((Integer) orderDetails.get("amount")/100);
                 payment.setRazorpaySignature(signature);
-                System.out.println("working for hari");
+                payment.setAdditionalCharges((Integer) orderDetails.get("additionalCharges"));
+                payment.setLateFees((Integer) orderDetails.get("lateFees"));
 
                 paymentRepository.save(payment);
                 response.put("success", true);

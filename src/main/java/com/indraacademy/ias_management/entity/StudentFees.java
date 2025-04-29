@@ -3,7 +3,6 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.math.BigDecimal;
-import java.util.List;
 
 @Entity
 @Table(name = "student_fees")
@@ -40,12 +39,16 @@ public class StudentFees {
     @Column(name = "manual_payment_received")
     private BigDecimal manualPaymentReceived;
 
+    @Column(name = "amount_paid")
+    private BigDecimal amountPaid;
+
     public StudentFees() {
         this.manuallyPaid = false;
         this.manualPaymentReceived = null;
+        this.amountPaid = null;
     }
 
-    public StudentFees(String studentId, String className, Integer month, Boolean paid, Boolean takesBus, String year, Double distance, BigDecimal manualPaymentReceived) {
+    public StudentFees(String studentId, String className, Integer month, Boolean paid, Boolean takesBus, String year, Double distance, BigDecimal manualPaymentReceived, BigDecimal amountPaid) {
         this.studentId = studentId;
         this.className = className;
         this.month = month;
@@ -55,6 +58,7 @@ public class StudentFees {
         this.distance = distance;
         this.manuallyPaid = false;
         this.manualPaymentReceived = manualPaymentReceived;
+        this.amountPaid = amountPaid;
     }
 
     public Long getId() {
@@ -97,6 +101,10 @@ public class StudentFees {
         return manualPaymentReceived;
     }
 
+    public BigDecimal getAmountPaid() {
+        return amountPaid;
+    }
+
     public void setDistance(Double distance) {
         this.distance = distance;
     }
@@ -131,5 +139,9 @@ public class StudentFees {
 
     public void setManualPaymentReceived(BigDecimal manualPaymentReceived) {
         this.manualPaymentReceived = manualPaymentReceived;
+    }
+
+    public void setAmountPaid(BigDecimal amountPaid) {
+        this.amountPaid = amountPaid;
     }
 }
