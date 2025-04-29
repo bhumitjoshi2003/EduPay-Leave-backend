@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.repository;
 
 import com.indraacademy.ias_management.entity.Attendance;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -25,4 +26,10 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
             "AND ((FUNCTION('YEAR', a.absentDate) = :startYear AND FUNCTION('MONTH', a.absentDate) >= 4) " +
             "OR (FUNCTION('YEAR', a.absentDate) = :endYear AND FUNCTION('MONTH', a.absentDate) <= 3))")
     long countUnappliedLeavesForAcademicYear(@Param("studentId") String studentId, @Param("startYear") int startYear, @Param("endYear") int endYear);
+
+    @Transactional
+    @Modifying
+    @Query("UPDATE Attendance a SET a.chargePaid = true WHERE a.studentId = :studentId " +
+            "AND a.absentDate >= :startDate AND a.absentDate <= :endDate AND a.chargePaid = false")
+    void updateChargePaidForSession(@Param("studentId") String studentId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 }

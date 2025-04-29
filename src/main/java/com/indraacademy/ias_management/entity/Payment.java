@@ -70,15 +70,22 @@ public class Payment {
     @Column(name= "amount_paid")
     private int amountPaid;
 
+    @Column(name = "additional_charges")
+    private int additionalCharges;
+
+    @Column(name = "late_fees")
+    private int lateFees;
 
 
     // Constructors, getters, setters
     public Payment() {
         this.paymentDate = LocalDateTime.now();
         this.status = "success";
+        this.additionalCharges = 0; // Initialize to 0
+        this.lateFees = 0;           // Initialize to 0
     }
 
-    public Payment(String studentId, String studentName, String className, String session, String month, int amount, String paymentId, String orderId, LocalDateTime paymentDate, String status, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, boolean paidManually, int amountPaid) {
+    public Payment(String studentId, String studentName, String className, String session, String month, int amount, String paymentId, String orderId, LocalDateTime paymentDate, String status, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, boolean paidManually, int amountPaid, int additionalCharges, int lateFees) {
         this.studentId = studentId;
         this.studentName = studentName;
         this.className = className;
@@ -97,6 +104,8 @@ public class Payment {
         this.examinationFee = examinationFee;
         this.paidManually = paidManually;
         this.amountPaid = amountPaid;
+        this.additionalCharges = additionalCharges;
+        this.lateFees = lateFees;
     }
 
     public Long getId() {
@@ -171,6 +180,22 @@ public class Payment {
         return razorpaySignature;
     }
 
+    public boolean isPaidManually() {
+        return paidManually;
+    }
+
+    public int getAmountPaid() {
+        return amountPaid;
+    }
+
+    public int getAdditionalCharges() {
+        return additionalCharges;
+    }
+
+    public int getLateFees() {
+        return lateFees;
+    }
+
     public void setStudentId(String studentId) {
         this.studentId = studentId;
     }
@@ -203,10 +228,6 @@ public class Payment {
         this.orderId = orderId;
     }
 
-    public void setExaminationFee(int examinationFee) {
-        this.examinationFee = examinationFee;
-    }
-
     public void setPaymentDate(LocalDateTime paymentDate) {
         this.paymentDate = paymentDate;
     }
@@ -235,16 +256,12 @@ public class Payment {
         this.ecaProject = ecaProject;
     }
 
+    public void setExaminationFee(int examinationFee) {
+        this.examinationFee = examinationFee;
+    }
+
     public void setRazorpaySignature(String razorpaySignature) {
         this.razorpaySignature = razorpaySignature;
-    }
-
-    public int getAmountPaid() {
-        return amountPaid;
-    }
-
-    public boolean isPaidManually() {
-        return paidManually;
     }
 
     public void setPaidManually(boolean paidManually) {
@@ -253,5 +270,13 @@ public class Payment {
 
     public void setAmountPaid(int amountPaid) {
         this.amountPaid = amountPaid;
+    }
+
+    public void setAdditionalCharges(int additionalCharges) {
+        this.additionalCharges = additionalCharges;
+    }
+
+    public void setLateFees(int lateFees) {
+        this.lateFees = lateFees;
     }
 }

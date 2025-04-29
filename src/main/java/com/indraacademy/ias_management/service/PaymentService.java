@@ -47,7 +47,9 @@ public class PaymentService {
                 payment.getLabCharges(),
                 payment.getEcaProject(),
                 payment.getExaminationFee(),
-                payment.getAmountPaid()
+                payment.getAmountPaid(),
+                payment.getAdditionalCharges(),
+                payment.getLateFees()
         );
     }
 
