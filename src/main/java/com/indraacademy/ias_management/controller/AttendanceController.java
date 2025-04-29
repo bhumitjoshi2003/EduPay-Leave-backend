@@ -52,4 +52,17 @@ public class AttendanceController {
         long count = attendanceService.getTotalUnappliedLeaveCount(studentId, session);
         return ResponseEntity.ok(count);
     }
+
+    @PutMapping("/charge-paid/{studentId}/session/{session}")
+    public ResponseEntity<String> updateChargePaidAfterPayment(
+            @PathVariable String studentId,
+            @PathVariable String session) {
+        try {
+            attendanceService.updateChargePaidAfterPayment(studentId, session);
+            return ResponseEntity.ok("Unapplied leave charges marked as paid for the session.");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to update unapplied leave charges.");
+        }
+    }
 }
