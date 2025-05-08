@@ -1,12 +1,15 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,8 +17,9 @@ import java.util.Map;
 @Service
 public class AttendanceService {
 
-    @Autowired
-    private AttendanceRepository attendanceRepository;
+    @Autowired private AttendanceRepository attendanceRepository;
+
+    @Autowired private StudentRepository studentRepository;
 
     public void saveAttendance(List<Attendance> attendanceList) {
         attendanceRepository.deleteByAbsentDateAndClassName(attendanceList.getFirst().getAbsentDate(), attendanceList.getFirst().getClassName());
@@ -30,10 +34,31 @@ public class AttendanceService {
         long studentAbsentCount = attendanceRepository.countAbsences(studentId, year, month);
         long totalAbsentCount = attendanceRepository.countAbsences("X", year, month);
 
+        LocalDateTime studentJoinDate = getStudentJoinDate(studentId);
+
+        if (studentJoinDate != null && studentJoinDate.toLocalDate().getYear() == year){
+            if(studentJoinDate.toLocalDate().getMonthValue() <= 3 && month <= 3) {
+                totalAbsentCount = 0;
+                studentAbsentCount = 0;
+            }
+            else if(studentJoinDate.toLocalDate().getMonthValue() > month){
+                totalAbsentCount = 0;
+                studentAbsentCount = 0;
+            }else if(studentJoinDate.toLocalDate().getMonthValue() == month){
+                LocalDate joinDate = studentJoinDate.toLocalDate();
+                totalAbsentCount -= attendanceRepository.countAbsencesBeforeJoin("X", year, month, joinDate);
+            }
+        }
+
         Map<String, Long> counts = new HashMap<>();
         counts.put("studentAbsent", studentAbsentCount);
         counts.put("totalAbsent", totalAbsentCount);
         return counts;
+    }
+
+    public LocalDateTime getStudentJoinDate(String studentId) {
+        Student student = studentRepository.findById(studentId).orElse(null); //  method in StudentRepository
+        return (student != null) ? student.getCreatedAt() : null;
     }
 
     public long getTotalUnappliedLeaveCount(String studentId, String session) {
