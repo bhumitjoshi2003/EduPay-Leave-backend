@@ -37,11 +37,12 @@ public class SecurityConfig {
                 }))
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register",
-                                "/api/auth/login",
-                                "/api/auth/request-password-reset",
-                                "/api/auth/reset-password").permitAll()
-                        .requestMatchers("/api/auth/change-password").authenticated()
+                        .requestMatchers("/api/auth/login",
+                                "/api/auth/reset-password",
+                                "/api/auth/register",
+                                "/api/auth/request-password-reset").permitAll()
+                        .requestMatchers("/api/auth/change-password"
+                                ).authenticated()
                         .requestMatchers("/api/auth/**").permitAll()
                         .anyRequest().authenticated()
                 )
