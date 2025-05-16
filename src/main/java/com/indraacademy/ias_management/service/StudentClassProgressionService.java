@@ -18,7 +18,7 @@ public class StudentClassProgressionService {
     private StudentRepository studentRepository;
 
     @Transactional
-    @Scheduled(cron = "0 0 0 1 4 *") // Run at 00:00 on 1st April every year
+    @Scheduled(cron = "0 0 0 12 12 *") // Run at 00:00 on 1st April every year
     public void incrementStudentClasses() {
         System.out.println("System Progression Works");
         Year currentYear = Year.now();
@@ -55,12 +55,12 @@ public class StudentClassProgressionService {
                 if (classLevel < 12) {
                     return String.valueOf(classLevel + 1);
                 } else if (classLevel == 12) {
-                    return "Graduated"; // Or "Pass", as per your preference
+                    return "Graduated";
                 } else {
-                    return null; // Already graduated or beyond expected levels
+                    return null;
                 }
             } catch (NumberFormatException e) {
-                return null; // If the className is not a number
+                return null;
             }
         }
     }

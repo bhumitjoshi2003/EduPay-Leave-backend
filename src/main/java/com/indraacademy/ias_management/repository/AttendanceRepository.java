@@ -37,4 +37,5 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     long countAbsencesBeforeJoin(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate
     );
 
+    List<Attendance> findByAbsentDate(LocalDate today);
 }

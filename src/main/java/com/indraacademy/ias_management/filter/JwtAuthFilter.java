@@ -39,13 +39,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String authHeader = request.getHeader("Authorization");
         String token = null;
         String userId = null;
+        String role = null;
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             token = authHeader.substring(7);
             try {
                 userId = jwtUtil.extractUserId(token);
+                role = jwtUtil.extractUserRole(token);
                 System.out.println("JWT from Request: " + token);
-                System.out.println("Extracted studentId: " + userId);
+                System.out.println("Extracted Id: " + userId);
+                System.out.println("Extracted role: " + role);
+
             } catch (ExpiredJwtException e) {
                 response.setStatus(HttpStatus.UNAUTHORIZED.value());
                 response.getWriter().write("{\"message\": \"Token Expired\"}");
