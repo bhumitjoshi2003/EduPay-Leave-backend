@@ -3,13 +3,13 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.dto.ChangePasswordRequest;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.UserRepository;
+import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.util.JwtUtil;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -18,8 +18,6 @@ import java.util.Date;
 import java.util.HashMap;
 import java.util.Optional;
 import java.util.UUID;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -27,10 +25,9 @@ import org.springframework.mail.javamail.JavaMailSender;
 public class AuthController {
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
-    @Autowired private JavaMailSender mailSender;
     @Autowired private JwtUtil jwtUtil;
-    @Value("${spring.mail.username}")
-    private String emailSender;
+    @Autowired private EmailService emailService;
+
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
     @GetMapping("/hari")
@@ -65,7 +62,6 @@ public class AuthController {
 
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
-        System.out.println("HARI HARA");
 
         Optional<User> userOptional = userRepository.findByUserId(request.getUserId());
         if (userOptional.isEmpty()) {
@@ -109,10 +105,10 @@ public class AuthController {
         userRepository.save(user);
 
         String resetLink = "http://localhost:4200/reset-password?token=" + resetToken; //  frontend URL
-        sendPasswordResetEmail(user.getEmail(), resetLink);
 
-        System.out.println(user.getEmail());
-        System.out.println(emailSender);
+        String subject = "Password Reset Request";
+        String body = "To reset your password, please click on the following link: " + resetLink;
+        emailService.sendEmail(user.getEmail(), subject, body);
 
         return ResponseEntity.ok(new HashMap<String, String>() {{
             put("message", "Password reset link sent to your email address.");
@@ -143,15 +139,5 @@ public class AuthController {
 
         return ResponseEntity.ok("Password reset successfully.");
     }
-
-    private void sendPasswordResetEmail(String toEmail, String resetLink) {
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(emailSender);
-        message.setTo(toEmail);
-        message.setSubject("Password Reset Request");
-        message.setText("To reset your password, please click on the following link: " + resetLink);
-        mailSender.send(message);
-    }
-
 }
 
