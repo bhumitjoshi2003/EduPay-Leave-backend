@@ -32,4 +32,10 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     @Query("UPDATE Attendance a SET a.chargePaid = true WHERE a.studentId = :studentId " +
             "AND a.absentDate >= :startDate AND a.absentDate <= :endDate AND a.chargePaid = false")
     void updateChargePaidForSession(@Param("studentId") String studentId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND FUNCTION('YEAR', a.absentDate) = :year AND FUNCTION('MONTH', a.absentDate) = :month AND a.absentDate < :joinDate")
+    long countAbsencesBeforeJoin(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate
+    );
+
+    List<Attendance> findByAbsentDate(LocalDate today);
 }

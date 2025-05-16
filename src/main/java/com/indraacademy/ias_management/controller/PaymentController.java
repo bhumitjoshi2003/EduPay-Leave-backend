@@ -5,6 +5,9 @@ import com.indraacademy.ias_management.dto.PaymentResponseDTO;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -89,5 +92,20 @@ public class PaymentController {
             @PathVariable String className) {
         List<PaymentHistoryDTO> classHistory = paymentService.getPaymentHistoryByClass(className);
         return ResponseEntity.ok(classHistory);
+    }
+
+    @GetMapping("/history/receipt/{paymentId}")
+    public ResponseEntity<byte[]> downloadPaymentReceipt(@PathVariable String paymentId) {
+        byte[] pdfBytes = paymentService.generatePaymentReceiptPdf(paymentId);
+
+        if (pdfBytes == null || pdfBytes.length == 0) {
+            return ResponseEntity.notFound().build();
+        }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDispositionFormData("attachment", "receipt_" + paymentId + ".pdf");
+
+        return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
     }
 }
