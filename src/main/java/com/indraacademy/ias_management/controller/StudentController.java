@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -86,9 +87,17 @@ public class StudentController {
     }
 
 
+    @GetMapping("/new/class/{className}")
+    public List<StudentLeaveDTO> getNewStudentsByClass(@PathVariable String className) {
+        List<Student> students = studentRepository.findByClassNameAndJoiningDateGreaterThan(className, LocalDate.now());
+        return students.stream()
+                .map(student -> new StudentLeaveDTO(student.getStudentId(), student.getName()))
+                .collect(Collectors.toList());
+    }
+
     @GetMapping("/class/{className}")
-    public List<StudentLeaveDTO> getStudentsByClass(@PathVariable String className) {
-        List<Student> students = studentRepository.findByClassName(className);
+    public List<StudentLeaveDTO> findByClassNameAndJoiningDate(@PathVariable String className) {
+        List<Student> students = studentRepository.findByClassNameAndJoiningDateLessThanEqual(className, LocalDate.now());
         return students.stream()
                 .map(student -> new StudentLeaveDTO(student.getStudentId(), student.getName()))
                 .collect(Collectors.toList());
