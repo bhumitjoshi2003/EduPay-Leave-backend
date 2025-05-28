@@ -15,17 +15,17 @@ VALUES
     ('2024-2025', '3', 15000.00, 6500.00, 2900.00, 1700.00, 800.00, 0.00);
 
 
-INSERT INTO student (student_id, name, email, phone_number, dob, class_name, gender, father_name, mother_name, takes_bus, distance) VALUES
-('S101', 'Alice Johnson', 'bhashitbhumit@gmail.com', '7906341843', '2010-05-15', '1', 'Female', 'Robert Johnson', 'Susan Johnson', 1, 5.2),
-('S102', 'Bob Smith', 'bob.smith@example.com', '987-654-3210', '2009-12-01', '2', 'Male', 'Michael Smith', 'Linda Smith', 0, NULL),
-('S103', 'Charlie Brown', 'charlie.brown@example.com', '555-123-4567', '2011-03-20', '3', 'Male', 'David Brown', 'Karen Brown', 1, 10.5),
-('S104', 'Diana Miller', 'diana.miller@example.com', '111-222-3333', '2010-08-10', '1', 'Female', 'William Miller', 'Patricia Miller', 0, NULL),
-('S105', 'Ethan Davis', 'ethan.davis@example.com', '444-555-6666', '2009-11-25', '3', 'Male', 'James Davis', 'Jennifer Davis', 1, 7.8),
-('S106', 'Fiona Wilson', 'fiona.wilson@example.com', '777-888-9999', '2011-01-05', '3', 'Female', 'Richard Wilson', 'Elizabeth Wilson', 0, NULL),
-('S107', 'George Martinez', 'george.martinez@example.com', '222-333-4444', '2010-06-30', '2', 'Male', 'Joseph Martinez', 'Maria Martinez', 1, 3.0),
-('S108', 'Hannah Anderson', 'hannah.anderson@example.com', '666-777-8888', '2009-09-18', '1', 'Female', 'Thomas Anderson', 'Barbara Anderson', 0, NULL),
-('S109', 'Ian Taylor', 'ian.taylor@example.com', '333-444-5555', '2011-04-12', '1', 'Male', 'Charles Taylor', 'Dorothy Taylor', 1, 12.1),
-('S110', 'Julia Thomas', 'julia.thomas@example.com', '888-999-0000', '2010-07-08', '1', 'Female', 'Christopher Thomas', 'Margaret Thomas', 0, NULL);
+INSERT INTO student (student_id, name, email, phone_number, dob, class_name, gender, father_name, mother_name, takes_bus, distance, joining_date) VALUES
+('S101', 'Alice Johnson', 'bhashitbhumit@gmail.com', '7906341843', '2010-05-15', '1', 'Female', 'Robert Johnson', 'Susan Johnson', 1, 5.2, '2024-04-01'),
+('S102', 'Bob Smith', 'bob.smith@example.com', '987-654-3210', '2009-12-01', '2', 'Male', 'Michael Smith', 'Linda Smith', 0, NULL, '2024-04-01'),
+('S103', 'Charlie Brown', 'charlie.brown@example.com', '555-123-4567', '2011-03-20', '3', 'Male', 'David Brown', 'Karen Brown', 1, 10.5, '2026-04-01'), -- Example future joining date
+('S104', 'Diana Miller', 'diana.miller@example.com', '111-222-3333', '2010-08-10', '1', 'Female', 'William Miller', 'Patricia Miller', 0, NULL, '2024-04-01'),
+('S105', 'Ethan Davis', 'ethan.davis@example.com', '444-555-6666', '2009-11-25', '3', 'Male', 'James Davis', 'Jennifer Davis', 1, 7.8, '2024-04-01'),
+('S106', 'Fiona Wilson', 'fiona.wilson@example.com', '777-888-9999', '2011-01-05', '3', 'Female', 'Richard Wilson', 'Elizabeth Wilson', 0, NULL, '2026-04-01'), -- Example future joining date
+('S107', 'George Martinez', 'george.martinez@example.com', '222-333-4444', '2010-06-30', '2', 'Male', 'Joseph Martinez', 'Maria Martinez', 1, 3.0, '2024-04-01'),
+('S108', 'Hannah Anderson', 'hannah.anderson@example.com', '666-777-8888', '2009-09-18', '1', 'Female', 'Thomas Anderson', 'Barbara Anderson', 0, NULL, '2024-04-01'),
+('S109', 'Ian Taylor', 'ian.taylor@example.com', '333-444-5555', '2011-04-12', '1', 'Male', 'Charles Taylor', 'Dorothy Taylor', 1, 12.1, '2024-04-01'),
+('S110', 'Julia Thomas', 'julia.thomas@example.com', '888-999-0000', '2010-07-08', '1', 'Female', 'Christopher Thomas', 'Margaret Thomas', 0, NULL, '2024-04-01');
 
 
 INSERT INTO teacher (teacher_id, name, email, phone_number, dob, gender, class_teacher, created_at, updated_at) VALUES

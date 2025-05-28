@@ -47,6 +47,9 @@ public class Student {
     @Column(name = "distance")
     private Double distance;
 
+    @Column(name = "joining_date")
+    private LocalDate joiningDate;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -56,11 +59,11 @@ public class Student {
     private LocalDateTime updatedAt;
 
     public Student() {
-        this.takesBus = false; // Default value
-        this.distance = 0.0;    // Default value
+        this.takesBus = false;
+        this.distance = 0.0;
     }
 
-    public Student(String studentId, String name, String email, String phoneNumber, LocalDate dob, String className, String gender, String fatherName, String motherName, Boolean takesBus, Double distance, LocalDateTime createdAt, LocalDateTime updatedAt) {
+    public Student(String studentId, String name, String email, String phoneNumber, LocalDate dob, String className, String gender, String fatherName, String motherName, Boolean takesBus, Double distance, LocalDate joiningDate, LocalDateTime createdAt, LocalDateTime updatedAt) {
         this.studentId = studentId;
         this.name = name;
         this.email = email;
@@ -72,6 +75,7 @@ public class Student {
         this.motherName = motherName;
         this.takesBus = takesBus;
         this.distance = distance;
+        this.joiningDate = joiningDate;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
     }
@@ -118,6 +122,10 @@ public class Student {
 
     public Double getDistance() {
         return distance;
+    }
+
+    public LocalDate getJoiningDate() {
+        return joiningDate;
     }
 
     public LocalDateTime getCreatedAt() {
@@ -172,6 +180,10 @@ public class Student {
         this.distance = distance;
     }
 
+    public void setJoiningDate(LocalDate joiningDate) {
+        this.joiningDate = joiningDate;
+    }
+
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
@@ -180,4 +192,3 @@ public class Student {
         this.updatedAt = updatedAt;
     }
 }
-
