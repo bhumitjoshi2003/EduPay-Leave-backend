@@ -1,9 +1,11 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.service.AdminService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Optional;
@@ -12,6 +14,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admins")
 @CrossOrigin(origins = "http://localhost:4200")
+@PreAuthorize("hasRole('" + Role.ADMIN + "')")
 public class AdminController {
 
     @Autowired

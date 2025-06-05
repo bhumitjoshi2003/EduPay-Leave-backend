@@ -1,14 +1,13 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.service.EmailService;
-import com.indraacademy.ias_management.service.UserDetailsServiceImpl;
 import com.indraacademy.ias_management.util.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 import java.util.Map;
 
 
@@ -24,6 +23,7 @@ public class NoticeController {
 
     @Autowired private JwtUtil jwtUtil;
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping("/notice")
     public ResponseEntity<?> sendEmailToStudents(@RequestBody Map<String, Object> requestBody) {
         String title = (String) requestBody.get("title");

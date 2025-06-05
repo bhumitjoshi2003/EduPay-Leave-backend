@@ -1,12 +1,16 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.service.AttendanceService;
+import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentFeesService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -20,19 +24,24 @@ import java.util.UUID;
 @CrossOrigin(origins = "http://localhost:4200")
 public class StudentFeesController {
 
-    @Autowired
-    private StudentFeesService studentFeesService;
+    @Autowired private StudentFeesService studentFeesService;
+    @Autowired private PaymentRepository paymentRepository;
+    @Autowired private AttendanceService attendanceService;
+    @Autowired private AuthService authService;
 
-    @Autowired
-    private PaymentRepository paymentRepository;
-
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "')")
     @GetMapping("/{studentId}/{year}")
     public ResponseEntity<List<StudentFees>> getStudentFees(
             @PathVariable String studentId,
-            @PathVariable String year) {
+            @PathVariable String year, @RequestHeader(name = "Authorization") String authorizationHeader) {
+        String role = authService.getRoleFromToken(authorizationHeader);
+        if(role.equals("STUDENT")){
+            studentId = authService.getUserIdFromToken(authorizationHeader);
+        }
         return ResponseEntity.ok(studentFeesService.getStudentFees(studentId, year));
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping("/manual-payment")
     public ResponseEntity<Map<String, String>> recordManualPayment(@RequestBody Map<String, Object> paymentData) {
         try {
@@ -86,9 +95,11 @@ public class StudentFeesController {
                     lateFees
             );
 
-            payment.setRazorpaySignature("MANUAL-PAYMENT"); // Set placeholder for manual payments
+            payment.setRazorpaySignature("MANUAL-PAYMENT");
 
             paymentRepository.save(payment);
+
+            attendanceService.updateChargePaidAfterPayment(studentId, session);
 
             return new ResponseEntity<>(Map.of("message", "Manual payment recorded successfully", "paymentId", payment.getPaymentId()), HttpStatus.CREATED);
 
@@ -98,23 +109,25 @@ public class StudentFeesController {
         }
     }
 
-
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PutMapping("/")
     public ResponseEntity<StudentFees> updateStudentFees(@RequestBody StudentFees studentFees) {
-        System.out.println("Received updatedFees: " + studentFees); // Add this logging
         return ResponseEntity.ok(studentFeesService.updateStudentFees(studentFees));
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping("/")
     public ResponseEntity<StudentFees> createStudentFees(@RequestBody StudentFees studentFees) {
         return ResponseEntity.ok(studentFeesService.createStudentFees(studentFees));
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "')")
     @GetMapping("/{studentId}/{year}/{month}")
-    public ResponseEntity<StudentFees> getStudentFee(
-            @PathVariable String studentId,
-            @PathVariable String year,
-            @PathVariable Integer month) {
+    public ResponseEntity<StudentFees> getStudentFee(@PathVariable String studentId, @PathVariable String year, @PathVariable Integer month, @RequestHeader(name = "Authorization") String authorizationHeader) {
+        String role = authService.getRoleFromToken(authorizationHeader);
+        if (role.equals("STUDENT")) {
+            studentId = authService.getUserIdFromToken(authorizationHeader);
+        }
         Optional<StudentFees> studentFee = studentFeesService.getStudentFee(studentId, year, month);
         return studentFee.map(ResponseEntity::ok)
                 .orElseGet(() -> ResponseEntity.notFound().build());
@@ -123,7 +136,6 @@ public class StudentFeesController {
     @GetMapping("/sessions/{studentId}")
     public ResponseEntity<List<String>> getDistinctYearsByStudentId(@PathVariable String studentId) {
         List<String> sessions = studentFeesService.getDistinctYearsByStudentId(studentId);
-        System.out.println(sessions);
         return ResponseEntity.ok(sessions);
     }
 }

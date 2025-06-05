@@ -73,11 +73,15 @@ public class AttendanceService {
 
     @Transactional
     public void updateChargePaidAfterPayment(String studentId, String session) {
-        String[] years = session.split("-");
-        int startYear = Integer.parseInt(years[0]);
-        int endYear = Integer.parseInt(years[1]);
-        LocalDate startDate = LocalDate.of(startYear, 4, 1);
-        LocalDate endDate = LocalDate.of(endYear, 3, 31);
-        attendanceRepository.updateChargePaidForSession(studentId, startDate, endDate);
+        try {
+            String[] years = session.split("-");
+            int startYear = Integer.parseInt(years[0]);
+            int endYear = Integer.parseInt(years[1]);
+            LocalDate startDate = LocalDate.of(startYear, 4, 1);
+            LocalDate endDate = LocalDate.of(endYear, 3, 31);
+            attendanceRepository.updateChargePaidForSession(studentId, startDate, endDate);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }
