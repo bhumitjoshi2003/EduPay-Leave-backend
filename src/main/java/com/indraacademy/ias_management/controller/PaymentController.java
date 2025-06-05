@@ -1,7 +1,9 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.PaymentHistoryDTO;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
+import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,6 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,11 +22,9 @@ import java.util.Map;
 @CrossOrigin(origins = "http://localhost:4200")
 public class PaymentController {
 
-    @Autowired
-    private RazorpayService razorpayService;
-
-    @Autowired
-    private PaymentService paymentService;
+    @Autowired private RazorpayService razorpayService;
+    @Autowired private PaymentService paymentService;
+    @Autowired private AuthService authService;
 
     @PostMapping("/create")
     public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, Object> requestBody) {
@@ -67,7 +68,8 @@ public class PaymentController {
 
     @GetMapping("/history/{studentId}")
     public ResponseEntity<List<PaymentHistoryDTO>> getPaymentHistory(
-            @PathVariable String studentId) {
+            @PathVariable String studentId, @RequestHeader(name = "Authorization") String authorizationHeader){
+        studentId = authService.getUserIdFromToken(authorizationHeader);
         List<PaymentHistoryDTO> history = paymentService.getPaymentHistory(studentId);
         return ResponseEntity.ok(history);
     }
@@ -81,12 +83,14 @@ public class PaymentController {
         return ResponseEntity.ok(dto);
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/history/all")
     public ResponseEntity<List<PaymentHistoryDTO>> getAllPaymentHistory() {
         List<PaymentHistoryDTO> allHistory = paymentService.getAllPaymentHistory();
         return ResponseEntity.ok(allHistory);
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/history/class/{className}")
     public ResponseEntity<List<PaymentHistoryDTO>> getPaymentHistoryByClass(
             @PathVariable String className) {

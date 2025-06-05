@@ -1,10 +1,12 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.service.AttendanceService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -14,12 +16,12 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/attendance")
-@CrossOrigin(origins = "http://localhost:4200") // Allow requests from your Angular app
+@CrossOrigin(origins = "http://localhost:4200")
 public class AttendanceController {
 
-    @Autowired
-    private AttendanceService attendanceService;
+    @Autowired private AttendanceService attendanceService;
 
+    @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<String> saveAttendance(@RequestBody List<Attendance> attendanceList) {
         try {
@@ -31,6 +33,7 @@ public class AttendanceController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @GetMapping("/date/{absentDate}/class/{className}")
     public ResponseEntity<List<Attendance>> getAttendanceByDateAndClass(
             @PathVariable LocalDate absentDate,
@@ -38,6 +41,7 @@ public class AttendanceController {
         List<Attendance> attendanceList = attendanceService.getAttendanceByDateAndClass(absentDate, className);
         return ResponseEntity.ok(attendanceList);
     }
+
 
     @GetMapping("/counts/{studentId}/{year}/{month}")
     public ResponseEntity<Map<String, Long>> getAttendanceCounts(@PathVariable String studentId, @PathVariable int year, @PathVariable int month) {
@@ -51,18 +55,5 @@ public class AttendanceController {
             @PathVariable String session) {
         long count = attendanceService.getTotalUnappliedLeaveCount(studentId, session);
         return ResponseEntity.ok(count);
-    }
-
-    @PutMapping("/charge-paid/{studentId}/session/{session}")
-    public ResponseEntity<String> updateChargePaidAfterPayment(
-            @PathVariable String studentId,
-            @PathVariable String session) {
-        try {
-            attendanceService.updateChargePaidAfterPayment(studentId, session);
-            return ResponseEntity.ok("Unapplied leave charges marked as paid for the session.");
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to update unapplied leave charges.");
-        }
     }
 }
