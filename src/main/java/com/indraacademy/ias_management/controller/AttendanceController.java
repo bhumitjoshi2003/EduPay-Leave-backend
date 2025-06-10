@@ -42,7 +42,6 @@ public class AttendanceController {
         return ResponseEntity.ok(attendanceList);
     }
 
-
     @GetMapping("/counts/{studentId}/{year}/{month}")
     public ResponseEntity<Map<String, Long>> getAttendanceCounts(@PathVariable String studentId, @PathVariable int year, @PathVariable int month) {
         Map<String, Long> counts = attendanceService.getAttendanceCounts(studentId, year, month);

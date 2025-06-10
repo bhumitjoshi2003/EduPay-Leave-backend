@@ -1,6 +1,5 @@
 package com.indraacademy.ias_management.service;
 
-import com.indraacademy.ias_management.dto.PaymentHistoryDTO;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.repository.PaymentRepository;
@@ -14,11 +13,13 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 public class PaymentService {
@@ -29,15 +30,11 @@ public class PaymentService {
     @Autowired
     private ModelMapper modelMapper;
 
-    public List<PaymentHistoryDTO> getPaymentHistory(String studentId) {
-        List<Payment> payments = paymentRepository.findByStudentIdOrderByPaymentDateDesc(studentId);
-        return payments.stream()
-                .map(payment -> modelMapper.map(payment, PaymentHistoryDTO.class))
-                .collect(Collectors.toList());
-    }
-
     public PaymentResponseDTO getPaymentHistoryDetails(String paymentId) {
         Payment payment = paymentRepository.findByPaymentId(paymentId);
+        if (payment == null) {
+            return null;
+        }
         return new PaymentResponseDTO(
                 payment.getStudentId(),
                 payment.getStudentName(),
@@ -61,20 +58,29 @@ public class PaymentService {
         );
     }
 
-    public List<PaymentHistoryDTO> getAllPaymentHistory() {
-        List<Payment> allPayments = paymentRepository.findAllByOrderByPaymentDateDesc();
-        return allPayments.stream()
-                .map(payment -> modelMapper.map(payment, PaymentHistoryDTO.class))
-                .collect(Collectors.toList());
+    public Page<Payment> gePaymentHistoryFiltered(String className, String studentId, LocalDate paymentDate, Pageable pageable) {
+        if (className != null && studentId != null && paymentDate != null) {
+            return paymentRepository.findByClassNameAndStudentIdContainingAndPaymentDate(className, studentId, paymentDate, pageable);
+        } else if (className != null && studentId != null) {
+            return paymentRepository.findByClassNameAndStudentIdContaining(className, studentId, pageable);
+        } else if (className != null && paymentDate != null) {
+            return paymentRepository.findByClassNameAndPaymentDate(className, paymentDate, pageable);
+        } else if (studentId != null && paymentDate != null) {
+            return paymentRepository.findByStudentIdContainingAndPaymentDate(studentId, paymentDate, pageable);
+        } else if (className != null) {
+            return paymentRepository.findByClassName(className, pageable);
+        } else if (studentId != null) {
+            return paymentRepository.findByStudentIdContaining(studentId, pageable);
+        } else if (paymentDate != null) {
+            return paymentRepository.findByPaymentDate(paymentDate, pageable);
+        } else {
+            return paymentRepository.findAll(pageable);
+        }
     }
 
-    public List<PaymentHistoryDTO> getPaymentHistoryByClass(String className) {
-        List<Payment> classPayments = paymentRepository.findByClassNameOrderByPaymentDateDesc(className);
-        return classPayments.stream()
-                .map(payment -> modelMapper.map(payment, PaymentHistoryDTO.class))
-                .collect(Collectors.toList());
+    public Page<Payment> getPaymentHistoryByStudentId(String studentId, Pageable pageable){
+        return paymentRepository.findByStudentId(studentId, pageable);
     }
-
 
     public byte[] generatePaymentReceiptPdf(String paymentId) {
         Payment payment = paymentRepository.findByPaymentId(paymentId);
@@ -293,5 +299,4 @@ public class PaymentService {
 
         return currentY;
     }
-
 }
