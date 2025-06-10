@@ -19,12 +19,12 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
 
     List<Attendance> findByAbsentDateAndClassName(LocalDate absentDate, String className);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND FUNCTION('YEAR', a.absentDate) = :year AND FUNCTION('MONTH', a.absentDate) = :month")
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND EXTRACT(YEAR FROM a.absentDate) = :year AND EXTRACT(MONTH FROM a.absentDate) = :month")
     long countAbsences(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month);
 
     @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.chargePaid = false " +
-            "AND ((FUNCTION('YEAR', a.absentDate) = :startYear AND FUNCTION('MONTH', a.absentDate) >= 4) " +
-            "OR (FUNCTION('YEAR', a.absentDate) = :endYear AND FUNCTION('MONTH', a.absentDate) <= 3))")
+            "AND ((EXTRACT(YEAR FROM a.absentDate) = :startYear AND EXTRACT(MONTH FROM a.absentDate) >= 4) " +
+            "OR (EXTRACT(YEAR FROM a.absentDate) = :endYear AND EXTRACT(MONTH FROM a.absentDate) <= 3))")
     long countUnappliedLeavesForAcademicYear(@Param("studentId") String studentId, @Param("startYear") int startYear, @Param("endYear") int endYear);
 
     @Transactional
@@ -33,12 +33,11 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
             "AND a.absentDate >= :startDate AND a.absentDate <= :endDate AND a.chargePaid = false")
     void updateChargePaidForSession(@Param("studentId") String studentId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND FUNCTION('YEAR', a.absentDate) = :year AND FUNCTION('MONTH', a.absentDate) = :month AND a.absentDate < :joinDate")
-    long countAbsencesBeforeJoin(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate
-    );
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND EXTRACT(YEAR FROM a.absentDate) = :year AND EXTRACT(MONTH FROM a.absentDate) = :month AND a.absentDate < :joinDate")
+    long countAbsencesBeforeJoin(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate);
 
     List<Attendance> findByAbsentDate(LocalDate today);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND FUNCTION('YEAR', a.absentDate) = :year AND FUNCTION('MONTH', a.absentDate) = :month AND a.absentDate >= :startDate")
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND EXTRACT(YEAR FROM a.absentDate) = :year AND EXTRACT(MONTH FROM a.absentDate) = :month AND a.absentDate >= :startDate")
     long countAbsencesFromDate(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("startDate") LocalDate startDate);
 }

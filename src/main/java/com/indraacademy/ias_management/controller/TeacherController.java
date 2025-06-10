@@ -1,6 +1,6 @@
 package com.indraacademy.ias_management.controller;
 
-import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.service.TeacherService;
@@ -8,6 +8,7 @@ import com.indraacademy.ias_management.service.UserDetailsServiceImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -16,13 +17,11 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/teachers")
 @CrossOrigin(origins = "http://localhost:4200")
+@PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
 public class TeacherController {
 
-    @Autowired
-    private TeacherService teacherService;
-
-    @Autowired
-    private UserDetailsServiceImpl userDetailsService;
+    @Autowired private TeacherService teacherService;
+    @Autowired private UserDetailsServiceImpl userDetailsService;
 
     @PostMapping
     public ResponseEntity<?> registerTeacher(@RequestBody Teacher newTeacher) {
@@ -34,6 +33,7 @@ public class TeacherController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @GetMapping("/{teacherId}")
     public ResponseEntity<Teacher> getTeacher(@PathVariable String teacherId) {
         Optional<Teacher> teacher = teacherService.getTeacher(teacherId);

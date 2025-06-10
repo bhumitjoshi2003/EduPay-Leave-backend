@@ -1,16 +1,25 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.PaymentHistoryDTO;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
+import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -19,11 +28,9 @@ import java.util.Map;
 @CrossOrigin(origins = "http://localhost:4200")
 public class PaymentController {
 
-    @Autowired
-    private RazorpayService razorpayService;
-
-    @Autowired
-    private PaymentService paymentService;
+    @Autowired private RazorpayService razorpayService;
+    @Autowired private PaymentService paymentService;
+    @Autowired private AuthService authService;
 
     @PostMapping("/create")
     public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, Object> requestBody) {
@@ -65,33 +72,36 @@ public class PaymentController {
         return ResponseEntity.ok(result);
     }
 
-    @GetMapping("/history/{studentId}")
-    public ResponseEntity<List<PaymentHistoryDTO>> getPaymentHistory(
-            @PathVariable String studentId) {
-        List<PaymentHistoryDTO> history = paymentService.getPaymentHistory(studentId);
-        return ResponseEntity.ok(history);
+    @GetMapping("/history/students")
+    public ResponseEntity<Page<Payment>> getPaymentHistory(
+            @RequestParam(required = false) String className,
+            @RequestParam(required = false) String studentId,
+            @RequestParam(required = false)  @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate paymentDate,
+            Pageable pageable
+    ) {
+        return ResponseEntity.ok(
+                paymentService.gePaymentHistoryFiltered(className, studentId, paymentDate, pageable)
+        );
     }
 
+    @GetMapping("/history/student/{studentId}")
+    public ResponseEntity<Page<Payment>> getPaymentHistoryOfStudent(
+            @PathVariable String studentId, Pageable pageable,
+            @RequestHeader(name = "Authorization") String authorizationHeader){
+        studentId = authService.getUserIdFromToken(authorizationHeader);
+        return ResponseEntity.ok(
+                paymentService.getPaymentHistoryByStudentId(studentId, pageable));
+    }
+
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT +  "')")
     @GetMapping("/history/details/{paymentId}")
     public ResponseEntity<PaymentResponseDTO> getPaymentHistoryDetails(@PathVariable String paymentId) {
         PaymentResponseDTO dto = paymentService.getPaymentHistoryDetails(paymentId);
+        System.out.println("DTO => " + dto);
         if (dto == null) {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(dto);
-    }
-
-    @GetMapping("/history/all")
-    public ResponseEntity<List<PaymentHistoryDTO>> getAllPaymentHistory() {
-        List<PaymentHistoryDTO> allHistory = paymentService.getAllPaymentHistory();
-        return ResponseEntity.ok(allHistory);
-    }
-
-    @GetMapping("/history/class/{className}")
-    public ResponseEntity<List<PaymentHistoryDTO>> getPaymentHistoryByClass(
-            @PathVariable String className) {
-        List<PaymentHistoryDTO> classHistory = paymentService.getPaymentHistoryByClass(className);
-        return ResponseEntity.ok(classHistory);
     }
 
     @GetMapping("/history/receipt/{paymentId}")
