@@ -1,10 +1,11 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.BusFees;
 import com.indraacademy.ias_management.service.BusFeesService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Controller;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -34,6 +35,7 @@ public class BusFeesController {
         return busFeesService.getBusFeesOfDistance(distance, academicYear);
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{academicYear}")
     public ResponseEntity<List<BusFees>> updateFees(@PathVariable String academicYear, @RequestBody List<BusFees> updatedFees) {
         return ResponseEntity.ok(busFeesService.updateBusFees(academicYear, updatedFees));

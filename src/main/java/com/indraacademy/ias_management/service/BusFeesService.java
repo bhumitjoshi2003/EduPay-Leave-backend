@@ -3,7 +3,6 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.entity.BusFees;
 import com.indraacademy.ias_management.repository.BusFeesRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 

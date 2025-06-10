@@ -1,11 +1,14 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.entity.FeeStructure;
+import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.format.DateTimeFormatter;
@@ -15,17 +18,99 @@ import java.util.Optional;
 @Service
 public class StudentFeesService {
 
-    @Autowired
-    private StudentFeesRepository studentFeesRepository;
+    @Autowired private StudentFeesRepository studentFeesRepository;
+    @Autowired private FeeStructureService feeStructureService;
+    @Autowired private BusFeesService busFeesService;
 
     public List<StudentFees> getStudentFees(String studentId, String year) {
-        return studentFeesRepository.findByStudentIdAndYear(studentId, year);
+        return studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, year);
     }
 
     public StudentFees updateStudentFees(StudentFees studentFees) {
         studentFees.setManuallyPaid(studentFees.getManuallyPaid());
         studentFees.setManualPaymentReceived(studentFees.getManualPaymentReceived());
         return studentFeesRepository.save(studentFees);
+    }
+
+    @Transactional
+    public void markFeesAsPaid(Payment payment) {
+        String studentId = payment.getStudentId();
+        String session = payment.getSession();
+        String selectedMonths = payment.getMonth();
+
+        FeeStructure feeStructure = feeStructureService.getFeeStructuresByAcademicYearAndClassName(session, payment.getClassName());
+
+        boolean firstMonth = true;
+        for (int i = 0; i < 12; i++) {
+            if (selectedMonths.charAt(i) == '1') {
+                int monthNumber = i + 1;
+                Optional<StudentFees> optionalStudentFees = Optional.ofNullable(studentFeesRepository.findByStudentIdAndYearAndMonth(studentId, session, monthNumber));
+
+                if (optionalStudentFees.isPresent()) {
+                    StudentFees studentFees = optionalStudentFees.get();
+
+                    double totalAmount = 0.0;
+                    totalAmount += feeStructure.getTuitionFee();
+
+                    if(firstMonth){
+                        totalAmount += payment.getAdditionalCharges();
+                        firstMonth = false;
+                    }
+
+                    int lateFee = calculateLateFees(monthNumber);
+                    totalAmount += lateFee;
+
+                    if(i == 0) {
+                        totalAmount += feeStructure.getLabCharges();
+                        totalAmount += feeStructure.getEcaProject();
+                        totalAmount += feeStructure.getExaminationFee();
+                        totalAmount += feeStructure.getAnnualCharges();
+                    }
+
+                    if(studentFees.getTakesBus()){
+                        Double distance = studentFees.getDistance();
+                        BigDecimal busFees = busFeesService.getBusFeesOfDistance(distance, session);
+                        totalAmount += busFees.doubleValue();
+                    }
+
+                    studentFees.setPaid(true);
+                    studentFees.setManuallyPaid(false);
+                    studentFees.setManualPaymentReceived(BigDecimal.valueOf(0));
+                    studentFees.setAmountPaid(BigDecimal.valueOf(totalAmount));
+                    studentFeesRepository.save(studentFees);
+                }
+                else{
+                    System.err.println("No StudentFees found for student " + studentId + ", session " + session + ", month " + monthNumber);
+                }
+            }
+        }
+    }
+
+    private int calculateLateFees(int academicFeeMonth) {
+        LocalDate today = LocalDate.now();
+        int currentCalendarMonth = today.getMonthValue();
+        int academicCurrentMonth = getAcademicMonth(currentCalendarMonth);
+
+        int monthDifference = academicCurrentMonth - academicFeeMonth;
+
+        if (monthDifference <= 0) return 0;
+
+        // Using the same lateFeePerDay logic as in the Angular component
+        int[] lateFeePerDay = {12, 15, 18, 21};
+
+        if (monthDifference >= 9) {
+            return 30 * lateFeePerDay[3];
+        } else if (monthDifference >= 6) {
+            return 30 * lateFeePerDay[2];
+        } else if (monthDifference >= 3) {
+            return 30 * lateFeePerDay[1];
+        } else {
+            return 30 * lateFeePerDay[0];
+        }
+    }
+
+    private int getAcademicMonth(int month) {
+        return (month >= 4) ? (month - 3) : (month + 9);
     }
 
     public Optional<StudentFees> getStudentFee(String studentId, String year, Integer month) {
@@ -54,21 +139,13 @@ public class StudentFeesService {
                     currentYear.format(DateTimeFormatter.ofPattern("yyyy"));
         }
 
-        List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYear(studentId, academicYear);
+        List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, academicYear);
         for (StudentFees fee : studentFeesList) {
             fee.setClassName(newClassName);
             studentFeesRepository.save(fee);
         }
     }
 
-    /**
-     * Creates default StudentFees entries for a student for an entire academic year.
-     * @param studentId The ID of the student.
-     * @param className The class name of the student.
-     * @param year The academic year.
-     * @param takesBus Whether the student takes the bus.
-     * @param distance The distance the student travels by bus.
-     */
     @Transactional
     public void createDefaultStudentFees(String studentId, String className, String year, Boolean takesBus, Double distance) {
         // Assuming an academic year has 12 months.
@@ -101,7 +178,7 @@ public class StudentFeesService {
                         currentYear.format(DateTimeFormatter.ofPattern("yyyy"));
             }
 
-            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYear(studentId, academicYear);
+            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, academicYear);
 
             for (StudentFees fee : studentFeesList) {
                 if (fee.getMonth() >= effectiveFromMonth) {

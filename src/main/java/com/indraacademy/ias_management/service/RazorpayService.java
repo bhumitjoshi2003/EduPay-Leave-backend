@@ -18,17 +18,14 @@ import java.util.Optional;
 @Service
 public class RazorpayService {
 
-    @Autowired
-    private PaymentRepository paymentRepository;
-
-    @Autowired
-    private StudentRepository studentRepository; // Inject StudentRepository to fetch student email
+    @Autowired private PaymentRepository paymentRepository;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private AttendanceService attendanceService;
+    @Autowired private EmailService emailService;
+    @Autowired private StudentFeesService studentFeesService;
 
     private static final String KEY_ID = "rzp_test_uzFJONVXH4vqou";
     private static final String KEY_SECRET = "Ykv9bqCiYKyxz6y0OSWwwKX4";
-
-    @Autowired
-    private EmailService emailService;
 
     private final RazorpayClient razorpayClient;
 
@@ -86,7 +83,7 @@ public class RazorpayService {
                 payment.setClassName((String) orderDetails.get("className"));
                 payment.setSession((String) orderDetails.get("session"));
                 payment.setMonth((String) orderDetails.get("month"));
-                payment.setAmount((Integer) orderDetails.get("amount")/100); // Amount is in paisa from Razorpay
+                payment.setAmount((Integer) orderDetails.get("amount")/100);
                 payment.setPaymentId(paymentId);
                 payment.setOrderId(orderId);
                 payment.setBusFee((Integer) orderDetails.get("busFee"));
@@ -104,6 +101,10 @@ public class RazorpayService {
                 paymentRepository.save(payment);
                 response.put("success", true);
                 response.put("message", "Payment Verified Successfully");
+
+                attendanceService.updateChargePaidAfterPayment((String) orderDetails.get("studentId"), (String) orderDetails.get("session"));
+
+                studentFeesService.markFeesAsPaid(payment);
 
                 // --- Asynchronous Email Sending ---
                 String studentId = (String) orderDetails.get("studentId");

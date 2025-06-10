@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.dto.ChangePasswordRequest;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.UserRepository;
+import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.util.JwtUtil;
 import io.jsonwebtoken.Jwts;
@@ -27,6 +28,7 @@ public class AuthController {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtUtil jwtUtil;
     @Autowired private EmailService emailService;
+    @Autowired private AuthService authService;
 
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
@@ -61,9 +63,13 @@ public class AuthController {
     }
 
     @PostMapping("/change-password")
-    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
-
-        Optional<User> userOptional = userRepository.findByUserId(request.getUserId());
+    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request, @RequestHeader(name = "Authorization") String authorizationHeader) {
+        String userId = authService.getUserIdFromToken(authorizationHeader);
+        String role = authService.getRoleFromToken(authorizationHeader);
+        if(role.equals("ADMIN")){
+            userId = request.getUserId();
+        }
+        Optional<User> userOptional = userRepository.findByUserId(userId);
         if (userOptional.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
         }
@@ -74,6 +80,9 @@ public class AuthController {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid old password");
             }
         }
+        if(!role.equals("ADMIN") && (request.getOldPassword() == null || request.getOldPassword().isEmpty())){
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid old password");
+        }
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
@@ -81,9 +90,9 @@ public class AuthController {
     }
 
     @PostMapping("/request-password-reset")
-    public ResponseEntity<?> requestPasswordReset(@RequestBody User request) { // Changed request body to User
-        String userId = request.getUserId();
-        String email = request.getEmail(); // Extract email from the request
+    public ResponseEntity<?> requestPasswordReset(@RequestBody User request, @RequestHeader(name = "Authorization") String authorizationHeader) { // Changed request body to User
+        String userId = authService.getUserIdFromToken(authorizationHeader);
+        String email = request.getEmail();
 
         if (userId == null || userId.isEmpty() || email == null || email.isEmpty()) {
             return ResponseEntity.badRequest().body("User ID and Email are required.");
