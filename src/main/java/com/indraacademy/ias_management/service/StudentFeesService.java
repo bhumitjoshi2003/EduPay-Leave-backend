@@ -23,7 +23,7 @@ public class StudentFeesService {
     @Autowired private BusFeesService busFeesService;
 
     public List<StudentFees> getStudentFees(String studentId, String year) {
-        return studentFeesRepository.findByStudentIdAndYear(studentId, year);
+        return studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, year);
     }
 
     public StudentFees updateStudentFees(StudentFees studentFees) {
@@ -139,7 +139,7 @@ public class StudentFeesService {
                     currentYear.format(DateTimeFormatter.ofPattern("yyyy"));
         }
 
-        List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYear(studentId, academicYear);
+        List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, academicYear);
         for (StudentFees fee : studentFeesList) {
             fee.setClassName(newClassName);
             studentFeesRepository.save(fee);
@@ -178,7 +178,7 @@ public class StudentFeesService {
                         currentYear.format(DateTimeFormatter.ofPattern("yyyy"));
             }
 
-            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYear(studentId, academicYear);
+            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, academicYear);
 
             for (StudentFees fee : studentFeesList) {
                 if (fee.getMonth() >= effectiveFromMonth) {
