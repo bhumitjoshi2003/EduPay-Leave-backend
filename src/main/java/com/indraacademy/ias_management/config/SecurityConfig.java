@@ -50,6 +50,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/change-password"
                                 ).authenticated()
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/events/**").authenticated()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
