@@ -84,4 +84,8 @@ public class AttendanceService {
             e.printStackTrace();
         }
     }
+
+    public void deleteAttendanceByDateAndClass(LocalDate date, String className) {
+        attendanceRepository.deleteByAbsentDateAndClassName(date, className);
+    }
 }
