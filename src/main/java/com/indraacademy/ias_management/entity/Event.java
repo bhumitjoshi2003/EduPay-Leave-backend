@@ -2,8 +2,6 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -24,6 +22,9 @@ public class Event {
 
     @Column(nullable = false)
     private String title;
+
+    @Column(name = "image_url")
+    private String imageUrl;
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String description;
@@ -67,9 +68,10 @@ public class Event {
     @Column(name = "created_by", nullable = false)
     private String createdBy;
 
-    public Event(Long id, String title, String description, LocalDate startDate, LocalDate endDate, LocalTime startTime, LocalTime endTime, String location, String category, List<String> targetAudience, List<String> videoLinks, LocalDate createdAt, LocalDate updatedAt, String createdBy) {
+    public Event(Long id, String title, String imageUrl, String description, LocalDate startDate, LocalDate endDate, LocalTime startTime, LocalTime endTime, String location, String category, List<String> targetAudience, List<String> videoLinks, LocalDate createdAt, LocalDate updatedAt) {
         this.id = id;
         this.title = title;
+        this.imageUrl = imageUrl;
         this.description = description;
         this.startDate = startDate;
         this.endDate = endDate;
@@ -81,7 +83,6 @@ public class Event {
         this.videoLinks = videoLinks;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
-        this.createdBy = createdBy;
     }
 
     public Event() {}
@@ -101,6 +102,10 @@ public class Event {
     public void setTitle(String title) {
         this.title = title;
     }
+
+    public String getImageUrl() { return imageUrl; }
+
+    public void setImageUrl(String imageUrl) { this.imageUrl = imageUrl; }
 
     public String getDescription() {
         return description;
