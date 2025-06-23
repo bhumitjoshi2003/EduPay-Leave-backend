@@ -40,4 +40,5 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
 
     @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND EXTRACT(YEAR FROM a.absentDate) = :year AND EXTRACT(MONTH FROM a.absentDate) = :month AND a.absentDate >= :startDate")
     long countAbsencesFromDate(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("startDate") LocalDate startDate);
+
 }

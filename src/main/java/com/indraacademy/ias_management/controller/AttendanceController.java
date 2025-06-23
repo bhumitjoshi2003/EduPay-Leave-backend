@@ -55,4 +55,19 @@ public class AttendanceController {
         long count = attendanceService.getTotalUnappliedLeaveCount(studentId, session);
         return ResponseEntity.ok(count);
     }
+
+    @PreAuthorize("hasAnyRole('" + Role.TEACHER + "', '" + Role.ADMIN + "')")
+    @DeleteMapping("/date/{date}/class/{className}")
+    public ResponseEntity<String> deleteAttendanceByDateAndClass(
+            @PathVariable LocalDate date,
+            @PathVariable String className) {
+        try {
+            attendanceService.deleteAttendanceByDateAndClass(date, className);
+            return ResponseEntity.ok("Attendance records deleted successfully.");
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to delete attendance records.");
+        }
+    }
 }

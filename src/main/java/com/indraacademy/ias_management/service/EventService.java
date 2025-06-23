@@ -52,6 +52,7 @@ public class EventService {
             event.setTargetAudience(eventDetails.getTargetAudience());
             event.setVideoLinks(eventDetails.getVideoLinks());
             event.setCreatedBy(authService.getUserIdFromToken(authorizationHeader));
+            event.setImageUrl(eventDetails.getImageUrl());
             return eventRepository.save(event);
         }).orElseThrow(() -> new IllegalArgumentException("Event not found with ID: " + id));
     }
