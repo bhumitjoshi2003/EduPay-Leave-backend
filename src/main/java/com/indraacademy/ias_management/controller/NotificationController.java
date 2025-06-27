@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.UserNotificationDTO;
 import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.service.AuthService;
@@ -9,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import com.indraacademy.ias_management.entity.UserNotification;
 
@@ -23,6 +25,7 @@ public class NotificationController {
     @Autowired private NotificationService notificationService;
     private static final Logger logger = LoggerFactory.getLogger(NotificationController.class);
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> createNotification(@RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader){
         logger.info("Received notification object for creation: {}", notification);
@@ -71,6 +74,7 @@ public class NotificationController {
         return new ResponseEntity<>(notifications, HttpStatus.OK);
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
     public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader) {
         logger.info("Updating notification with ID: {}", id);
@@ -86,6 +90,7 @@ public class NotificationController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteNotification(@PathVariable Long id) {
         logger.info("Deleting notification with ID: {}", id);
