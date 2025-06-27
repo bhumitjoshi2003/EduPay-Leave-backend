@@ -70,7 +70,9 @@ public class StudentFeesService {
                     if(studentFees.getTakesBus()){
                         Double distance = studentFees.getDistance();
                         BigDecimal busFees = busFeesService.getBusFeesOfDistance(distance, session);
-                        totalAmount += busFees.doubleValue();
+                        if (busFees != null) {
+                            totalAmount += busFees.doubleValue();
+                        }
                     }
 
                     studentFees.setPaid(true);

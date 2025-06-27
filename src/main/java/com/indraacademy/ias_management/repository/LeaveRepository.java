@@ -33,4 +33,6 @@ public interface LeaveRepository extends JpaRepository<Leave, String> {
 
     @Query("SELECT studentId FROM Leave WHERE leaveDate = :date AND className = :className")
     List<String> findByLeaveDateAndClassName(@Param("date") String date, @Param("className") String className);
+
+    Leave findByStudentIdAndLeaveDate(String studentId, String leaveDate);
 }
