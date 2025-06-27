@@ -9,7 +9,7 @@ Welcome to the **EduPay-Leave-Backend** repository! 🚀 This is the backend sys
 - **☕ Java 21** - High-performance backend language.
 - **⚡ Spring Boot** - Framework for building RESTful APIs efficiently.
 - **💳 Razorpay** - Seamless payment gateway integration.
-- **🗄️ MySQL** - Reliable relational database for storing data.
+- **🗄️ PostgreSQL** - Reliable relational database for storing data.
 
 ---
 
@@ -36,7 +36,7 @@ Before getting started, ensure you have the following installed:
    - Create a database (e.g., `edu_pay_leave_db`).
    - Update `application.properties` with database credentials:
      ```properties
-     spring.datasource.url=jdbc:mysql://localhost:3306/edu_pay_leave_db
+     spring.datasource.url=jdbc:postgresql://localhost:5432/edu_pay_leave_db
      spring.datasource.username=root
      spring.datasource.password=password
      ```
@@ -69,7 +69,7 @@ Before getting started, ensure you have the following installed:
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | MySQL database connection URL |
+| `DATABASE_URL` | PostgreSQL database connection URL |
 | `RAZORPAY_KEY` | Razorpay API key |
 | `RAZORPAY_SECRET` | Razorpay secret key |
 
