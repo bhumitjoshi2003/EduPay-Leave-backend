@@ -19,7 +19,7 @@ Before getting started, ensure you have the following installed:
 
 ✅ **Java 21** - [Download](https://adoptopenjdk.net/)  
 ✅ **Maven** - Build and dependency management tools  
-✅ **MySQL** - Database server for storing application data   
+✅ **PostgreSQL** - Database server for storing application data   
 ✅ **Razorpay Account** - Account with API keys for payments
 
 ---
@@ -57,7 +57,7 @@ Before getting started, ensure you have the following installed:
 
 ## 🚀 Running the Application
 
-1️⃣ **Start the Database Server** (MySQL should be running).  
+1️⃣ **Start the Database Server** (PostgreSQl should be running).  
 3️⃣ **Run the Backend Application:**
    ```bash
    mvn spring-boot:run  
