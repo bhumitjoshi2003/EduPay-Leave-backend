@@ -1,10 +1,12 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Event;
 import com.indraacademy.ias_management.service.EventService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -17,6 +19,7 @@ public class EventController {
 
     @Autowired private EventService eventService;
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> createEvent(@RequestBody Event event, @RequestHeader(name = "Authorization") String authorizationHeader) {
         try {
@@ -48,6 +51,7 @@ public class EventController {
         return new ResponseEntity<>(events, HttpStatus.OK);
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
     public ResponseEntity<Event> updateEvent(@PathVariable Long id, @RequestBody Event eventDetails,  @RequestHeader(name = "Authorization") String authorizationHeader) {
         try {
@@ -58,6 +62,7 @@ public class EventController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteEvent(@PathVariable Long id) {
         try {

@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.service.FileStorageService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
@@ -7,6 +8,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,6 +25,7 @@ public class FileUploadController {
     @Autowired
     private FileStorageService fileStorageService;
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping("/uploadEventImage")
     public ResponseEntity<Map<String, String>> uploadEventImage(@RequestParam("file") MultipartFile file) {
         try {
@@ -34,7 +37,7 @@ public class FileUploadController {
         }
     }
 
-    // Endpoint to serve images
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @GetMapping("/event-images/{filename:.+}") // Regex to allow dot in filename
     public ResponseEntity<Resource> downloadEventImage(@PathVariable String filename, HttpServletRequest request) {
         Resource resource = null;

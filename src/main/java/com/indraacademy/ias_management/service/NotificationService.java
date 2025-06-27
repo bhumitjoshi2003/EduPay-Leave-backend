@@ -5,11 +5,15 @@ import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
+import com.indraacademy.ias_management.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.Period;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -22,6 +26,7 @@ public class NotificationService {
     @Autowired private AuthService authService;
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private UserNotificationRepository userNotificationRepository;
+    @Autowired private UserRepository userRepository;
 
     @Transactional
     public Notification createBroadNotification(Notification notification, String authorizationHeader) {
@@ -39,7 +44,7 @@ public class NotificationService {
         notification.setTitle(title);
         notification.setMessage(message);
         notification.setType(type);
-        notification.setAudience(null); // Explicitly setting audience to null for personalized
+        notification.setAudience(userId);
         notification.setCreatedAt(LocalDateTime.now());
         Notification savedNotification = notificationRepository.save(notification);
 
@@ -54,35 +59,49 @@ public class NotificationService {
 
     @Transactional
     public List<UserNotificationDTO> getNotificationsForUser(String userId, String userRole) {
+        // 1. Fetch existing user-specific notifications (these might be direct or previously created from broad notifications)
+        // This is important to retain the 'isRead' status and individual notification IDs for the user.
         List<UserNotification> userNotifications = new ArrayList<>(userNotificationRepository.findByUserIdOrderByCreatedAtDesc(userId));
 
+        // 2. Fetch broad/general notifications based on user's role and their specific ID if applicable
         List<Notification> broadNotifications = notificationRepository.findAll().stream()
                 .filter(notification -> {
                     String audience = notification.getAudience();
-                    if (audience == null) return false;
+                    // Removed: if (audience == null) return false; // As per your clarification, audience is never null
 
-                    return switch (audience) {
-                        case "ALL" -> true;
-                        case "STUDENTS" -> "STUDENT".equals(userRole);
-                        case "TEACHERS" -> "TEACHER".equals(userRole);
-                        default -> false;
-                    };
+                    // For students, include "ALL", "STUDENTS", OR their specific userId
+                    if ("STUDENT".equals(userRole)) {
+                        return "ALL".equals(audience) ||
+                                "STUDENTS".equals(audience) ||
+                                userId.equals(audience); // This correctly picks up S101 for student S101
+                    }
+                    // For teachers, include "ALL", "TEACHERS", OR their specific userId (assuming T101 for teacher T101)
+                    else if ("TEACHER".equals(userRole)) {
+                        return "ALL".equals(audience) ||
+                                "TEACHERS".equals(audience) ||
+                                userId.equals(audience); // Added for teachers too, assuming similar personalized notifications
+                    }
+                    // For any other roles, or if a notification has an audience not matching role or user ID
+                    return false;
                 })
                 .toList();
 
+        // 3. Create UserNotification entries for relevant broad notifications if they don't exist for this user
         for (Notification broadNotif : broadNotifications) {
             if (!userNotificationRepository.existsByUserIdAndNotificationId(userId, broadNotif.getId())) {
                 UserNotification newUserNotif = new UserNotification();
                 newUserNotif.setUserId(userId);
                 newUserNotif.setNotification(broadNotif);
                 newUserNotif.setIsRead(false);
-                newUserNotif.setCreatedAt(broadNotif.getCreatedAt());
+                newUserNotif.setCreatedAt(broadNotif.getCreatedAt()); // Use broad notification's creation time
                 userNotifications.add(newUserNotif);
             }
         }
+
+        // 4. Sort the combined list by creation date in descending order
         userNotifications.sort((n1, n2) -> n2.getCreatedAt().compareTo(n1.getCreatedAt()));
 
-        // Convert UserNotification entities to DTOs here
+        // 5. Convert UserNotification entities to DTOs for the API response
         return userNotifications.stream()
                 .map(userNotif -> {
                     UserNotificationDTO dto = new UserNotificationDTO();
@@ -94,13 +113,12 @@ public class NotificationService {
                         dto.setTitle(userNotif.getNotification().getTitle());
                         dto.setMessage(userNotif.getNotification().getMessage());
                         dto.setType(userNotif.getNotification().getType());
+                        // Add other fields from Notification here if needed in DTO
                     }
                     return dto;
                 })
                 .collect(Collectors.toList());
     }
-
-
 
     @Transactional
     public long getUnreadNotificationCount(String userId, String userRole) {
@@ -112,8 +130,8 @@ public class NotificationService {
     public void markAllNotificationsAsRead(String userId) {
         List<UserNotification> unreadPersonalizedNotifications = userNotificationRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId)
                 .stream()
-                .filter(un -> un.getNotification().getAudience() == null) // Filter for personalized
-                .collect(Collectors.toList());
+                .filter(un -> un.getNotification().getAudience().equals(userId))
+                .toList();
 
         for (UserNotification notification : unreadPersonalizedNotifications) {
             notification.setIsRead(true);
@@ -154,6 +172,17 @@ public class NotificationService {
     }
 
     public List<Notification> getAllNotifications() {
-        return notificationRepository.findAll();
+        return notificationRepository.findByCreatedByIsNotNull();
+    }
+
+    @Scheduled(cron = "0 0 2 * * ?")
+    @Transactional
+    public void cleanupOldNotifications() {
+        LocalDateTime twoMonthsAgo = LocalDateTime.now().minus(Period.ofMonths(1));
+        List<Notification> oldNotifications = notificationRepository.findByCreatedAtBefore(twoMonthsAgo);
+
+        for (Notification notification : oldNotifications) {
+            deleteNotification(notification.getId());
+        }
     }
 }

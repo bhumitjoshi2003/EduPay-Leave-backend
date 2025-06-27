@@ -60,4 +60,5 @@ public class UserNotificationDTO {
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
     }
+
 }
