@@ -33,12 +33,6 @@ public class AdminController {
         return ResponseEntity.ok(admins);
     }
 
-    @PostMapping
-    public ResponseEntity<Admin> createAdmin(@RequestBody Admin admin) {
-        Admin createdAdmin = adminService.createAdmin(admin);
-        return ResponseEntity.ok(createdAdmin);
-    }
-
     @PutMapping("/{adminId}")
     public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin) {
         Admin updatedAdmin = adminService.updateAdmin(adminId, admin);
