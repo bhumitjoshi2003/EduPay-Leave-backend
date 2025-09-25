@@ -90,9 +90,9 @@ public class AuthController {
     }
 
     @PostMapping("/request-password-reset")
-    public ResponseEntity<?> requestPasswordReset(@RequestBody User request, @RequestHeader(name = "Authorization") String authorizationHeader) { // Changed request body to User
-        String userId = authService.getUserIdFromToken(authorizationHeader);
+    public ResponseEntity<?> requestPasswordReset(@RequestBody User request) {
         String email = request.getEmail();
+        String userId = request.getUserId();
 
         if (userId == null || userId.isEmpty() || email == null || email.isEmpty()) {
             return ResponseEntity.badRequest().body("User ID and Email are required.");

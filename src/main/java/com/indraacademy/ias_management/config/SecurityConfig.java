@@ -48,10 +48,6 @@ public class SecurityConfig {
                                 "/api/auth/request-password-reset").permitAll()
                         .requestMatchers("/uploads/events/images/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
-                        .requestMatchers("/attendance/counts/**").permitAll()
-                        .requestMatchers("/api/auth/change-password"
-                                ).authenticated()
-                        .requestMatchers("/api/auth/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
