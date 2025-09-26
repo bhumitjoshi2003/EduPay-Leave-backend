@@ -7,86 +7,138 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
-import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
-
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Objects;
 
 @Service
 public class PaymentService {
 
-    @Autowired
-    private PaymentRepository paymentRepository;
+    private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
-    @Autowired
-    private ModelMapper modelMapper;
+    @Autowired private PaymentRepository paymentRepository;
+    @Autowired private ModelMapper modelMapper; // Retained, though not used in DTO mapping below
 
     public PaymentResponseDTO getPaymentHistoryDetails(String paymentId) {
-        Payment payment = paymentRepository.findByPaymentId(paymentId);
-        if (payment == null) {
+        if (paymentId == null || paymentId.trim().isEmpty()) {
+            log.warn("Attempted to get payment details with null/empty ID.");
             return null;
         }
-        return new PaymentResponseDTO(
-                payment.getStudentId(),
-                payment.getStudentName(),
-                payment.getClassName(),
-                payment.getSession(),
-                payment.getMonth(),
-                payment.getAmount(),
-                payment.getPaymentId(),
-                payment.getOrderId(),
-                payment.getPaymentDate(),
-                payment.getStatus(),
-                payment.getBusFee(),
-                payment.getTuitionFee(),
-                payment.getAnnualCharges(),
-                payment.getLabCharges(),
-                payment.getEcaProject(),
-                payment.getExaminationFee(),
-                payment.getAmountPaid(),
-                payment.getAdditionalCharges(),
-                payment.getLateFees()
-        );
+        log.info("Fetching payment history details for payment ID: {}", paymentId);
+
+        try {
+            Payment payment = paymentRepository.findByPaymentId(paymentId);
+            if (payment == null) {
+                log.warn("Payment not found with ID: {}", paymentId);
+                return null;
+            }
+
+            // Using DTO constructor as in original code
+            return new PaymentResponseDTO(
+                    payment.getStudentId(),
+                    payment.getStudentName(),
+                    payment.getClassName(),
+                    payment.getSession(),
+                    payment.getMonth(),
+                    payment.getAmount(),
+                    payment.getPaymentId(),
+                    payment.getOrderId(),
+                    payment.getPaymentDate(),
+                    payment.getStatus(),
+                    payment.getBusFee(),
+                    payment.getTuitionFee(),
+                    payment.getAnnualCharges(),
+                    payment.getLabCharges(),
+                    payment.getEcaProject(),
+                    payment.getExaminationFee(),
+                    payment.getAmountPaid(),
+                    payment.getAdditionalCharges(),
+                    payment.getLateFees()
+            );
+        } catch (DataAccessException e) {
+            log.error("Data access error fetching payment details for ID: {}", paymentId, e);
+            throw new RuntimeException("Could not retrieve payment details due to data access issue", e);
+        }
     }
 
     public Page<Payment> gePaymentHistoryFiltered(String className, String studentId, LocalDate paymentDate, Pageable pageable) {
-        if (className != null && studentId != null && paymentDate != null) {
-            return paymentRepository.findByClassNameAndStudentIdContainingAndPaymentDate(className, studentId, paymentDate, pageable);
-        } else if (className != null && studentId != null) {
-            return paymentRepository.findByClassNameAndStudentIdContaining(className, studentId, pageable);
-        } else if (className != null && paymentDate != null) {
-            return paymentRepository.findByClassNameAndPaymentDate(className, paymentDate, pageable);
-        } else if (studentId != null && paymentDate != null) {
-            return paymentRepository.findByStudentIdContainingAndPaymentDate(studentId, paymentDate, pageable);
-        } else if (className != null) {
-            return paymentRepository.findByClassName(className, pageable);
-        } else if (studentId != null) {
-            return paymentRepository.findByStudentIdContaining(studentId, pageable);
-        } else if (paymentDate != null) {
-            return paymentRepository.findByPaymentDate(paymentDate, pageable);
-        } else {
-            return paymentRepository.findAll(pageable);
+        log.info("Filtering payment history. Class: {}, Student ID: {}, Date: {}", className, studentId, paymentDate);
+
+        try {
+            if (className != null && studentId != null && paymentDate != null) {
+                return paymentRepository.findByClassNameAndStudentIdContainingAndPaymentDate(className, studentId, paymentDate, pageable);
+            } else if (className != null && studentId != null) {
+                return paymentRepository.findByClassNameAndStudentIdContaining(className, studentId, pageable);
+            } else if (className != null && paymentDate != null) {
+                return paymentRepository.findByClassNameAndPaymentDate(className, paymentDate, pageable);
+            } else if (studentId != null && paymentDate != null) {
+                return paymentRepository.findByStudentIdContainingAndPaymentDate(studentId, paymentDate, pageable);
+            } else if (className != null) {
+                return paymentRepository.findByClassName(className, pageable);
+            } else if (studentId != null) {
+                return paymentRepository.findByStudentIdContaining(studentId, pageable);
+            } else if (paymentDate != null) {
+                return paymentRepository.findByPaymentDate(paymentDate, pageable);
+            } else {
+                return paymentRepository.findAll(pageable);
+            }
+        } catch (DataAccessException e) {
+            log.error("Data access error during payment history filtering. Class: {}, Student ID: {}, Date: {}", className, studentId, paymentDate, e);
+            throw new RuntimeException("Could not retrieve filtered payment history due to data access issue", e);
         }
     }
 
     public Page<Payment> getPaymentHistoryByStudentId(String studentId, Pageable pageable){
-        return paymentRepository.findByStudentId(studentId, pageable);
+        if (studentId == null || studentId.trim().isEmpty()) {
+            log.warn("Attempted to get payment history with null/empty student ID.");
+            return Page.empty(pageable);
+        }
+        log.info("Fetching payment history for student ID: {}", studentId);
+
+        try {
+            return paymentRepository.findByStudentId(studentId, pageable);
+        } catch (DataAccessException e) {
+            log.error("Data access error fetching payment history for student ID: {}", studentId, e);
+            throw new RuntimeException("Could not retrieve payment history by student ID due to data access issue", e);
+        }
     }
 
     public byte[] generatePaymentReceiptPdf(String paymentId) {
-        Payment payment = paymentRepository.findByPaymentId(paymentId);
-        if (payment == null) return null;
+        if (paymentId == null || paymentId.trim().isEmpty()) {
+            log.error("Cannot generate PDF: Payment ID is null or empty.");
+            return null;
+        }
+        log.info("Starting PDF generation for payment ID: {}", paymentId);
 
-        try (PDDocument document = new PDDocument()) {
+        Payment payment;
+        try {
+            payment = paymentRepository.findByPaymentId(paymentId);
+        } catch (DataAccessException e) {
+            log.error("Data access error fetching payment for PDF generation ID: {}", paymentId, e);
+            throw new RuntimeException("Could not retrieve payment data for PDF due to data access issue", e);
+        }
+
+        if (payment == null) {
+            log.warn("Payment not found for PDF generation ID: {}", paymentId);
+            return null;
+        }
+
+        try (PDDocument document = new PDDocument();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+
             PDPage page = new PDPage();
             document.addPage(page);
 
@@ -102,18 +154,23 @@ public class PaymentService {
             float rowHeight = 20;
             float sectionSpacing = 15;
 
-            PDImageXObject logo = PDImageXObject.createFromByteArray(
-                    document,
-                    new ClassPathResource("images/logo.png").getInputStream().readAllBytes(),
-                    "logo"
-            );
+            // 1. Load Logo
+            try (var logoStream = new ClassPathResource("images/logo.png").getInputStream()) {
+                PDImageXObject logo = PDImageXObject.createFromByteArray(
+                        document,
+                        logoStream.readAllBytes(),
+                        "logo"
+                );
+                float imageWidth = 100;
+                float imageHeight = 100;
+                float centerX = (page.getMediaBox().getWidth() - imageWidth) / 2;
+                content.drawImage(logo, centerX, y - imageHeight, imageWidth, imageHeight);
+                y -= (imageHeight + 35);
+            } catch (IOException e) {
+                log.error("Failed to load or draw logo image.", e);
+            }
 
-            float imageWidth = 100;
-            float imageHeight = 100;
-            float centerX = (page.getMediaBox().getWidth() - imageWidth) / 2;
-            content.drawImage(logo, centerX, y - imageHeight, imageWidth, imageHeight);
-            y -= (imageHeight + 35);
-
+            // 2. School Name Header
             content.setNonStrokingColor(60, 90, 40);
             content.addRect(margin, y, width, 25);
             content.fill();
@@ -131,6 +188,7 @@ public class PaymentService {
             content.showText(schoolName);
             content.endText();
 
+            // 3. Fee Receipt Title
             String feeReceiptText = "Fee Receipt";
             float feeFontSize = 17;
             float feeTextWidth = boldFont.getStringWidth(feeReceiptText) / 1000 * feeFontSize;
@@ -138,14 +196,12 @@ public class PaymentService {
             float feeTextX = (pageWidth - feeTextWidth) / 2;
             float feeTextY = y + 7 - 40;
 
-
             content.setNonStrokingColor(0, 0, 0);
             content.beginText();
             content.setFont(boldFont, feeFontSize);
             content.newLineAtOffset(feeTextX, feeTextY);
             content.showText(feeReceiptText);
             content.endText();
-
 
             float lineY = feeTextY - 3;
             content.setStrokingColor(0, 0, 0);
@@ -156,21 +212,24 @@ public class PaymentService {
 
             y -= (rowHeight + sectionSpacing + 30);
 
+            // 4. Draw Sections
+            DateTimeFormatter paymentDateFormat = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a");
+
             y = drawSection(content, "Student Info", boldFont, regularFont, y, width, tableX, rowHeight,
                     new String[][]{
-                            {"Student ID", payment.getStudentId()},
-                            {"Name", payment.getStudentName()},
-                            {"Class", payment.getClassName()},
-                            {"Session", payment.getSession()}
+                            {"Student ID", Objects.toString(payment.getStudentId(), "")},
+                            {"Name", Objects.toString(payment.getStudentName(), "")},
+                            {"Class", Objects.toString(payment.getClassName(), "")},
+                            {"Session", Objects.toString(payment.getSession(), "")}
                     });
 
             y -= sectionSpacing;
             y = drawSection(content, "Payment Info", boldFont, regularFont, y, width, tableX, rowHeight,
                     new String[][]{
-                            {"Payment ID", payment.getPaymentId()},
-                            {"Order ID", payment.getOrderId()},
-                            {"Date", payment.getPaymentDate().format(DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a"))},
-                            {"Status", payment.getStatus().toUpperCase()}
+                            {"Payment ID", Objects.toString(payment.getPaymentId(), "")},
+                            {"Order ID", Objects.toString(payment.getOrderId(), "")},
+                            {"Date", payment.getPaymentDate() != null ? payment.getPaymentDate().format(paymentDateFormat) : "N/A"},
+                            {"Status", Objects.toString(payment.getStatus(), "N/A").toUpperCase()}
                     });
 
             y -= sectionSpacing;
@@ -195,16 +254,20 @@ public class PaymentService {
 
             content.close();
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
             document.save(baos);
+            log.info("PDF generated successfully for payment ID: {}", paymentId);
             return baos.toByteArray();
 
         } catch (IOException e) {
-            e.printStackTrace();
-            return null;
+            log.error("IOException occurred during PDF generation for payment ID: {}", paymentId, e);
+            throw new RuntimeException("Failed to generate PDF receipt due to I/O error.", e);
+        } catch (Exception e) {
+            log.error("Unexpected error occurred during PDF generation for payment ID: {}", paymentId, e);
+            throw new RuntimeException("An unexpected error occurred during PDF generation.", e);
         }
     }
 
+    // Helper method implementation is retained from original code to avoid introducing errors
     private float drawSection(PDPageContentStream content, String title,
                               PDType1Font headerFont, PDType1Font textFont,
                               float y, float width, float x, float rowHeight, String[][] rows) throws IOException {
@@ -214,7 +277,7 @@ public class PaymentService {
             if (row != null) rowsCount++;
         }
 
-        float sectionHeight = rowHeight * (rowsCount + 1); // +1 for header
+        float sectionHeight = rowHeight * (rowsCount + 1);
 
         // Draw background for header
         content.setNonStrokingColor(210, 210, 210);
@@ -222,7 +285,7 @@ public class PaymentService {
         content.fill();
 
         // Draw border rectangle around the entire section
-        content.setStrokingColor(0, 0, 0); // black border
+        content.setStrokingColor(0, 0, 0);
         content.setLineWidth(0.5f);
         content.addRect(x, y - sectionHeight + rowHeight, width, sectionHeight);
         content.stroke();
@@ -243,9 +306,9 @@ public class PaymentService {
 
             // Draw row background color (alternating)
             if (color % 2 == 0) {
-                content.setNonStrokingColor(255, 255, 255); // white
+                content.setNonStrokingColor(255, 255, 255);
             } else {
-                content.setNonStrokingColor(240, 240, 240); // light grey
+                content.setNonStrokingColor(240, 240, 240);
             }
             content.addRect(x, currentY, width, rowHeight);
             content.fill();
@@ -267,9 +330,9 @@ public class PaymentService {
             content.setNonStrokingColor(0, 0, 0);
             content.beginText();
             if ("Total Amount".equals(row[0]) || "Paid".equals(row[0])) {
-                content.setFont(headerFont, 11);  // Bold font
+                content.setFont(headerFont, 11);
             } else {
-                content.setFont(textFont, 11);    // Regular font
+                content.setFont(textFont, 11);
             }
             content.newLineAtOffset(x + 5, currentY + 5);
             content.showText(row[0]);
@@ -278,9 +341,9 @@ public class PaymentService {
             // Draw value text
             content.beginText();
             if ("Total Amount".equals(row[0]) || "Paid".equals(row[0])) {
-                content.setFont(headerFont, 11);  // Bold font
+                content.setFont(headerFont, 11);
             } else {
-                content.setFont(textFont, 11);    // Regular font
+                content.setFont(textFont, 11);
             }
             content.newLineAtOffset(colDividerX + 5, currentY + 5);
             content.showText(row[1]);
