@@ -50,7 +50,7 @@ public class RazorpayService {
         }
     }
 
-    public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int additionalCharges, int lateFees) {
+    public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int additionalCharges, int lateFees, int platformFee) {
         if (amount <= 0 || studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to create order with invalid amount or missing student ID. Amount: {}", amount);
             throw new IllegalArgumentException("Invalid amount or missing student ID for order creation.");
@@ -87,6 +87,7 @@ public class RazorpayService {
             response.put("amountPaid", order.get("amount")); // Amount in paisa
             response.put("additionalCharges", additionalCharges);
             response.put("lateFees", lateFees);
+            response.put("platformFee", platformFee);
 
             log.info("Razorpay order created successfully. Order ID: {}", Optional.ofNullable(order.get("id")));
             return response;
@@ -153,6 +154,7 @@ public class RazorpayService {
             payment.setRazorpaySignature(signature);
             payment.setAdditionalCharges((Integer) orderDetails.get("additionalCharges"));
             payment.setLateFees((Integer) orderDetails.get("lateFees"));
+            payment.setPlatformFee((Integer) orderDetails.get("platformFee"));
 
             Payment savedPayment = paymentRepository.save(payment);
             log.info("Payment saved successfully to DB. Record ID: {}", savedPayment.getId());
@@ -163,7 +165,7 @@ public class RazorpayService {
             log.debug("Attendance and StudentFees marked as paid.");
 
             // 4. Notification
-            String successNotificationMessage = String.format("Your fee payment of INR %.2f has been successfully processed. Payment ID: %s", amountInRupees, paymentId);
+            String successNotificationMessage = String.format("Your fee payment of ₹%.2f has been successfully processed. Payment ID: %s", amountInRupees, paymentId);
             // Assuming Long.valueOf(savedPayment.getId()) is the correct type based on previous services
             String relatedEntityId = (savedPayment.getId() != null) ? String.valueOf(savedPayment.getId()) : null;
 

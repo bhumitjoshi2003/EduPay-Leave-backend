@@ -23,10 +23,11 @@ public class PaymentResponseDTO {
     private int amountPaid;
     private int additionalCharges;
     private int lateFees;
+    private int platformFee;
 
     public PaymentResponseDTO() {}
 
-    public PaymentResponseDTO(String studentId, String studentName, String className, String session, String month, int amount, String paymentId, String orderId, LocalDateTime paymentDate, String status, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int amountPaid, int additionalCharges, int lateFees) {
+    public PaymentResponseDTO(String studentId, String studentName, String className, String session, String month, int amount, String paymentId, String orderId, LocalDateTime paymentDate, String status, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int amountPaid, int additionalCharges, int lateFees, int platformFee) {
         this.studentId = studentId;
         this.studentName = studentName;
         this.className = className;
@@ -46,6 +47,7 @@ public class PaymentResponseDTO {
         this.amountPaid = amountPaid;
         this.additionalCharges = additionalCharges;
         this.lateFees = lateFees;
+        this.platformFee = platformFee;
     }
 
     public Long getId() {
@@ -203,4 +205,8 @@ public class PaymentResponseDTO {
     public void setLateFees(int lateFees) {
         this.lateFees = lateFees;
     }
+
+    public int getPlatformFee() { return platformFee; }
+
+    public void setPlatformFee(int platformFee) { this.platformFee = platformFee; }
 }
