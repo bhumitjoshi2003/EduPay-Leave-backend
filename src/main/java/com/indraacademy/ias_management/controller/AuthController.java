@@ -41,9 +41,6 @@ public class AuthController {
     @Value("${frontend.url}")
     private String frontendUrl;
 
-    @Value("${registration.secret-key}")
-    private String registrationSecretKey;
-
     @GetMapping("/hari")
     public String message() {
         return "HARIBOL";
@@ -77,22 +74,17 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> loginUser(@RequestBody User user) {
         log.info("Received login request for User: {}", user.getUserId());
-
         if (user.getUserId() == null || user.getPassword() == null) {
             return ResponseEntity.badRequest().body("User ID and password are required.");
         }
-
         Optional<User> foundUser = userRepository.findByUserId(user.getUserId());
         if (foundUser.isPresent() && passwordEncoder.matches(user.getPassword(), foundUser.get().getPassword())) {
             log.info("Login successful for user: {}", user.getUserId());
             String token = Jwts.builder()
-                    .setSubject(foundUser.get().getUserId())
-                    .claim("role", foundUser.get().getRole())
-                    .claim("userId", foundUser.get().getUserId())
-                    .setIssuedAt(new Date())
+                    .setSubject(foundUser.get().getUserId()).claim("role", foundUser.get().getRole())
+                    .claim("userId", foundUser.get().getUserId()).setIssuedAt(new Date())
                     .setExpiration(new Date(System.currentTimeMillis() + 3600000))
-                    .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
-                    .compact();
+                    .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256).compact();
             return ResponseEntity.ok(token);
         }
         log.warn("Login failed for user: {}. Invalid credentials.", user.getUserId());

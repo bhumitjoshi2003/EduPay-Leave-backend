@@ -66,7 +66,8 @@ public class PaymentService {
                     payment.getExaminationFee(),
                     payment.getAmountPaid(),
                     payment.getAdditionalCharges(),
-                    payment.getLateFees()
+                    payment.getLateFees(),
+                    payment.getPlatformFee()
             );
         } catch (DataAccessException e) {
             log.error("Data access error fetching payment details for ID: {}", paymentId, e);
@@ -242,7 +243,8 @@ public class PaymentService {
                             {"ECA Project", "Rs. " + payment.getEcaProject()},
                             {"Examination Fee", "Rs. " + payment.getExaminationFee()},
                             payment.getAdditionalCharges() > 0 ? new String[]{"Leave Charges", "Rs. " + payment.getAdditionalCharges()} : null,
-                            payment.getLateFees() > 0 ? new String[]{"Late Fees", "Rs. " + payment.getLateFees()} : null
+                            payment.getLateFees() > 0 ? new String[]{"Late Fees", "Rs. " + payment.getLateFees()} : null,
+                            payment.getPlatformFee() > 0 ? new String[]{"Platform Fee", "Rs. " + payment.getPlatformFee()} : null
                     });
 
             y -= sectionSpacing;

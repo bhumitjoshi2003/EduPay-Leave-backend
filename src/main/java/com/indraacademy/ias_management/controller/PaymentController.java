@@ -63,7 +63,9 @@ public class PaymentController {
             int additionalCharges = ((Number) paymentData.getOrDefault("additionalCharges", 0)).intValue();
             int lateFees = ((Number) paymentData.getOrDefault("lateFees", 0)).intValue();
 
-            Map<String, Object> order = razorpayService.createOrder(amount, studentId, studentName, className, session, month, busFee, tuitionFee, annualCharges, labCharges, ecaProject, examinationFee, additionalCharges, lateFees);
+            int platformFee = ((Number) paymentData.getOrDefault("platformFee", 0)).intValue();
+
+            Map<String, Object> order = razorpayService.createOrder(amount, studentId, studentName, className, session, month, busFee, tuitionFee, annualCharges, labCharges, ecaProject, examinationFee, additionalCharges, lateFees, platformFee);
             log.info("Razorpay order created successfully for student {}.", studentId);
             return ResponseEntity.ok(order);
         } catch (ClassCastException | NullPointerException e) {

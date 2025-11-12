@@ -76,6 +76,9 @@ public class Payment {
     @Column(name = "late_fees")
     private int lateFees;
 
+    @Column(name = "platform_fee")
+    private int platformFee;
+
 
     // Constructors, getters, setters
     public Payment() {
@@ -83,6 +86,7 @@ public class Payment {
         this.status = "success";
         this.additionalCharges = 0; // Initialize to 0
         this.lateFees = 0;           // Initialize to 0
+        this.platformFee = 0;
     }
 
     public Payment(String studentId, String studentName, String className, String session, String month, int amount, String paymentId, String orderId, LocalDateTime paymentDate, String status, int busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, boolean paidManually, int amountPaid, int additionalCharges, int lateFees) {
@@ -279,4 +283,8 @@ public class Payment {
     public void setLateFees(int lateFees) {
         this.lateFees = lateFees;
     }
+
+    public int getPlatformFee() { return platformFee; }
+
+    public void setPlatformFee(int platformFee) { this.platformFee = platformFee; }
 }
