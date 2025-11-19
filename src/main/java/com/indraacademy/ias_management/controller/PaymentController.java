@@ -129,19 +129,12 @@ public class PaymentController {
             @PathVariable String studentId, Pageable pageable,
             @RequestHeader(name = "Authorization") String authorizationHeader){
 
-        String authenticatedStudentId = authService.getUserIdFromToken(authorizationHeader);
-        // Enforce security: student can only see their own history
-        if (authService.getRoleFromToken(authorizationHeader).equals(Role.STUDENT) && !authenticatedStudentId.equals(studentId)) {
-            log.warn("Security violation attempt: Student {} tried to access payment history for {}", authenticatedStudentId, studentId);
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-        }
-
-        log.info("Request for payment history for student: {}", authenticatedStudentId);
+        log.info("Request for payment history for student: {}", studentId);
         try {
             return ResponseEntity.ok(
-                    paymentService.getPaymentHistoryByStudentId(authenticatedStudentId, pageable));
+                    paymentService.getPaymentHistoryByStudentId(studentId, pageable));
         } catch (IllegalArgumentException e) {
-            log.error("Invalid student ID for payment history: {}", authenticatedStudentId);
+            log.error("Invalid student ID for payment history: {}", studentId);
             return ResponseEntity.badRequest().build();
         }
     }

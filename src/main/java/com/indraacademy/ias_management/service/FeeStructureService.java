@@ -75,8 +75,8 @@ public class FeeStructureService {
             log.error("Cannot update fee structures: Academic year is null or empty.");
             throw new IllegalArgumentException("Academic year must be provided.");
         }
-        if (updatedFees == null || updatedFees.isEmpty()) {
-            log.warn("Attempted to update fee structures for year {} with null or empty list. No action taken.", academicYear);
+        if (updatedFees == null) {
+            log.warn("Attempted to update fee structures for year {} with null value. No action taken.", academicYear);
             return Collections.emptyList();
         }
         log.info("Starting transactional update of fee structures for academic year: {}. {} new fee structures provided.", academicYear, updatedFees.size());

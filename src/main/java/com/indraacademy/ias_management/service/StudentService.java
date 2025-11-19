@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
@@ -99,6 +101,32 @@ public class StudentService {
         }
     }
 
+    public List<Student> getActiveStudentsByClass(String className) {
+        return studentRepository.findByClassNameAndStatus(className, StudentStatus.ACTIVE);
+    }
+
+    public List<Student> getUpcomingStudentsByClass(String className) {
+        return studentRepository.findByClassNameAndStatus(className, StudentStatus.UPCOMING);
+    }
+
+    public List<Student> getInactiveStudentsByClass(String className) {
+        return studentRepository.findByClassNameAndStatus(className, StudentStatus.INACTIVE);
+    }
+
+    private StudentStatus calculateStatus(LocalDate joiningDate, LocalDate leavingDate) {
+        LocalDate today = LocalDate.now();
+
+        if (joiningDate != null && joiningDate.isAfter(today)) {
+            return StudentStatus.UPCOMING;
+        }
+
+        if (leavingDate != null && !leavingDate.isAfter(today)) {
+            return StudentStatus.INACTIVE;
+        }
+
+        return StudentStatus.ACTIVE;
+    }
+
     @Transactional
     public Student updateStudent(String studentId, Student updatedStudent, Integer effectiveFromMonth) {
         if (studentId == null || studentId.trim().isEmpty() || updatedStudent == null) {
@@ -147,6 +175,19 @@ public class StudentService {
 
             // Ensure the correct ID is set before saving the updated object
             updatedStudent.setStudentId(studentId);
+
+            boolean joiningDateChanged = !Objects.equals(existingStudent.getJoiningDate(), updatedStudent.getJoiningDate());
+            boolean leavingDateChanged = !Objects.equals(existingStudent.getLeavingDate(), updatedStudent.getLeavingDate());
+
+            if (joiningDateChanged || leavingDateChanged) {
+                StudentStatus newStatus = calculateStatus(
+                        updatedStudent.getJoiningDate(),
+                        updatedStudent.getLeavingDate()
+                );
+                updatedStudent.setStatus(newStatus);
+                log.info("Status updated for student {} → {}", studentId, newStatus);
+            }
+
             Student savedStudent = studentRepository.save(updatedStudent);
             log.info("Successfully saved updated student record for ID: {}", studentId);
 

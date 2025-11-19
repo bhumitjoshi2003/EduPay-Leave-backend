@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
@@ -86,8 +87,8 @@ public class StudentController {
             Student updatedStudent = objectMapper.convertValue(requestBody.get("studentDetails"), Student.class);
             Integer effectiveFromMonth = (Integer) requestBody.get("effectiveFromMonth");
 
-            if (updatedStudent == null || effectiveFromMonth == null) {
-                log.warn("Update student failed: Missing studentDetails or effectiveFromMonth.");
+            if (updatedStudent == null) {
+                log.warn("Update student failed: Missing studentDetails");
                 return ResponseEntity.badRequest().build();
             }
 
@@ -109,20 +110,28 @@ public class StudentController {
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/new/class/{className}")
     public List<StudentLeaveDTO> getNewStudentsByClass(@PathVariable String className) {
-        log.info("Request to get new students (after today) for class: {}", className);
-        List<Student> students = studentRepository.findByClassNameAndJoiningDateGreaterThan(className, LocalDate.now());
-        return students.stream()
-                .map(student -> new StudentLeaveDTO(student.getStudentId(), student.getName()))
+        log.info("Request to get UPCOMING students for class: {}", className);
+        return studentService.getUpcomingStudentsByClass(className).stream()
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
                 .collect(Collectors.toList());
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
-    @GetMapping("/class/{className}")
-    public List<StudentLeaveDTO> findByClassNameAndJoiningDate(@PathVariable String className) {
-        log.info("Request to get current students (before/on today) for class: {}", className);
-        List<Student> students = studentRepository.findByClassNameAndJoiningDateLessThanEqual(className, LocalDate.now());
-        return students.stream()
-                .map(student -> new StudentLeaveDTO(student.getStudentId(), student.getName()))
+    @GetMapping("/active/class/{className}")
+    public List<StudentLeaveDTO> findActiveStudentsByClass(@PathVariable String className) {
+        log.info("Request to get ACTIVE students for class: {}", className);
+        return studentService.getActiveStudentsByClass(className).stream()
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
                 .collect(Collectors.toList());
     }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/inactive/class/{className}")
+    public List<StudentLeaveDTO> getInactiveStudentsByClass(@PathVariable String className) {
+        log.info("Request to get INACTIVE students for class: {}", className);
+        return studentService.getInactiveStudentsByClass(className).stream()
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .collect(Collectors.toList());
+    }
+
 }

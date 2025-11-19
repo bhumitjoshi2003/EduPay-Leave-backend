@@ -50,6 +50,13 @@ public class Student {
     @Column(name = "joining_date")
     private LocalDate joiningDate;
 
+    @Column(name = "leaving_date")
+    private LocalDate leavingDate;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status")
+    private StudentStatus status;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -191,4 +198,12 @@ public class Student {
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
+
+    public LocalDate getLeavingDate() { return leavingDate; }
+
+    public StudentStatus getStatus() { return status; }
+
+    public void setLeavingDate(LocalDate leavingDate) { this.leavingDate = leavingDate; }
+
+    public void setStatus(StudentStatus status) { this.status = status; }
 }

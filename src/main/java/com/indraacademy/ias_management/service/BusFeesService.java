@@ -78,8 +78,8 @@ public class BusFeesService {
             log.error("Cannot update bus fees. Academic year is null or empty.");
             throw new IllegalArgumentException("Academic year must not be null or empty for update operation.");
         }
-        if (updatedFees == null || updatedFees.isEmpty()) {
-            log.warn("Attempted to update bus fees for year {} with null or empty list of fees. No action taken.", academicYear);
+        if (updatedFees == null) {
+            log.warn("Attempted to update bus fees for year {} with null value. No action taken.", academicYear);
             return Collections.emptyList();
         }
         log.info("Starting transactional update of bus fees for academic year: {}. {} new fee structures provided.", academicYear, updatedFees.size());
