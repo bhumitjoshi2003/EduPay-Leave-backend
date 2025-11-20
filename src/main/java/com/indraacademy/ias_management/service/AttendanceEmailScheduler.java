@@ -35,7 +35,7 @@ public class AttendanceEmailScheduler {
         List<Attendance> attendanceList = null;
 
         try {
-            attendanceList = attendanceRepository.findByAbsentDate(today);
+            attendanceList = attendanceRepository.findByDate(today);
             if (attendanceList.isEmpty()) {
                 log.info("No absent students found for today: {}", today);
                 return;

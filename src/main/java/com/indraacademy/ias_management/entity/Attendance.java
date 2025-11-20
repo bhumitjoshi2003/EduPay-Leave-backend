@@ -18,14 +18,14 @@ public class Attendance {
     private String studentId;
     private boolean chargePaid;
     @JsonFormat(pattern = "yyyy-MM-dd")
-    private LocalDate absentDate;
+    private LocalDate date;
     private String className;
 
     public Attendance() {}
 
-    public Attendance(boolean chargePaid, LocalDate absentDate, String className) {
+    public Attendance(boolean chargePaid, LocalDate date, String className) {
         this.chargePaid = chargePaid;
-        this.absentDate = absentDate;
+        this.date = date;
         this.className = className;
     }
 
@@ -54,12 +54,12 @@ public class Attendance {
         this.chargePaid = chargePaid;
     }
 
-    public LocalDate getAbsentDate() {
-        return absentDate;
+    public LocalDate getDate() {
+        return date;
     }
 
-    public void setAbsentDate(LocalDate absentDate) {
-        this.absentDate = absentDate;
+    public void setDate(LocalDate date) {
+        this.date = date;
     }
 
     public String getClassName() {
