@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.util.JwtUtil;
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import org.slf4j.Logger;
@@ -72,24 +73,70 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> loginUser(@RequestBody User user) {
-        log.info("Received login request for User: {}", user.getUserId());
-        if (user.getUserId() == null || user.getPassword() == null) {
-            return ResponseEntity.badRequest().body("User ID and password are required.");
+    public ResponseEntity<?> login(@RequestBody User user) {
+        Optional<User> found = userRepository.findByUserId(user.getUserId());
+        if (found.isEmpty() || !passwordEncoder.matches(user.getPassword(), found.get().getPassword())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid credentials");
         }
-        Optional<User> foundUser = userRepository.findByUserId(user.getUserId());
-        if (foundUser.isPresent() && passwordEncoder.matches(user.getPassword(), foundUser.get().getPassword())) {
-            log.info("Login successful for user: {}", user.getUserId());
-            String token = Jwts.builder()
-                    .setSubject(foundUser.get().getUserId()).claim("role", foundUser.get().getRole())
-                    .claim("userId", foundUser.get().getUserId()).setIssuedAt(new Date())
-                    .setExpiration(new Date(System.currentTimeMillis() + 3600000))
-                    .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256).compact();
-            return ResponseEntity.ok(token);
-        }
-        log.warn("Login failed for user: {}. Invalid credentials.", user.getUserId());
-        return ResponseEntity.badRequest().body("Invalid credentials");
+
+        String accessToken = Jwts.builder()
+                .setSubject(found.get().getUserId())
+                .claim("role", found.get().getRole())
+                .claim("userId", found.get().getUserId())
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + (1000 * 60 * 60))) // 60 min
+                .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
+                .compact();
+
+        String refreshToken = Jwts.builder()
+                .setSubject(found.get().getUserId())
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 7))) // 7 days
+                .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
+                .compact();
+
+        return ResponseEntity.ok(new HashMap<String, String>() {{
+            put("accessToken", accessToken);
+            put("refreshToken", refreshToken);
+        }});
     }
+
+
+    @PostMapping("/refresh-token")
+    public ResponseEntity<?> refreshToken(@RequestBody HashMap<String, String> request) {
+
+        String refreshToken = request.get("refreshToken");
+        if (refreshToken == null) {
+            return ResponseEntity.badRequest().body("Refresh Token missing");
+        }
+
+        try {
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(jwtUtil.getPublicKey())
+                    .build()
+                    .parseClaimsJws(refreshToken)
+                    .getBody();
+
+            String userId = claims.getSubject();
+            Optional<User> userOptional = userRepository.findByUserId(userId);
+
+            if (userOptional.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid refresh token");
+            }
+
+            // Create new Access Token
+            String newAccessToken = jwtUtil.generateAccessToken(userId, userOptional.get().getRole());
+
+            return ResponseEntity.ok(new HashMap<String, String>() {{
+                put("accessToken", newAccessToken);
+            }});
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token expired");
+        }
+    }
+
+
 
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request, @RequestHeader(name = "Authorization") String authorizationHeader) {

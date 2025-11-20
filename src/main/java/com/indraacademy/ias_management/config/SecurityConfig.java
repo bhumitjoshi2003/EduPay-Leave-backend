@@ -45,7 +45,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/login",
                                 "/api/auth/reset-password",
                                 "/api/auth/register",
-                                "/api/auth/request-password-reset").permitAll()
+                                "/api/auth/request-password-reset",
+                                "/api/auth/refresh-token").permitAll()
                         .requestMatchers("/uploads/events/images/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
                         .anyRequest().authenticated()
