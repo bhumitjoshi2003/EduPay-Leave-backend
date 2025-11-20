@@ -33,13 +33,13 @@ public class AttendanceService {
             return;
         }
 
-        LocalDate absentDate = attendanceList.getFirst().getAbsentDate();
+        LocalDate absentDate = attendanceList.getFirst().getDate();
         String className = attendanceList.getFirst().getClassName();
         log.info("Saving attendance for date: {} and class: {}. List size: {}", absentDate, className, attendanceList.size());
 
         try {
             log.debug("Deleting existing attendance records for date: {} and class: {}", absentDate, className);
-            attendanceRepository.deleteByAbsentDateAndClassName(absentDate, className);
+            attendanceRepository.deleteByDateAndClassName(absentDate, className);
 
             log.debug("Saving new attendance records.");
             attendanceRepository.saveAll(attendanceList);
@@ -57,7 +57,7 @@ public class AttendanceService {
         }
         log.info("Fetching attendance for date: {} and class: {}", absentDate, className);
         try {
-            List<Attendance> attendanceList = attendanceRepository.findByAbsentDateAndClassName(absentDate, className);
+            List<Attendance> attendanceList = attendanceRepository.findByDateAndClassName(absentDate, className);
             log.info("Found {} attendance records for date: {} and class: {}", attendanceList.size(), absentDate, className);
             return attendanceList;
         } catch (DataAccessException e) {
@@ -77,7 +77,7 @@ public class AttendanceService {
         }
         log.info("Calculating attendance counts for student ID: {} for year: {} month: {}", studentId, year, month);
 
-        Student student = null;
+        Student student;
         try {
             Optional<Student> studentOptional = studentRepository.findById(studentId);
             if (studentOptional.isEmpty()) {
@@ -91,39 +91,76 @@ public class AttendanceService {
         }
 
         LocalDate studentJoiningDate = student.getJoiningDate();
-        long studentAbsentCount = 0L;
-        long totalWorkingDays = 0L;
+        LocalDate studentLeavingDate = student.getLeavingDate();
+
+        long studentAbsentCount;
+        long totalWorkingDays;
 
         try {
             studentAbsentCount = attendanceRepository.countAbsences(studentId, year, month);
-            totalWorkingDays = attendanceRepository.countAbsences("X", year, month);
+            // dummy student "X" = total working days (days school was open)
+            totalWorkingDays   = attendanceRepository.countAbsences("X", year, month);
         } catch (DataAccessException e) {
             log.error("Data access error calculating absence counts for student ID: {}", studentId, e);
             throw new RuntimeException("Could not calculate attendance counts", e);
         }
 
-        if (studentJoiningDate == null || studentJoiningDate.getYear() > year || (studentJoiningDate.getYear() == year && studentJoiningDate.getMonthValue() >  month)) {
+        // Student joined after this month?
+        boolean joinedAfterMonth = (studentJoiningDate != null) &&
+                (studentJoiningDate.getYear() > year ||
+                        (studentJoiningDate.getYear() == year && studentJoiningDate.getMonthValue() > month));
+
+        // Student left before this month?
+        boolean leftBeforeMonth = (studentLeavingDate != null) &&
+                (studentLeavingDate.getYear() < year ||
+                        (studentLeavingDate.getYear() == year && studentLeavingDate.getMonthValue() < month));
+
+        // If no joining date, or joined after this month, or left before this month → no data
+        if (studentJoiningDate == null || joinedAfterMonth || leftBeforeMonth) {
             studentAbsentCount = 0L;
-            totalWorkingDays = 0L;
-            log.info("Student ID: {} joined after or in the requested month/year. Counts set to 0.", studentId);
-        } else if (studentJoiningDate.getYear() == year && studentJoiningDate.getMonthValue() == month) {
-            LocalDate joinDate = studentJoiningDate;
-            try {
-                long daysBeforeJoin = attendanceRepository.countAbsencesBeforeJoin("X", year, month, joinDate);
-                totalWorkingDays -= daysBeforeJoin;
-                log.debug("Adjusted total working days for student ID: {} due to mid-month joining. Adjusted by: {}", studentId, daysBeforeJoin);
-            } catch (DataAccessException e) {
-                log.error("Data access error adjusting total working days for student ID: {}", studentId, e);
-                // Proceed with unadjusted counts rather than failing the whole operation
+            totalWorkingDays   = 0L;
+            log.info("Student ID: {} was not active in {}/{}. Counts set to 0.", studentId, month, year);
+        } else {
+            // ✅ Joined in the same month/year → exclude days before joining
+            if (studentJoiningDate.getYear() == year &&
+                    studentJoiningDate.getMonthValue() == month) {
+
+                LocalDate joinDate = studentJoiningDate;
+                try {
+                    long daysBeforeJoin = attendanceRepository.countAbsencesBeforeJoin("X", year, month, joinDate);
+                    totalWorkingDays -= daysBeforeJoin;
+                    log.debug("Adjusted total working days for student ID: {} due to mid-month joining. Adjusted by: {}",
+                            studentId, daysBeforeJoin);
+                } catch (DataAccessException e) {
+                    log.error("Data access error adjusting total working days (before join) for student ID: {}", studentId, e);
+                }
+            }
+
+            // ✅ Left in the same month/year → exclude days after leaving
+            if (studentLeavingDate != null &&
+                    studentLeavingDate.getYear() == year &&
+                    studentLeavingDate.getMonthValue() == month) {
+
+                LocalDate leaveDate = studentLeavingDate;
+                try {
+                    long daysAfterLeave = attendanceRepository.countAbsencesAfterLeave("X", year, month, leaveDate);
+                    totalWorkingDays -= daysAfterLeave;
+                    log.debug("Adjusted total working days for student ID: {} due to mid-month leaving. Adjusted by: {}",
+                            studentId, daysAfterLeave);
+                } catch (DataAccessException e) {
+                    log.error("Data access error adjusting total working days (after leave) for student ID: {}", studentId, e);
+                }
             }
         }
 
         counts.put("studentAbsent", studentAbsentCount);
         counts.put("totalAbsent", totalWorkingDays);
-        log.info("Finished calculating counts for student ID: {}. Student Absent: {}, Total Absent: {}", studentId, studentAbsentCount, totalWorkingDays);
+        log.info("Finished calculating counts for student ID: {}. Student Absent: {}, Total Working Days: {}",
+                studentId, studentAbsentCount, totalWorkingDays);
 
         return counts;
     }
+
 
     public LocalDate getStudentJoinDate(String studentId) {
         if (studentId == null || studentId.trim().isEmpty()) {
@@ -209,7 +246,7 @@ public class AttendanceService {
         }
         log.info("Deleting attendance for date: {} and class: {}", date, className);
         try {
-            attendanceRepository.deleteByAbsentDateAndClassName(date, className);
+            attendanceRepository.deleteByDateAndClassName(date, className);
             log.info("Successfully deleted attendance records for date: {} and class: {}", date, className);
         } catch (DataAccessException e) {
             log.error("Data access error deleting attendance for date {} and class {}", date, className, e);
