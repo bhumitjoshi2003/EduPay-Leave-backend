@@ -41,18 +41,14 @@ public class JwtUtil {
     }
 
     private Claims extractAllClaims(String token) {
-        try {
-            return Jwts
-                    .parserBuilder()
-                    .setSigningKey(getPublicKey())
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-        } catch (Exception e) {
-            System.err.println("Error parsing token: " + e.getMessage());
-            return null;
-        }
+        return Jwts
+                .parserBuilder()
+                .setSigningKey(getPublicKey())
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
     }
+
 
     public boolean validateToken(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
@@ -74,7 +70,7 @@ public class JwtUtil {
                 .setClaims(claims)
                 .setSubject(username)
                 .setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 30))
+                .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 60))
                 .signWith(getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
     }
@@ -108,4 +104,16 @@ public class JwtUtil {
     public String extractUserRole(String token) {
         return extractClaim(token, claims -> claims.get("role", String.class));
     }
+
+    public String generateAccessToken(String userId, String role) {
+        return Jwts.builder()
+                .setSubject(userId)
+                .claim("role", role)
+                .claim("userId", userId)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + (1000 * 60 * 60))) // 60 min
+                .signWith(getPrivateKey(), SignatureAlgorithm.RS256)
+                .compact();
+    }
+
 }
