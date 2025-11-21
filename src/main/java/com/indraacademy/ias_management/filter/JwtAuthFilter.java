@@ -6,6 +6,10 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -23,6 +27,8 @@ import java.util.List;
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
+
     @Autowired
     private JwtUtil jwtUtil;
 
@@ -30,60 +36,74 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private UserDetailsService userDetailsService;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain)
             throws ServletException, IOException {
 
         String path = request.getRequestURI();
+
+        // Bypass auth for public endpoints
         if (path.startsWith("/api/auth/login")
                 || path.startsWith("/api/auth/refresh-token")
                 || path.startsWith("/api/auth/request-password-reset")
-                || path.startsWith("/api/auth/reset-password")
-        ) {
+                || path.startsWith("/api/auth/reset-password")) {
+
             filterChain.doFilter(request, response);
             return;
         }
 
         String authHeader = request.getHeader("Authorization");
-        String token = null;
-        String userId = null;
-        String role = null;
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            token = authHeader.substring(7);
+
+            String token = authHeader.substring(7);
+            String userId;
+            String role;
+
             try {
                 userId = jwtUtil.extractUserId(token);
                 role = jwtUtil.extractUserRole(token);
-                System.out.println("JWT from Request: " + token);
-                System.out.println("Extracted Id: " + userId);
-                System.out.println("Extracted role: " + role);
+
+                log.debug("JWT extracted for userId={}, role={}", userId, role);
 
             } catch (ExpiredJwtException e) {
+                log.warn("Expired JWT token for request: {}", request.getRequestURI());
                 response.setStatus(HttpStatus.UNAUTHORIZED.value());
                 response.getWriter().write("{\"message\": \"Token Expired\"}");
                 return;
             } catch (Exception e) {
-                // Other JWT parsing errors
+                log.error("Invalid JWT token: {}", e.getMessage());
                 response.setStatus(HttpStatus.UNAUTHORIZED.value());
                 return;
             }
 
-        }
+            // Only authenticate if no context exists yet
+            if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                try {
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
 
-        if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            try {
-                UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
-                if (jwtUtil.validateToken(token, userDetails)) {
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(userDetails, null, List.of(new SimpleGrantedAuthority("ROLE_" + role)));
-                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
-                    System.out.println("JWT Valid");
-                } else {
-                    System.out.println("JWT Invalid");
+                    if (jwtUtil.validateToken(token, userDetails)) {
+                        UsernamePasswordAuthenticationToken authentication =
+                                new UsernamePasswordAuthenticationToken(
+                                        userDetails, null,
+                                        List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                                );
+
+                        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                        log.debug("JWT validated & security context set for userId={}", userId);
+
+                    } else {
+                        log.warn("JWT validation failed for userId={}", userId);
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to load user details for userId={}: {}", userId, e.getMessage());
                 }
-            } catch (Exception e) {
-                System.out.println("Error loading user: " + e.getMessage());
             }
         }
+
         filterChain.doFilter(request, response);
     }
 }

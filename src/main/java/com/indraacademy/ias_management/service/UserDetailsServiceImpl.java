@@ -43,8 +43,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         }
 
         List<GrantedAuthority> authorities = new ArrayList<>();
-        // Note: The original logic only added the role, but the returned UserDetails was constructed with an empty list.
-        // Correcting the UserDetails return to include the authorities list.
         authorities.add(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
 
         return new org.springframework.security.core.userdetails.User(user.getUserId(), user.getPassword(), authorities);
@@ -58,7 +56,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
             return userRepository.findUserByUserId(userId);
         } catch (DataAccessException e) {
             log.error("Data access error finding user by ID: {}", userId, e);
-            // Propagate as runtime exception if data access fails
             throw new RuntimeException("Failed to retrieve user data.", e);
         }
     }
@@ -72,7 +69,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
 
         try {
             Optional<User> userOptional = userRepository.findUserByUserId(userId);
-            // Original code used .get() which risks NoSuchElementException if Optional is empty.
             User user = userOptional.orElseThrow(() -> {
                 log.warn("User not found to determine role for ID: {}", userId);
                 return new UsernameNotFoundException("User not found to determine role.");
