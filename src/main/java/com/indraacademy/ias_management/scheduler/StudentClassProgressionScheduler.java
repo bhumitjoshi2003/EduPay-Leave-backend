@@ -10,7 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.LocalDateTime;
 import java.time.Year;
 import java.util.List;
 
@@ -23,75 +22,65 @@ public class StudentClassProgressionScheduler {
     private StudentRepository studentRepository;
 
     /**
-     * Runs every year on 1st April at 00:00 to promote students to the next class.
+     * Runs every year on 26th March at 00:00 to promote students to the next class.
      */
     @Transactional
-    @Scheduled(cron = "0 0 0 1 4 *") // 00:00 on the 1st of April every year
+    @Scheduled(cron = "0 0 0 26 3 *")
     public void incrementStudentClasses() {
         log.info("Starting scheduled student class progression for new academic year.");
         Year currentYear = Year.now();
         int currentAcademicYear = currentYear.getValue();
 
         try {
-            List<Student> allStudents = studentRepository.findAll();
+            List<Student> students = studentRepository.findByStatus("ACTIVE");
             int promotedCount = 0;
 
-            for (Student student : allStudents) {
-                LocalDateTime createdAt = student.getCreatedAt();
-                boolean isNewEnrollment = createdAt != null && createdAt.getYear() >= currentAcademicYear;
+            for (Student student : students) {
+                String currentClass = student.getClassName();
+                String nextClass = determineNextClass(currentClass);
 
-                if (!isNewEnrollment) {
-                    String currentClass = student.getClassName();
-                    String nextClass = determineNextClass(currentClass);
-
-                    if (nextClass != null) {
-                        log.debug("Promoting student ID: {} from class {} to {}",
-                                student.getStudentId(), currentClass, nextClass);
-                        student.setClassName(nextClass);
-                        studentRepository.save(student);
-                        promotedCount++;
-                    } else {
-                        log.info("Student ID: {} is graduating or already graduated (Class: {}). Skipping promotion.",
-                                student.getStudentId(), currentClass);
-                    }
-                } else {
-                    log.debug("Skipping student ID: {} as they were created in the current academic year ({}).",
-                            student.getStudentId(), currentAcademicYear);
+                if (nextClass == null) {
+                    log.info("Skipping student ID {} — final class reached ({})",
+                            student.getStudentId(), currentClass);
+                    continue;
                 }
+
+                log.debug("Promoting {} from {} → {}",
+                        student.getStudentId(), currentClass, nextClass);
+
+                student.setClassName(nextClass);
+                studentRepository.save(student);
+                promotedCount++;
             }
-            log.info("Completed student class progression. Successfully promoted {} students.", promotedCount);
+
+            log.info("Promotion completed. Total students promoted: {}", promotedCount);
+
         } catch (DataAccessException e) {
-            log.error("Data access error during student class progression.", e);
+            log.error("Database error during student promotion", e);
         } catch (Exception e) {
-            log.error("Unexpected error during student class progression.", e);
+            log.error("Unexpected error during student promotion", e);
         }
     }
 
     private String determineNextClass(String currentClass) {
-        if (currentClass == null || currentClass.trim().isEmpty()) {
+        if (currentClass == null || currentClass.trim().isEmpty())
             return null;
-        }
 
-        if ("Nursery".equalsIgnoreCase(currentClass)) {
-            return "LKG";
-        } else if ("LKG".equalsIgnoreCase(currentClass)) {
-            return "UKG";
-        } else if ("UKG".equalsIgnoreCase(currentClass)) {
-            return "1";
-        } else {
-            try {
-                int classLevel = Integer.parseInt(currentClass);
-                if (classLevel < 12) {
-                    return String.valueOf(classLevel + 1);
-                } else if (classLevel == 12) {
-                    return "Graduated";
-                } else {
-                    return null;
-                }
-            } catch (NumberFormatException e) {
-                log.warn("Invalid class format '{}' encountered for promotion.", currentClass);
-                return null;
-            }
+        switch (currentClass.toUpperCase()) {
+            case "NURSERY": return "LKG";
+            case "LKG": return "UKG";
+            case "UKG": return "1";
+        }
+        try {
+            int classNum = Integer.parseInt(currentClass);
+            if (classNum >= 1 && classNum < 12) return String.valueOf(classNum + 1);
+
+            if (classNum == 12) return null; // Graduated
+
+            return null;
+        } catch (NumberFormatException e) {
+            log.warn("Invalid class format '{}' — skipping promotion.", currentClass);
+            return null;
         }
     }
 }
