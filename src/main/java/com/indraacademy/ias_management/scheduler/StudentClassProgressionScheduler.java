@@ -1,4 +1,4 @@
-package com.indraacademy.ias_management.service;
+package com.indraacademy.ias_management.scheduler;
 
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -14,16 +14,19 @@ import java.time.LocalDateTime;
 import java.time.Year;
 import java.util.List;
 
-@Service
-public class StudentClassProgressionService {
+@Service // or @Component if you prefer
+public class StudentClassProgressionScheduler {
 
-    private static final Logger log = LoggerFactory.getLogger(StudentClassProgressionService.class);
+    private static final Logger log = LoggerFactory.getLogger(StudentClassProgressionScheduler.class);
 
     @Autowired
     private StudentRepository studentRepository;
 
+    /**
+     * Runs every year on 1st April at 00:00 to promote students to the next class.
+     */
     @Transactional
-    @Scheduled(cron = "0 0 0 1 4 *") // Corrected cron: 00:00 on the 1st of April every year
+    @Scheduled(cron = "0 0 0 1 4 *") // 00:00 on the 1st of April every year
     public void incrementStudentClasses() {
         log.info("Starting scheduled student class progression for new academic year.");
         Year currentYear = Year.now();
@@ -34,7 +37,6 @@ public class StudentClassProgressionService {
             int promotedCount = 0;
 
             for (Student student : allStudents) {
-                // Ensure a sensible check: only promote students enrolled *before* the start of the current academic year
                 LocalDateTime createdAt = student.getCreatedAt();
                 boolean isNewEnrollment = createdAt != null && createdAt.getYear() >= currentAcademicYear;
 
@@ -43,21 +45,23 @@ public class StudentClassProgressionService {
                     String nextClass = determineNextClass(currentClass);
 
                     if (nextClass != null) {
-                        log.debug("Promoting student ID: {} from class {} to {}", student.getStudentId(), currentClass, nextClass);
+                        log.debug("Promoting student ID: {} from class {} to {}",
+                                student.getStudentId(), currentClass, nextClass);
                         student.setClassName(nextClass);
                         studentRepository.save(student);
                         promotedCount++;
                     } else {
-                        log.info("Student ID: {} is graduating or already graduated (Class: {}). Skipping promotion.", student.getStudentId(), currentClass);
+                        log.info("Student ID: {} is graduating or already graduated (Class: {}). Skipping promotion.",
+                                student.getStudentId(), currentClass);
                     }
                 } else {
-                    log.debug("Skipping student ID: {} as they were created in the current academic year ({}).", student.getStudentId(), currentAcademicYear);
+                    log.debug("Skipping student ID: {} as they were created in the current academic year ({}).",
+                            student.getStudentId(), currentAcademicYear);
                 }
             }
             log.info("Completed student class progression. Successfully promoted {} students.", promotedCount);
         } catch (DataAccessException e) {
             log.error("Data access error during student class progression.", e);
-            // Transactional rollback handles the partial update failure
         } catch (Exception e) {
             log.error("Unexpected error during student class progression.", e);
         }
@@ -65,7 +69,7 @@ public class StudentClassProgressionService {
 
     private String determineNextClass(String currentClass) {
         if (currentClass == null || currentClass.trim().isEmpty()) {
-            return null; // Cannot promote null/empty class
+            return null;
         }
 
         if ("Nursery".equalsIgnoreCase(currentClass)) {
@@ -80,9 +84,9 @@ public class StudentClassProgressionService {
                 if (classLevel < 12) {
                     return String.valueOf(classLevel + 1);
                 } else if (classLevel == 12) {
-                    return "Graduated"; // Mark as graduated
+                    return "Graduated";
                 } else {
-                    return null; // Already graduated or invalid class
+                    return null;
                 }
             } catch (NumberFormatException e) {
                 log.warn("Invalid class format '{}' encountered for promotion.", currentClass);
