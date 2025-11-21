@@ -15,9 +15,9 @@ import java.util.List;
 public interface StudentRepository extends JpaRepository<Student, String> {
     List<Student> findByClassName(String className);
 
-    List<Student> findByClassNameAndJoiningDateLessThanEqual(String className, LocalDate targetDate);
-
     List<Student> findByClassNameAndStatus(String className, StudentStatus status);
+
+    List<Student> findByStatus(String active);
 
     @Modifying
     @Query("""
