@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.scheduler;
 
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
@@ -32,7 +33,7 @@ public class StudentClassProgressionScheduler {
         int currentAcademicYear = currentYear.getValue();
 
         try {
-            List<Student> students = studentRepository.findByStatus("ACTIVE");
+            List<Student> students = studentRepository.findByStatus(StudentStatus.ACTIVE);
             int promotedCount = 0;
 
             for (Student student : students) {

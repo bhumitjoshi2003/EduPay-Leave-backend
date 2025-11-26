@@ -17,7 +17,7 @@ public interface StudentRepository extends JpaRepository<Student, String> {
 
     List<Student> findByClassNameAndStatus(String className, StudentStatus status);
 
-    List<Student> findByStatus(String active);
+    List<Student> findByStatus(StudentStatus status);
 
     @Modifying
     @Query("""
