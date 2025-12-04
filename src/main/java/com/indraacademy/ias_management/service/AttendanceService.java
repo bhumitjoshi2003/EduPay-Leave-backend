@@ -78,6 +78,7 @@ public class AttendanceService {
         log.info("Calculating attendance counts for student ID: {} for year: {} month: {}", studentId, year, month);
 
         Student student;
+        String className;
         try {
             Optional<Student> studentOptional = studentRepository.findById(studentId);
             if (studentOptional.isEmpty()) {
@@ -85,6 +86,7 @@ public class AttendanceService {
                 return counts;
             }
             student = studentOptional.get();
+            className = student.getClassName();
         } catch (DataAccessException e) {
             log.error("Data access error fetching student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve student info for counts", e);
@@ -99,7 +101,7 @@ public class AttendanceService {
         try {
             studentAbsentCount = attendanceRepository.countAbsences(studentId, year, month);
             // dummy student "X" = total working days (days school was open)
-            totalWorkingDays   = attendanceRepository.countAbsences("X", year, month);
+            totalWorkingDays = attendanceRepository.countWorkingDaysForClass(className, year, month);
         } catch (DataAccessException e) {
             log.error("Data access error calculating absence counts for student ID: {}", studentId, e);
             throw new RuntimeException("Could not calculate attendance counts", e);
@@ -127,7 +129,7 @@ public class AttendanceService {
 
                 LocalDate joinDate = studentJoiningDate;
                 try {
-                    long daysBeforeJoin = attendanceRepository.countAbsencesBeforeJoin("X", year, month, joinDate);
+                    long daysBeforeJoin = attendanceRepository.countWorkingDaysBeforeJoin(className, year, month, joinDate);
                     totalWorkingDays -= daysBeforeJoin;
                     log.debug("Adjusted total working days for student ID: {} due to mid-month joining. Adjusted by: {}",
                             studentId, daysBeforeJoin);
@@ -143,7 +145,7 @@ public class AttendanceService {
 
                 LocalDate leaveDate = studentLeavingDate;
                 try {
-                    long daysAfterLeave = attendanceRepository.countAbsencesAfterLeave("X", year, month, leaveDate);
+                    long daysAfterLeave = attendanceRepository.countWorkingDaysAfterLeave(className, year, month, leaveDate);
                     totalWorkingDays -= daysAfterLeave;
                     log.debug("Adjusted total working days for student ID: {} due to mid-month leaving. Adjusted by: {}",
                             studentId, daysAfterLeave);

@@ -38,9 +38,12 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
 
     List<Attendance> findByDate(LocalDate today);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date >= :startDate")
-    long countAbsencesFromDate(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("startDate") LocalDate startDate);
+    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")
+    long countWorkingDaysForClass(@Param("className") String className, @Param("year") int year, @Param("month") int month);
 
-    @Query("select count(a) from Attendance a where a.studentId = :studentId and year(a.date) = :year and month(a.date) = :month and a.date > :leaveDate")
-    long countAbsencesAfterLeave(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("leaveDate") LocalDate leaveDate);
+    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date < :joinDate")
+    long countWorkingDaysBeforeJoin(@Param("className") String className, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate);
+
+    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date > :leaveDate")
+    long countWorkingDaysAfterLeave(@Param("className") String className, @Param("year") int year, @Param("month") int month, @Param("leaveDate") LocalDate leaveDate);
 }

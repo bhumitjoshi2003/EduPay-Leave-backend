@@ -47,7 +47,7 @@ public class AuthController {
         return "HARIBOL";
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+//    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@RequestBody User user) {
         log.info("Request to register new user: {}", user.getUserId());
