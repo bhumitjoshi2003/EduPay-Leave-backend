@@ -105,7 +105,7 @@ public class PaymentController {
     }
 
     @GetMapping("/history/students")
-    @PreAuthorize("hasRole('" + Role.ADMIN + "')") // Assuming this endpoint is for admin/staff to see all
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     public ResponseEntity<Page<Payment>> getPaymentHistory(
             @RequestParam(required = false) String className,
             @RequestParam(required = false) String studentId,
