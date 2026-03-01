@@ -34,7 +34,7 @@ jobs:
               --log-opt max-size=10m \
               --log-opt max-file=3 \
               --name ias-backend-container \
-              -p 127.0.0.1:8080:8080
+              -p 127.0.0.1:8080:8080 \
               -e SPRING_DATASOURCE_URL='${{ secrets.DB_URL }}' \
               -e SPRING_DATASOURCE_USERNAME='${{ secrets.DB_USERNAME }}' \
               -e SPRING_DATASOURCE_PASSWORD='${{ secrets.DB_PASSWORD }}' \
