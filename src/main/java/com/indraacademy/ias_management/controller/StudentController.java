@@ -26,7 +26,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/students")
+@RequestMapping("/api/students")
 @CrossOrigin(origins = "http://localhost:4200")
 public class StudentController {
 

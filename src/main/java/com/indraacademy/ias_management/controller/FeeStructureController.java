@@ -15,7 +15,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 @RestController
-@RequestMapping("/fee-structure")
+@RequestMapping("/api/fee-structure")
 @CrossOrigin(origins = "http://localhost:4200")
 public class FeeStructureController {
 

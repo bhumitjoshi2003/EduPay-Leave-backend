@@ -18,7 +18,7 @@ import java.util.Optional;
 import java.util.NoSuchElementException;
 
 @RestController
-@RequestMapping("/teachers")
+@RequestMapping("/api/teachers")
 @CrossOrigin(origins = "http://localhost:4200")
 @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
 public class TeacherController {

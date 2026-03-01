@@ -18,7 +18,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @RestController
-@RequestMapping("api/notification")
+@RequestMapping("/api/notification")
 public class NotificationController {
 
     @Autowired private AuthService authService;

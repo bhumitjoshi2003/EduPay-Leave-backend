@@ -23,7 +23,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/student-fees")
+@RequestMapping("/api/student-fees")
 @CrossOrigin(origins = "http://localhost:4200")
 public class StudentFeesController {
 

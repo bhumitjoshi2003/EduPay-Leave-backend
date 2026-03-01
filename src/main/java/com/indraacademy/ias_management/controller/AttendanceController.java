@@ -18,7 +18,7 @@ import java.util.NoSuchElementException;
 
 
 @RestController
-@RequestMapping("/attendance")
+@RequestMapping("/api/attendance")
 @CrossOrigin(origins = "http://localhost:4200")
 public class AttendanceController {
 

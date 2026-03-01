@@ -14,7 +14,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 @RestController
-@RequestMapping("/bus-fees")
+@RequestMapping("/api/bus-fees")
 @CrossOrigin(origins = "http://localhost:4200")
 public class BusFeesController {
 

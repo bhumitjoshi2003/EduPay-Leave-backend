@@ -19,7 +19,7 @@ import java.util.Optional;
 import java.util.NoSuchElementException;
 
 @RestController
-@RequestMapping("/leaves")
+@RequestMapping("/api/leaves")
 @CrossOrigin(origins = "http://localhost:4200")
 public class LeaveController {
 
