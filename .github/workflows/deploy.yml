@@ -33,6 +33,10 @@ jobs:
               --log-driver json-file \
               --log-opt max-size=10m \
               --log-opt max-file=3 \
+              --health-cmd="curl --fail http://localhost:8080/actuator/health || exit 1" \
+              --health-interval=30s \
+              --health-timeout=5s \
+              --health-retries=3 \
               --name ias-backend-container \
               -p 127.0.0.1:8080:8080 \
               -e SPRING_DATASOURCE_URL='${{ secrets.DB_URL }}' \
