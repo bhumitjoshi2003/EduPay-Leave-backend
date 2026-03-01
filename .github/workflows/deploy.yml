@@ -30,6 +30,9 @@ jobs:
 
             docker run -d \
               --restart unless-stopped \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
               --name ias-backend-container \
               -p 8080:8080 \
               -e SPRING_DATASOURCE_URL='${{ secrets.DB_URL }}' \
