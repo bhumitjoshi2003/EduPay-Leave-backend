@@ -46,7 +46,8 @@ public class SecurityConfig {
                                 "/api/auth/reset-password",
                                 "/api/auth/register",
                                 "/api/auth/request-password-reset",
-                                "/api/auth/refresh-token").permitAll()
+                                "/api/auth/refresh-token",
+                                "/actuator/health").permitAll()
                         .requestMatchers("/uploads/events/images/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
                         .anyRequest().authenticated()
