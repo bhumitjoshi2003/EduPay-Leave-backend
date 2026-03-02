@@ -2,6 +2,8 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.repository.AdminRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,12 @@ public class AdminService {
 
     @Autowired
     private AdminRepository adminRepository;
+
+    @Autowired
+    private AuditService auditService;
+
+    @Autowired
+    private SecurityUtil securityUtil;
 
     public List<Admin> getAllAdmins() {
         log.info("Attempting to fetch all admins");
@@ -35,84 +43,122 @@ public class AdminService {
             log.warn("Attempted to fetch admin with null or empty ID");
             return Optional.empty();
         }
+
         log.info("Attempting to fetch admin by ID: {}", adminId);
+
         try {
-            Optional<Admin> admin = adminRepository.findById(adminId);
-            if (admin.isPresent()) {
-                log.info("Admin found with ID: {}", adminId);
-            } else {
-                log.warn("Admin not found with ID: {}", adminId);
-            }
-            return admin;
+            return adminRepository.findById(adminId);
         } catch (DataAccessException e) {
             log.error("Database access error occurred while fetching admin ID: {}", adminId, e);
             throw new RuntimeException("Could not retrieve admin due to data access issue", e);
         }
     }
 
-    public Admin createAdmin(Admin admin) {
+    public Admin createAdmin(Admin admin, HttpServletRequest request) {
+
         if (admin == null) {
             log.warn("Attempted to create a null admin object");
-            return null;
+            throw new IllegalArgumentException("Admin cannot be null");
         }
+
         log.info("Attempting to create a new admin with email: {}", admin.getEmail());
+
         try {
             Admin savedAdmin = adminRepository.save(admin);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "CREATE_ADMIN",
+                    "Admin",
+                    savedAdmin.getAdminId(),
+                    null,
+                    savedAdmin.toString(),
+                    request.getRemoteAddr()
+            );
+
             log.info("Admin created successfully with ID: {}", savedAdmin.getAdminId());
             return savedAdmin;
+
         } catch (DataAccessException e) {
             log.error("Database access error occurred while creating admin with email: {}", admin.getEmail(), e);
             throw new RuntimeException("Could not create admin due to data access issue", e);
         }
     }
 
-    public Admin updateAdmin(String adminId, Admin admin) {
+    public Admin updateAdmin(String adminId, Admin admin, HttpServletRequest request) {
+
         if (adminId == null || adminId.trim().isEmpty() || admin == null) {
-            log.warn("Attempted to update admin with null/empty ID or null admin object. ID: {}", adminId);
-            return null;
+            log.warn("Invalid update request for admin. ID: {}", adminId);
+            throw new IllegalArgumentException("Invalid admin update request");
         }
+
         log.info("Attempting to update admin with ID: {}", adminId);
 
         try {
-            Optional<Admin> existingAdmin = adminRepository.findById(adminId);
+            Admin existingAdmin = adminRepository.findById(adminId)
+                    .orElseThrow(() -> new RuntimeException("Admin not found"));
 
-            if (existingAdmin.isPresent()) {
-                Admin adminToUpdate = existingAdmin.get();
+            String oldValue = existingAdmin.toString();
 
-                // Update fields
-                adminToUpdate.setName(admin.getName());
-                adminToUpdate.setEmail(admin.getEmail());
-                adminToUpdate.setPhoneNumber(admin.getPhoneNumber());
-                adminToUpdate.setDob(admin.getDob());
-                adminToUpdate.setGender(admin.getGender());
+            existingAdmin.setName(admin.getName());
+            existingAdmin.setEmail(admin.getEmail());
+            existingAdmin.setPhoneNumber(admin.getPhoneNumber());
+            existingAdmin.setDob(admin.getDob());
+            existingAdmin.setGender(admin.getGender());
 
-                Admin updatedAdmin = adminRepository.save(adminToUpdate);
-                log.info("Admin updated successfully with ID: {}", adminId);
-                return updatedAdmin;
-            } else {
-                log.warn("Cannot update admin. Admin not found with ID: {}", adminId);
-                return null;
-            }
+            Admin updatedAdmin = adminRepository.save(existingAdmin);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_ADMIN",
+                    "Admin",
+                    adminId,
+                    oldValue,
+                    updatedAdmin.toString(),
+                    request.getRemoteAddr()
+            );
+
+            log.info("Admin updated successfully with ID: {}", adminId);
+            return updatedAdmin;
+
         } catch (DataAccessException e) {
             log.error("Database access error occurred while updating admin ID: {}", adminId, e);
             throw new RuntimeException("Could not update admin due to data access issue", e);
         }
     }
 
-    public void deleteAdmin(String adminId) {
+    public void deleteAdmin(String adminId, HttpServletRequest request) {
+
         if (adminId == null || adminId.trim().isEmpty()) {
             log.warn("Attempted to delete admin with null or empty ID");
-            return;
+            throw new IllegalArgumentException("Invalid admin ID");
         }
+
         log.info("Attempting to delete admin with ID: {}", adminId);
 
         try {
-            if (adminRepository.existsById(adminId)) {
-                adminRepository.deleteById(adminId);
-                log.info("Admin deleted successfully with ID: {}", adminId);
-            } else {
-                log.warn("Cannot delete admin. Admin not found with ID: {}", adminId);
-            }
+            Admin existingAdmin = adminRepository.findById(adminId)
+                    .orElseThrow(() -> new RuntimeException("Admin not found"));
+
+            String oldValue = existingAdmin.toString();
+
+            adminRepository.deleteById(adminId);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "DELETE_ADMIN",
+                    "Admin",
+                    adminId,
+                    oldValue,
+                    null,
+                    request.getRemoteAddr()
+            );
+
+            log.info("Admin deleted successfully with ID: {}", adminId);
+
         } catch (DataAccessException e) {
             log.error("Database access error occurred while deleting admin ID: {}", adminId, e);
             throw new RuntimeException("Could not delete admin due to data access issue", e);

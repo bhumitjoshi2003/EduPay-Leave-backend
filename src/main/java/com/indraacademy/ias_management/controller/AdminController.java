@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.service.AdminService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -45,10 +46,10 @@ public class AdminController {
     }
 
     @PutMapping("/{adminId}")
-    public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin) {
+    public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin, HttpServletRequest request) {
         log.info("Request to update Admin with ID: {}", adminId);
         try {
-            Admin updatedAdmin = adminService.updateAdmin(adminId, admin);
+            Admin updatedAdmin = adminService.updateAdmin(adminId, admin, request);
             log.info("Successfully updated Admin with ID: {}", adminId);
             return ResponseEntity.ok(updatedAdmin);
         } catch (NoSuchElementException e) {
@@ -61,10 +62,10 @@ public class AdminController {
     }
 
     @DeleteMapping("/{adminId}")
-    public ResponseEntity<Void> deleteAdmin(@PathVariable String adminId) {
+    public ResponseEntity<Void> deleteAdmin(@PathVariable String adminId, HttpServletRequest request) {
         log.warn("Request to delete Admin with ID: {}", adminId);
         try {
-            adminService.deleteAdmin(adminId);
+            adminService.deleteAdmin(adminId, request);
             log.info("Successfully deleted Admin with ID: {}", adminId);
             return ResponseEntity.noContent().build();
         } catch (NoSuchElementException e) {

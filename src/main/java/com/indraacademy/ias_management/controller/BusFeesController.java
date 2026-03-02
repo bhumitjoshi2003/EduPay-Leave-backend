@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.BusFees;
 import com.indraacademy.ias_management.service.BusFeesService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -54,10 +55,10 @@ public class BusFeesController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{academicYear}")
-    public ResponseEntity<List<BusFees>> updateFees(@PathVariable String academicYear, @RequestBody List<BusFees> updatedFees) {
+    public ResponseEntity<List<BusFees>> updateFees(@PathVariable String academicYear, @RequestBody List<BusFees> updatedFees, HttpServletRequest request) {
         log.info("Request to update bus fees for academic year: {}", academicYear);
         try {
-            return ResponseEntity.ok(busFeesService.updateBusFees(academicYear, updatedFees));
+            return ResponseEntity.ok(busFeesService.updateBusFees(academicYear, updatedFees, request));
         } catch (IllegalArgumentException e) {
             log.error("Invalid data provided for updating bus fees in year {}: {}", academicYear, e.getMessage());
             return ResponseEntity.badRequest().build();

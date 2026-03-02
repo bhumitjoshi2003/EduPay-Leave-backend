@@ -2,6 +2,8 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.BusFees;
 import com.indraacademy.ias_management.repository.BusFeesRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,12 @@ public class BusFeesService {
 
     @Autowired
     private BusFeesRepository busFeesRepository;
+
+    @Autowired
+    private AuditService auditService;
+
+    @Autowired
+    private SecurityUtil securityUtil;
 
     public List<BusFees> getAllRecords() {
         log.info("Attempting to fetch all bus fees records.");
@@ -73,48 +81,67 @@ public class BusFeesService {
     }
 
     @Transactional
-    public List<BusFees> updateBusFees(String academicYear, List<BusFees> updatedFees) {
+    public List<BusFees> updateBusFees(String academicYear,
+                                       List<BusFees> updatedFees,
+                                       HttpServletRequest request) {
+
         if (academicYear == null || academicYear.trim().isEmpty()) {
-            log.error("Cannot update bus fees. Academic year is null or empty.");
-            throw new IllegalArgumentException("Academic year must not be null or empty for update operation.");
+            throw new IllegalArgumentException("Academic year must not be null or empty.");
         }
+
         if (updatedFees == null) {
-            log.warn("Attempted to update bus fees for year {} with null value. No action taken.", academicYear);
             return Collections.emptyList();
         }
-        log.info("Starting transactional update of bus fees for academic year: {}. {} new fee structures provided.", academicYear, updatedFees.size());
+
+        log.info("Updating bus fees for academic year: {}", academicYear);
 
         try {
+            // Capture old state before deletion
             List<BusFees> existingFees = busFeesRepository.findByAcademicYear(academicYear);
+            String oldValue = existingFees.toString();
+
             if (!existingFees.isEmpty()) {
-                log.debug("Deleting {} existing bus fees records for year: {}", existingFees.size(), academicYear);
                 busFeesRepository.deleteAll(existingFees);
-            } else {
-                log.debug("No existing bus fees records found for year: {}", academicYear);
             }
 
             List<BusFees> savedFees = new ArrayList<>();
-            for (BusFees fee : updatedFees) {
-                BusFees newFee = new BusFees();
-                newFee.setAcademicYear(academicYear);
 
-                if (fee.getMinDistance() == null || fee.getMaxDistance() == null || fee.getFees() == null) {
-                    log.warn("Skipping fee entry due to null value in distance or fees: Min: {}, Max: {}, Fees: {}",
-                            fee.getMinDistance(), fee.getMaxDistance(), fee.getFees());
+            for (BusFees fee : updatedFees) {
+
+                if (fee.getMinDistance() == null ||
+                        fee.getMaxDistance() == null ||
+                        fee.getFees() == null) {
                     continue;
                 }
 
+                BusFees newFee = new BusFees();
+                newFee.setAcademicYear(academicYear);
                 newFee.setMinDistance(fee.getMinDistance());
                 newFee.setMaxDistance(fee.getMaxDistance());
                 newFee.setFees(fee.getFees());
 
                 savedFees.add(busFeesRepository.save(newFee));
             }
-            log.info("Successfully saved {} new bus fees records for academic year: {}", savedFees.size(), academicYear);
+
+            // Audit log
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_BUS_FEES",
+                    "BusFees",
+                    academicYear,
+                    oldValue,
+                    savedFees.toString(),
+                    request.getRemoteAddr()
+            );
+
+            log.info("Bus fees updated successfully for academic year: {}", academicYear);
+
             return savedFees;
+
         } catch (DataAccessException e) {
-            log.error("Data access error occurred during updateBusFees for academic year: {}", academicYear, e);
-            throw new RuntimeException("Could not update bus fees due to data access issue", e);
+            log.error("Data access error during updateBusFees for year: {}", academicYear, e);
+            throw new RuntimeException("Could not update bus fees", e);
         }
     }
 }
