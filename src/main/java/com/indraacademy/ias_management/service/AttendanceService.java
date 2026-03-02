@@ -4,6 +4,8 @@ import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -25,9 +27,12 @@ public class AttendanceService {
 
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private StudentRepository studentRepository;
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
 
     @Transactional
-    public void saveAttendance(List<Attendance> attendanceList) {
+    public void saveAttendance(List<Attendance> attendanceList, HttpServletRequest request) {
+
         if (attendanceList == null || attendanceList.isEmpty()) {
             log.warn("Attempted to save empty or null attendance list.");
             return;
@@ -35,18 +40,35 @@ public class AttendanceService {
 
         LocalDate absentDate = attendanceList.getFirst().getDate();
         String className = attendanceList.getFirst().getClassName();
-        log.info("Saving attendance for date: {} and class: {}. List size: {}", absentDate, className, attendanceList.size());
+
+        log.info("Saving attendance for date: {} and class: {}", absentDate, className);
 
         try {
-            log.debug("Deleting existing attendance records for date: {} and class: {}", absentDate, className);
-            attendanceRepository.deleteByDateAndClassName(absentDate, className);
+            // Capture old state before deletion
+            List<Attendance> oldRecords =
+                    attendanceRepository.findByDateAndClassName(absentDate, className);
 
-            log.debug("Saving new attendance records.");
+            String oldValue = oldRecords.toString();
+
+            attendanceRepository.deleteByDateAndClassName(absentDate, className);
             attendanceRepository.saveAll(attendanceList);
-            log.info("Successfully saved {} attendance records for date: {} and class: {}", attendanceList.size(), absentDate, className);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "SAVE_ATTENDANCE",
+                    "Attendance",
+                    absentDate + "_" + className,
+                    oldValue,
+                    attendanceList.toString(),
+                    request.getRemoteAddr()
+            );
+
+            log.info("Successfully saved attendance for date: {} and class: {}", absentDate, className);
+
         } catch (DataAccessException e) {
-            log.error("Data access error during saveAttendance for date {} and class {}", absentDate, className, e);
-            throw new RuntimeException("Could not save attendance due to data access issue", e);
+            log.error("Error saving attendance for date {} and class {}", absentDate, className, e);
+            throw new RuntimeException("Could not save attendance", e);
         }
     }
 
@@ -212,47 +234,79 @@ public class AttendanceService {
     }
 
     @Transactional
-    public void updateChargePaidAfterPayment(String studentId, String session) {
-        if (studentId == null || studentId.trim().isEmpty() || session == null || session.trim().isEmpty()) {
-            log.warn("Attempted to update charge paid with null/empty student ID or session.");
+    public void updateChargePaidAfterPayment(String studentId,
+                                             String session,
+                                             HttpServletRequest request) {
+
+        if (studentId == null || studentId.trim().isEmpty()
+                || session == null || session.trim().isEmpty()) {
+            log.warn("Invalid input for updateChargePaidAfterPayment.");
             return;
         }
-        log.info("Updating chargePaid status for student ID: {} and session: {}", studentId, session);
 
         try {
             String[] years = session.split("-");
-            if (years.length != 2) {
-                log.error("Invalid session format: {}. Cannot update charge paid status.", session);
-                return;
-            }
-
             int startYear = Integer.parseInt(years[0]);
             int endYear = Integer.parseInt(years[1]);
+
             LocalDate startDate = LocalDate.of(startYear, 4, 1);
             LocalDate endDate = LocalDate.of(endYear, 3, 31);
 
             attendanceRepository.updateChargePaidForSession(studentId, startDate, endDate);
-            log.info("Successfully updated chargePaid status records for student ID: {}", studentId);
-        } catch (NumberFormatException e) {
-            log.error("Error parsing session year for session: {}. Cannot update charge paid status.", session, e);
-        } catch (DataAccessException e) {
-            log.error("Data access error updating chargePaid for student ID: {} and session: {}", studentId, session, e);
-            throw new RuntimeException("Could not update charge paid status due to data access issue", e);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_ATTENDANCE_CHARGE_PAID",
+                    "Attendance",
+                    studentId + "_" + session,
+                    null,
+                    "ChargePaid updated for session",
+                    request.getRemoteAddr()
+            );
+
+            log.info("ChargePaid updated for student ID: {}", studentId);
+
+        } catch (Exception e) {
+            log.error("Error updating chargePaid for student ID: {}", studentId, e);
+            throw new RuntimeException("Could not update chargePaid", e);
         }
     }
 
-    public void deleteAttendanceByDateAndClass(LocalDate date, String className) {
+    @Transactional
+    public void deleteAttendanceByDateAndClass(LocalDate date,
+                                               String className,
+                                               HttpServletRequest request) {
+
         if (date == null || className == null || className.trim().isEmpty()) {
-            log.warn("Attempted to delete attendance with null date or empty class name.");
+            log.warn("Invalid input for deleteAttendanceByDateAndClass.");
             return;
         }
-        log.info("Deleting attendance for date: {} and class: {}", date, className);
+
         try {
+            List<Attendance> oldRecords =
+                    attendanceRepository.findByDateAndClassName(date, className);
+
+            String oldValue = oldRecords.toString();
+
             attendanceRepository.deleteByDateAndClassName(date, className);
-            log.info("Successfully deleted attendance records for date: {} and class: {}", date, className);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "DELETE_ATTENDANCE",
+                    "Attendance",
+                    date + "_" + className,
+                    oldValue,
+                    null,
+                    request.getRemoteAddr()
+            );
+
+            log.info("Attendance deleted for date: {} and class: {}", date, className);
+
         } catch (DataAccessException e) {
-            log.error("Data access error deleting attendance for date {} and class {}", date, className, e);
-            throw new RuntimeException("Could not delete attendance due to data access issue", e);
+            log.error("Error deleting attendance for date {} and class {}", date, className, e);
+            throw new RuntimeException("Could not delete attendance", e);
         }
     }
 }

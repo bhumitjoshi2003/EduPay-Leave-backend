@@ -6,6 +6,8 @@ import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -30,30 +32,40 @@ public class NotificationService {
     @Autowired private AuthService authService;
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private UserNotificationRepository userNotificationRepository;
-    @Autowired private UserRepository userRepository; // Not used in original, but kept
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
 
     @Transactional
-    public Notification createBroadNotification(Notification notification, String authorizationHeader) {
+    public Notification createBroadNotification(Notification notification,
+                                                String authorizationHeader,
+                                                HttpServletRequest request) {
+
         if (notification == null || notification.getTitle() == null || notification.getMessage() == null) {
-            log.warn("Attempted to create broad notification with missing required fields.");
             throw new IllegalArgumentException("Notification object and its title/message must not be null.");
         }
-        log.info("Creating broad notification: {} for audience: {}", notification.getTitle(), notification.getAudience());
 
         try {
             String createdBy = authService.getUserIdFromToken(authorizationHeader);
-            if (createdBy == null) {
-                log.warn("Could not extract user ID from token for broad notification creation.");
-            }
             notification.setCreatedBy(createdBy);
             notification.setCreatedAt(LocalDateTime.now());
 
             Notification savedNotification = notificationRepository.save(notification);
-            log.info("Broad notification created successfully with ID: {}", savedNotification.getId());
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "CREATE_NOTIFICATION",
+                    "Notification",
+                    savedNotification.getId().toString(),
+                    null,
+                    savedNotification.toString(),
+                    request.getRemoteAddr()
+            );
+
             return savedNotification;
+
         } catch (DataAccessException e) {
-            log.error("Data access error during broad notification creation: {}", notification.getTitle(), e);
-            throw new RuntimeException("Could not create broad notification due to data access issue", e);
+            throw new RuntimeException("Could not create broad notification", e);
         }
     }
 
@@ -235,54 +247,77 @@ public class NotificationService {
     }
 
     @Transactional
-    public Notification updateNotification(Long id, Notification updatedNotification, String authorizationHeader) {
+    public Notification updateNotification(Long id,
+                                           Notification updatedNotification,
+                                           String authorizationHeader,
+                                           HttpServletRequest request) {
+
         if (id == null || updatedNotification == null) {
-            log.error("Cannot update notification: ID or updated object is null.");
             throw new IllegalArgumentException("Notification ID and details must not be null.");
         }
-        log.info("Attempting to update notification with ID: {}", id);
 
         try {
-            Optional<Notification> existingNotification = notificationRepository.findById(id);
-            if (existingNotification.isPresent()) {
-                Notification notification = existingNotification.get();
-                notification.setTitle(updatedNotification.getTitle());
-                notification.setMessage(updatedNotification.getMessage());
-                notification.setType(updatedNotification.getType());
-                notification.setAudience(updatedNotification.getAudience());
+            Notification notification = notificationRepository.findById(id)
+                    .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
 
-                String createdBy = authService.getUserIdFromToken(authorizationHeader);
-                if (createdBy == null) {
-                    log.warn("Could not extract user ID from token during notification update.");
-                }
-                // Assuming 'createdBy' is used here as 'updatedBy'
-                notification.setCreatedBy(createdBy);
+            String oldValue = notification.toString();
 
-                Notification savedNotification = notificationRepository.save(notification);
-                log.info("Notification updated successfully with ID: {}", id);
-                return savedNotification;
-            }
-            log.warn("Notification not found for update with ID: {}", id);
-            return null;
+            notification.setTitle(updatedNotification.getTitle());
+            notification.setMessage(updatedNotification.getMessage());
+            notification.setType(updatedNotification.getType());
+            notification.setAudience(updatedNotification.getAudience());
+
+            String updatedBy = authService.getUserIdFromToken(authorizationHeader);
+            notification.setCreatedBy(updatedBy); // acting as updatedBy
+
+            Notification savedNotification = notificationRepository.save(notification);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_NOTIFICATION",
+                    "Notification",
+                    id.toString(),
+                    oldValue,
+                    savedNotification.toString(),
+                    request.getRemoteAddr()
+            );
+
+            return savedNotification;
+
         } catch (DataAccessException e) {
-            log.error("Data access error during notification update for ID: {}", id, e);
-            throw new RuntimeException("Could not update notification due to data access issue", e);
+            throw new RuntimeException("Could not update notification", e);
         }
     }
 
     @Transactional
-    public void deleteNotification(Long id) {
+    public void deleteNotification(Long id, HttpServletRequest request) {
+
         if (id == null) {
-            log.warn("Attempted to delete notification with null ID.");
-            return;
+            throw new IllegalArgumentException("Notification ID must not be null.");
         }
-        log.info("Attempting to delete notification with ID: {}", id);
+
         try {
+            Notification notification = notificationRepository.findById(id)
+                    .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
+
+            String oldValue = notification.toString();
+
             notificationRepository.deleteById(id);
-            log.info("Notification deleted successfully with ID: {}", id);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "DELETE_NOTIFICATION",
+                    "Notification",
+                    id.toString(),
+                    oldValue,
+                    null,
+                    request.getRemoteAddr()
+            );
+
         } catch (DataAccessException e) {
-            log.error("Data access error deleting notification ID: {}", id, e);
-            throw new RuntimeException("Could not delete notification due to data access issue", e);
+            throw new RuntimeException("Could not delete notification", e);
         }
     }
 

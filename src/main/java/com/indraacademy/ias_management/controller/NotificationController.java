@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.dto.UserNotificationDTO;
 import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.NotificationService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,10 +28,10 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> createNotification(@RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader){
+    public ResponseEntity<?> createNotification(@RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader, HttpServletRequest request) {
         log.info("Request to create broad notification with title: {}", notification.getTitle());
         try{
-            Notification createdNotification = notificationService.createBroadNotification(notification, authorizationHeader);
+            Notification createdNotification = notificationService.createBroadNotification(notification, authorizationHeader, request);
             log.info("Notification created successfully with ID: {}", createdNotification.getId());
             return new ResponseEntity<>(createdNotification, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
@@ -82,10 +83,10 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader) {
+    public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader, HttpServletRequest request) {
         log.info("Updating notification with ID: {}", id);
         try {
-            Notification savedNotification = notificationService.updateNotification(id, notification, authorizationHeader);
+            Notification savedNotification = notificationService.updateNotification(id, notification, authorizationHeader, request);
             log.info("Notification updated successfully with ID: {}", id);
             return new ResponseEntity<>(savedNotification, HttpStatus.OK);
         } catch (NoSuchElementException e) {
@@ -102,10 +103,10 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteNotification(@PathVariable Long id) {
+    public ResponseEntity<Void> deleteNotification(@PathVariable Long id, HttpServletRequest request) {
         log.warn("Request to delete notification with ID: {}", id);
         try {
-            notificationService.deleteNotification(id);
+            notificationService.deleteNotification(id, request);
             log.info("Notification deleted successfully with ID: {}", id);
             return new ResponseEntity<>(HttpStatus.NO_CONTENT);
         } catch (NoSuchElementException e) {

@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Event;
 import com.indraacademy.ias_management.service.EventService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,10 +27,10 @@ public class EventController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> createEvent(@RequestBody Event event, @RequestHeader(name = "Authorization") String authorizationHeader) {
+    public ResponseEntity<?> createEvent(@RequestBody Event event, @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
         log.info("Request to create new event: {}", event.getTitle());
         try {
-            Event createdEvent = eventService.createEvent(event, authorizationHeader);
+            Event createdEvent = eventService.createEvent(event, authorizationHeader, request);
             log.info("Event created successfully with ID: {}", createdEvent.getId());
             return new ResponseEntity<>(createdEvent, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
@@ -78,10 +79,10 @@ public class EventController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<Event> updateEvent(@PathVariable Long id, @RequestBody Event eventDetails,  @RequestHeader(name = "Authorization") String authorizationHeader) {
+    public ResponseEntity<Event> updateEvent(@PathVariable Long id, @RequestBody Event eventDetails,  @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
         log.info("Request to update event with ID: {}", id);
         try {
-            Event updatedEvent = eventService.updateEvent(id, eventDetails, authorizationHeader);
+            Event updatedEvent = eventService.updateEvent(id, eventDetails, authorizationHeader, request);
             log.info("Event updated successfully with ID: {}", id);
             return new ResponseEntity<>(updatedEvent, HttpStatus.OK);
         } catch (NoSuchElementException e) {

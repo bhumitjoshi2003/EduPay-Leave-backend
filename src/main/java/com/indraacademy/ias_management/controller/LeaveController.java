@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Leave;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.LeaveService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,13 +31,13 @@ public class LeaveController {
 
     @PreAuthorize("hasAnyRole('" + Role.STUDENT + "')")
     @PostMapping("/apply-leave")
-    public ResponseEntity<String> applyLeave(@RequestBody Leave leave, @RequestHeader(name = "Authorization") String authorizationHeader) {
+    public ResponseEntity<String> applyLeave(@RequestBody Leave leave, @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
         String studentId = authService.getUserIdFromToken(authorizationHeader);
         log.info("Request to apply leave for student ID: {}", studentId);
 
         try {
             leave.setStudentId(studentId);
-            leaveService.applyLeave(leave);
+            leaveService.applyLeave(leave, request);
             return ResponseEntity.ok("Leave applied successfully");
         } catch (IllegalArgumentException e) {
             log.error("Bad request applying leave for student {}: {}", studentId, e.getMessage());
@@ -49,7 +50,7 @@ public class LeaveController {
 
     @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.ADMIN + "')")
     @DeleteMapping("/delete/{studentId}/{leaveDate}")
-    public ResponseEntity<String> deleteLeave(@PathVariable String studentId, @PathVariable String leaveDate, @RequestHeader(name = "Authorization") String authorizationHeader) {
+    public ResponseEntity<String> deleteLeave(@PathVariable String studentId, @PathVariable String leaveDate, @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
         String userId = authService.getUserIdFromToken(authorizationHeader);
         String role = authService.getRoleFromToken(authorizationHeader);
         log.warn("Request to delete leave for {} on {} by user {} ({})", studentId, leaveDate, userId, role);
@@ -60,7 +61,7 @@ public class LeaveController {
         }
 
         try {
-            leaveService.deleteLeave(finalStudentId, leaveDate);
+            leaveService.deleteLeave(finalStudentId, leaveDate, request);
             log.info("Leave deleted successfully for student {} on {}", finalStudentId, leaveDate);
             return new ResponseEntity<>("Leave deleted successfully", HttpStatus.OK);
         } catch (NoSuchElementException e) {
@@ -122,10 +123,10 @@ public class LeaveController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{leaveId}")
-    public ResponseEntity<String> deleteLeaveById(@PathVariable String leaveId) {
+    public ResponseEntity<String> deleteLeaveById(@PathVariable String leaveId, HttpServletRequest request) {
         log.warn("Request to delete leave by ID: {}", leaveId);
         try {
-            leaveService.deleteLeaveById(leaveId);
+            leaveService.deleteLeaveById(leaveId, request);
             log.info("Leave application deleted successfully by ID: {}", leaveId);
             return new ResponseEntity<>("Leave application deleted successfully", HttpStatus.OK);
         } catch (NoSuchElementException e) {

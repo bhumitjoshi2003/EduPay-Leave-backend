@@ -2,6 +2,8 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.FeeStructure;
 import com.indraacademy.ias_management.repository.FeeStructureRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,9 @@ import java.util.List;
 public class FeeStructureService {
 
     private static final Logger log = LoggerFactory.getLogger(FeeStructureService.class);
+
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
 
     @Autowired
     private FeeStructureRepository feeStructureRepository;
@@ -70,30 +75,39 @@ public class FeeStructureService {
     }
 
     @Transactional
-    public List<FeeStructure> updateFeeStructures(String academicYear, List<FeeStructure> updatedFees) {
+    public List<FeeStructure> updateFeeStructures(String academicYear,
+                                                  List<FeeStructure> updatedFees,
+                                                  HttpServletRequest request) {
+
         if (academicYear == null || academicYear.trim().isEmpty()) {
-            log.error("Cannot update fee structures: Academic year is null or empty.");
             throw new IllegalArgumentException("Academic year must be provided.");
         }
+
         if (updatedFees == null) {
-            log.warn("Attempted to update fee structures for year {} with null value. No action taken.", academicYear);
             return Collections.emptyList();
         }
-        log.info("Starting transactional update of fee structures for academic year: {}. {} new fee structures provided.", academicYear, updatedFees.size());
+
+        log.info("Updating fee structures for academic year: {}", academicYear);
 
         try {
-            List<FeeStructure> existingFees = feeStructureRepository.findByAcademicYear(academicYear);
+            // Capture old state
+            List<FeeStructure> existingFees =
+                    feeStructureRepository.findByAcademicYear(academicYear);
+
+            String oldValue = existingFees.toString();
+
             if (!existingFees.isEmpty()) {
-                log.debug("Deleting {} existing fee structure records for year: {}", existingFees.size(), academicYear);
                 feeStructureRepository.deleteAll(existingFees);
             }
 
             List<FeeStructure> savedFees = new ArrayList<>();
+
             for (FeeStructure fee : updatedFees) {
+
                 if (fee.getClassName() == null || fee.getClassName().trim().isEmpty()) {
-                    log.warn("Skipping fee entry due to null or empty class name.");
                     continue;
                 }
+
                 FeeStructure newFee = new FeeStructure();
                 newFee.setAcademicYear(academicYear);
                 newFee.setClassName(fee.getClassName());
@@ -103,35 +117,52 @@ public class FeeStructureService {
                 newFee.setEcaProject(fee.getEcaProject());
                 newFee.setExaminationFee(fee.getExaminationFee());
                 newFee.setLabCharges(fee.getLabCharges());
+
                 savedFees.add(feeStructureRepository.save(newFee));
             }
-            log.info("Successfully saved {} new fee structure records for academic year: {}", savedFees.size(), academicYear);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_FEE_STRUCTURE",
+                    "FeeStructure",
+                    academicYear,
+                    oldValue,
+                    savedFees.toString(),
+                    request.getRemoteAddr()
+            );
+
             return savedFees;
+
         } catch (DataAccessException e) {
-            log.error("Data access error during updateFeeStructures for academic year: {}", academicYear, e);
-            throw new RuntimeException("Could not update fee structures due to data access issue", e);
+            throw new RuntimeException("Could not update fee structures", e);
         }
     }
 
     @Transactional
-    public List<FeeStructure> createNewSession(String academicYear, List<FeeStructure> newFees){
+    public List<FeeStructure> createNewSession(String academicYear,
+                                               List<FeeStructure> newFees,
+                                               HttpServletRequest request) {
+
         if (academicYear == null || academicYear.trim().isEmpty()) {
-            log.error("Cannot create new session: Academic year is null or empty.");
             throw new IllegalArgumentException("Academic year must be provided.");
         }
+
         if (newFees == null || newFees.isEmpty()) {
-            log.warn("Attempted to create new session for year {} with null or empty list. No action taken.", academicYear);
             return Collections.emptyList();
         }
-        log.info("Starting transactional creation of new fee session for academic year: {}. {} new fee structures provided.", academicYear, newFees.size());
+
+        log.info("Creating new fee session for academic year: {}", academicYear);
 
         try {
             List<FeeStructure> savedFees = new ArrayList<>();
+
             for (FeeStructure fee : newFees) {
+
                 if (fee.getClassName() == null || fee.getClassName().trim().isEmpty()) {
-                    log.warn("Skipping fee entry due to null or empty class name.");
                     continue;
                 }
+
                 FeeStructure newFee = new FeeStructure();
                 newFee.setAcademicYear(academicYear);
                 newFee.setClassName(fee.getClassName());
@@ -141,13 +172,25 @@ public class FeeStructureService {
                 newFee.setEcaProject(fee.getEcaProject());
                 newFee.setExaminationFee(fee.getExaminationFee());
                 newFee.setLabCharges(fee.getLabCharges());
+
                 savedFees.add(feeStructureRepository.save(newFee));
             }
-            log.info("Successfully created {} fee structure records for new academic year: {}", savedFees.size(), academicYear);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "CREATE_FEE_SESSION",
+                    "FeeStructure",
+                    academicYear,
+                    null,
+                    savedFees.toString(),
+                    request.getRemoteAddr()
+            );
+
             return savedFees;
+
         } catch (DataAccessException e) {
-            log.error("Data access error during createNewSession for academic year: {}", academicYear, e);
-            throw new RuntimeException("Could not create new fee session due to data access issue", e);
+            throw new RuntimeException("Could not create new fee session", e);
         }
     }
 }

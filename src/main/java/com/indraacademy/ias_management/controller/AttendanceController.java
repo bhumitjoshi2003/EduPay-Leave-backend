@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.service.AttendanceService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,10 +29,10 @@ public class AttendanceController {
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<String> saveAttendance(@RequestBody List<Attendance> attendanceList) {
+    public ResponseEntity<String> saveAttendance(@RequestBody List<Attendance> attendanceList, HttpServletRequest request) {
         log.info("Request to save attendance for {} records.", attendanceList != null ? attendanceList.size() : 0);
         try {
-            attendanceService.saveAttendance(attendanceList);
+            attendanceService.saveAttendance(attendanceList, request);
             log.info("Attendance data saved successfully.");
             return ResponseEntity.ok("Attendance data saved successfully.");
         } catch (IllegalArgumentException e) {
@@ -83,10 +84,11 @@ public class AttendanceController {
     @DeleteMapping("/date/{date}/class/{className}")
     public ResponseEntity<String> deleteAttendanceByDateAndClass(
             @PathVariable LocalDate date,
-            @PathVariable String className) {
+            @PathVariable String className,
+            HttpServletRequest request) {
         log.warn("Request to delete attendance for Date: {} and Class: {}", date, className);
         try {
-            attendanceService.deleteAttendanceByDateAndClass(date, className);
+            attendanceService.deleteAttendanceByDateAndClass(date, className, request);
             log.info("Attendance records deleted successfully for Date: {} and Class: {}", date, className);
             return ResponseEntity.ok("Attendance records deleted successfully.");
         } catch (IllegalArgumentException e) {

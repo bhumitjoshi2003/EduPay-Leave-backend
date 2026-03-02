@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.FeeStructure;
 import com.indraacademy.ias_management.service.FeeStructureService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -55,10 +56,10 @@ public class FeeStructureController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{academicYear}")
-    public ResponseEntity<List<FeeStructure>> updateFeeStructures(@PathVariable String academicYear, @RequestBody List<FeeStructure> updatedFees) {
+    public ResponseEntity<List<FeeStructure>> updateFeeStructures(@PathVariable String academicYear, @RequestBody List<FeeStructure> updatedFees, HttpServletRequest request) {
         log.info("Request to update fee structures for academic year: {}", academicYear);
         try {
-            return ResponseEntity.ok(feeStructureService.updateFeeStructures(academicYear, updatedFees));
+            return ResponseEntity.ok(feeStructureService.updateFeeStructures(academicYear, updatedFees, request));
         } catch (IllegalArgumentException e) {
             log.error("Invalid data for fee structure update in year {}: {}", academicYear, e.getMessage());
             return ResponseEntity.badRequest().build();
@@ -70,10 +71,10 @@ public class FeeStructureController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping("/{academicYear}")
-    public ResponseEntity<List<FeeStructure>> createNewSession(@PathVariable String academicYear, @RequestBody List<FeeStructure> newFees){
+    public ResponseEntity<List<FeeStructure>> createNewSession(@PathVariable String academicYear, @RequestBody List<FeeStructure> newFees, HttpServletRequest request) {
         log.info("Request to create new fee session for year: {}", academicYear);
         try {
-            return new ResponseEntity<>(feeStructureService.createNewSession(academicYear,newFees), HttpStatus.CREATED);
+            return new ResponseEntity<>(feeStructureService.createNewSession(academicYear,newFees, request), HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
             log.error("New session creation failed for year {}: {}", academicYear, e.getMessage());
             return ResponseEntity.badRequest().build();
