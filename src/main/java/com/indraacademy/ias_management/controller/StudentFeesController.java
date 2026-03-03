@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentFeesService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -69,7 +70,7 @@ public class StudentFeesController {
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping("/manual-payment")
-    public ResponseEntity<Map<String, String>> recordManualPayment(@RequestBody Map<String, Object> paymentData) {
+    public ResponseEntity<Map<String, String>> recordManualPayment(@RequestBody Map<String, Object> paymentData, HttpServletRequest request) {
         String studentId = (String) paymentData.get("studentId");
         log.info("Admin request to record manual payment for student: {}", studentId);
 
@@ -103,7 +104,7 @@ public class StudentFeesController {
             payment.setRazorpaySignature("MANUAL-PAYMENT");
 
             paymentRepository.save(payment);
-            attendanceService.updateChargePaidAfterPayment(studentId, session);
+            attendanceService.updateChargePaidAfterPayment(studentId, session, request);
 
             log.info("Manual payment recorded successfully for student {}. Payment ID: {}", studentId, payment.getPaymentId());
             return new ResponseEntity<>(Map.of("message", "Manual payment recorded successfully", "paymentId", payment.getPaymentId()), HttpStatus.CREATED);

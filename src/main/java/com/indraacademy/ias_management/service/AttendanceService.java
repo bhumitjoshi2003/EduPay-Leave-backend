@@ -254,6 +254,8 @@ public class AttendanceService {
 
             attendanceRepository.updateChargePaidForSession(studentId, startDate, endDate);
 
+            String ipAddress = (request != null) ? request.getRemoteAddr() : "SYSTEM";
+
             auditService.log(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
@@ -262,7 +264,7 @@ public class AttendanceService {
                     studentId + "_" + session,
                     null,
                     "ChargePaid updated for session",
-                    request.getRemoteAddr()
+                    ipAddress
             );
 
             log.info("ChargePaid updated for student ID: {}", studentId);
@@ -271,6 +273,11 @@ public class AttendanceService {
             log.error("Error updating chargePaid for student ID: {}", studentId, e);
             throw new RuntimeException("Could not update chargePaid", e);
         }
+    }
+
+    @Transactional
+    public void updateChargePaidAfterPayment(String studentId, String session) {
+        updateChargePaidAfterPayment(studentId, session, null);
     }
 
     @Transactional
