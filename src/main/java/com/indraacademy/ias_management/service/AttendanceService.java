@@ -256,9 +256,15 @@ public class AttendanceService {
 
             String ipAddress = (request != null) ? request.getRemoteAddr() : "SYSTEM";
 
+            String username = securityUtil.getUsername();
+            String role = securityUtil.getRole();
+
+            if (username == null) username = "SYSTEM";
+            if (role == null) role = "SYSTEM";
+
             auditService.log(
-                    securityUtil.getUsername(),
-                    securityUtil.getRole(),
+                    username,
+                    role,
                     "UPDATE_ATTENDANCE_CHARGE_PAID",
                     "Attendance",
                     studentId + "_" + session,

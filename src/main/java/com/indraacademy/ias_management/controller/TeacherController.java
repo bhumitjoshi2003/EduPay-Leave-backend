@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.service.TeacherService;
 import com.indraacademy.ias_management.service.UserDetailsServiceImpl;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -29,10 +30,10 @@ public class TeacherController {
     @Autowired private UserDetailsServiceImpl userDetailsService;
 
     @PostMapping
-    public ResponseEntity<?> registerTeacher(@RequestBody Teacher newTeacher) {
+    public ResponseEntity<?> registerTeacher(@RequestBody Teacher newTeacher, HttpServletRequest request) {
         log.info("Request to register new teacher: {}", newTeacher.getTeacherId());
         try {
-            Teacher savedTeacher = teacherService.addTeacher(newTeacher);
+            Teacher savedTeacher = teacherService.addTeacher(newTeacher, request);
             log.info("Teacher registered successfully with ID: {}", savedTeacher.getTeacherId());
             return new ResponseEntity<>(savedTeacher, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
@@ -80,7 +81,7 @@ public class TeacherController {
     }
 
     @PutMapping("/{teacherId}")
-    public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @RequestBody Teacher updatedTeacher) {
+    public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @RequestBody Teacher updatedTeacher, HttpServletRequest request) {
         log.info("Request to update teacher ID: {}", teacherId);
         try {
             Optional<Teacher> existingTeacherOptional = teacherService.getTeacher(teacherId);
@@ -103,7 +104,7 @@ public class TeacherController {
                     });
                 }
 
-                Teacher savedTeacher = teacherService.updateTeacher(updatedTeacher);
+                Teacher savedTeacher = teacherService.updateTeacher(updatedTeacher, request);
                 log.info("Teacher details updated successfully for ID: {}", teacherId);
                 return ResponseEntity.ok(savedTeacher);
             } else {

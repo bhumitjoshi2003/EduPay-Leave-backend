@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.entity.FeeStructure;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -29,6 +30,8 @@ public class StudentFeesService {
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private FeeStructureService feeStructureService;
     @Autowired private BusFeesService busFeesService;
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
 
     private String getAcademicYear(LocalDate date) {
         Year currentYear = Year.of(date.getYear());
@@ -65,7 +68,21 @@ public class StudentFeesService {
         try {
             studentFees.setManuallyPaid(studentFees.getManuallyPaid());
             studentFees.setManualPaymentReceived(studentFees.getManualPaymentReceived());
-            return studentFeesRepository.save(studentFees);
+
+            StudentFees saved = studentFeesRepository.save(studentFees);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_STUDENT_FEES_MANUAL",
+                    "StudentFees",
+                    saved.getId().toString(),
+                    null,
+                    "Manual payment updated",
+                    "SYSTEM"
+            );
+
+            return saved;
         } catch (DataAccessException e) {
             log.error("Data access error during student fees update for ID: {}", studentFees.getId(), e);
             throw new RuntimeException("Could not update student fees due to data access issue.", e);
@@ -160,6 +177,16 @@ public class StudentFeesService {
                 }
             }
         }
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "MARK_FEES_AS_PAID",
+                "StudentFees",
+                payment.getStudentId() + "_" + payment.getSession(),
+                null,
+                "Months: " + payment.getMonth() + ", PaymentId: " + payment.getPaymentId(),
+                "SYSTEM"
+        );
     }
 
     private int calculateLateFees(int academicFeeMonth) {
@@ -259,6 +286,20 @@ public class StudentFeesService {
                 studentFeesRepository.save(fee);
                 updatedCount++;
             }
+
+            if (updatedCount > 0) {
+                auditService.log(
+                        securityUtil.getUsername(),
+                        securityUtil.getRole(),
+                        "UPDATE_FEES_CLASS_CHANGE",
+                        "StudentFees",
+                        studentId + "_" + academicYear,
+                        null,
+                        "Updated class to " + newClassName +
+                                " for " + updatedCount + " months",
+                        "SYSTEM"
+                );
+            }
             log.info("Updated class name for {} StudentFees records for student ID: {}.", updatedCount, studentId);
         } catch (DataAccessException e) {
             log.error("Data access error updating fees for class change for student ID: {}.", studentId, e);
@@ -289,6 +330,18 @@ public class StudentFeesService {
                 studentFee.setManualPaymentReceived(null);
                 studentFeesRepository.save(studentFee);
             }
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "CREATE_DEFAULT_STUDENT_FEES",
+                    "StudentFees",
+                    studentId + "_" + year,
+                    null,
+                    "Created 12 months default records",
+                    "SYSTEM"
+            );
+
             log.info("Successfully created 12 default fee records for student ID: {}", studentId);
         } catch (DataAccessException e) {
             log.error("Data access error creating default student fees for ID: {}.", studentId, e);
@@ -328,6 +381,21 @@ public class StudentFeesService {
                     updatedCount++;
                 }
             }
+
+            if (updatedCount > 0) {
+                auditService.log(
+                        securityUtil.getUsername(),
+                        securityUtil.getRole(),
+                        "UPDATE_STUDENT_BUS_FEES",
+                        "StudentFees",
+                        studentId + "_" + academicYear,
+                        null,
+                        "Updated from month " + effectiveFromMonth +
+                                ", TakesBus: " + takesBus,
+                        "SYSTEM"
+                );
+            }
+
             log.info("Successfully updated bus fees for {} fee records for student ID: {}.", updatedCount, studentId);
         } catch (DataAccessException e) {
             log.error("Data access error updating bus fees for student ID: {}.", studentId, e);

@@ -2,11 +2,13 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.indraacademy.ias_management.util.SecurityUtil;
 
 import java.util.Collections;
 import java.util.List;
@@ -19,6 +21,12 @@ public class TeacherService {
 
     @Autowired
     private TeacherRepository teacherRepository;
+
+    @Autowired
+    private AuditService auditService;
+
+    @Autowired
+    private SecurityUtil securityUtil;
 
     public Optional<Teacher> getTeacher(String teacherId) {
         if (teacherId == null || teacherId.trim().isEmpty()) {
@@ -44,22 +52,40 @@ public class TeacherService {
         }
     }
 
-    public Teacher updateTeacher(Teacher teacher) {
+    public Teacher updateTeacher(Teacher teacher, HttpServletRequest request) {
+
         if (teacher == null || teacher.getTeacherId() == null || teacher.getTeacherId().trim().isEmpty()) {
             log.error("Attempted to update teacher with null or empty Teacher object/ID.");
             throw new IllegalArgumentException("Teacher object and ID must be provided for update.");
         }
+
         log.info("Updating teacher with ID: {}", teacher.getTeacherId());
 
         try {
-            return teacherRepository.save(teacher);
+            Optional<Teacher> existingTeacher = teacherRepository.findById(teacher.getTeacherId());
+
+            Teacher savedTeacher = teacherRepository.save(teacher);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_TEACHER",
+                    "Teacher",
+                    teacher.getTeacherId(),
+                    existingTeacher.map(Object::toString).orElse(null),
+                    savedTeacher.toString(),
+                    request.getRemoteAddr()
+            );
+
+            return savedTeacher;
+
         } catch (DataAccessException e) {
             log.error("Data access error updating teacher with ID: {}", teacher.getTeacherId(), e);
             throw new RuntimeException("Failed to update teacher due to a database issue.", e);
         }
     }
 
-    public Teacher addTeacher(Teacher teacher) {
+    public Teacher addTeacher(Teacher teacher, HttpServletRequest request) {
         if (teacher == null || teacher.getTeacherId() == null || teacher.getTeacherId().trim().isEmpty()) {
             log.error("Attempted to add teacher with null or empty Teacher object/ID.");
             throw new IllegalArgumentException("Teacher object and ID must be provided.");
@@ -73,6 +99,18 @@ public class TeacherService {
                 throw new IllegalArgumentException("Teacher with ID " + teacher.getTeacherId() + " already exists.");
             }
             Teacher savedTeacher = teacherRepository.save(teacher);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "CREATE_TEACHER",
+                    "Teacher",
+                    savedTeacher.getTeacherId(),
+                    null,
+                    savedTeacher.toString(),
+                    request.getRemoteAddr()
+            );
+
             log.info("Successfully added new teacher with ID: {}", savedTeacher.getTeacherId());
             return savedTeacher;
         } catch (DataAccessException e) {

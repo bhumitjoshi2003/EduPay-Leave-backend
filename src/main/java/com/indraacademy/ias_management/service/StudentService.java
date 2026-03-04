@@ -4,6 +4,8 @@ import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -34,6 +36,12 @@ public class StudentService {
     @Autowired
     private UserDetailsServiceImpl userDetailsService;
 
+    @Autowired
+    private SecurityUtil securityUtil;
+
+    @Autowired
+    private AuditService auditService;
+
     private String getAcademicYear(LocalDate date) {
         Year currentYear = Year.of(date.getYear());
         if (date.getMonthValue() >= 4) {
@@ -46,7 +54,7 @@ public class StudentService {
     }
 
     @Transactional
-    public Student addStudent(Student student) {
+    public Student addStudent(Student student, HttpServletRequest request) {
         if (student == null || student.getStudentId() == null || student.getStudentId().trim().isEmpty()) {
             log.error("Attempted to add student with null or empty Student object/ID.");
             throw new IllegalArgumentException("Student object and ID must be provided.");
@@ -60,6 +68,18 @@ public class StudentService {
                 throw new IllegalArgumentException("Student with ID " + student.getStudentId() + " already exists.");
             }
             Student savedStudent = studentRepository.save(student);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "CREATE_STUDENT",
+                    "Student",
+                    savedStudent.getStudentId(),
+                    null,
+                    "Student created in class " + savedStudent.getClassName(),
+                    request.getRemoteAddr()
+            );
+
             log.info("Successfully saved new student with ID: {}", savedStudent.getStudentId());
 
             String academicYear = getAcademicYear(LocalDate.now());
@@ -128,7 +148,7 @@ public class StudentService {
     }
 
     @Transactional
-    public Student updateStudent(String studentId, Student updatedStudent, Integer effectiveFromMonth) {
+    public Student updateStudent(String studentId, Student updatedStudent, Integer effectiveFromMonth, HttpServletRequest request) {
         if (studentId == null || studentId.trim().isEmpty() || updatedStudent == null) {
             log.error("Invalid input for updateStudent: studentId or updatedStudent is null/empty.");
             throw new IllegalArgumentException("Student ID and updated student object must be provided.");
@@ -189,6 +209,18 @@ public class StudentService {
             }
 
             Student savedStudent = studentRepository.save(updatedStudent);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_STUDENT",
+                    "Student",
+                    studentId,
+                    existingStudent.toString(),
+                    savedStudent.toString(),
+                    request.getRemoteAddr()
+            );
+
             log.info("Successfully saved updated student record for ID: {}", studentId);
 
             if (busDetailsChanged && updatedStudent.getTakesBus() != null) {

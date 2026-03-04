@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -41,10 +42,10 @@ public class StudentController {
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> registerStudent(@RequestBody Student newStudent) {
+    public ResponseEntity<?> registerStudent(@RequestBody Student newStudent, HttpServletRequest request) {
         log.info("Request to register new student: {}", newStudent.getStudentId());
         try {
-            Student savedStudent = studentService.addStudent(newStudent);
+            Student savedStudent = studentService.addStudent(newStudent, request);
             log.info("Student registered successfully with ID: {}", savedStudent.getStudentId());
             return new ResponseEntity<>(savedStudent, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
@@ -81,7 +82,7 @@ public class StudentController {
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PutMapping("/{studentId}")
-    public ResponseEntity<Student> updateStudent(@PathVariable String studentId, @RequestBody Map<String, Object> requestBody) {
+    public ResponseEntity<Student> updateStudent(@PathVariable String studentId, @RequestBody Map<String, Object> requestBody, HttpServletRequest request) {
         log.info("Request to update student details for ID: {}", studentId);
         try {
             Student updatedStudent = objectMapper.convertValue(requestBody.get("studentDetails"), Student.class);
@@ -92,7 +93,7 @@ public class StudentController {
                 return ResponseEntity.badRequest().build();
             }
 
-            Student savedStudent = studentService.updateStudent(studentId, updatedStudent, effectiveFromMonth);
+            Student savedStudent = studentService.updateStudent(studentId, updatedStudent, effectiveFromMonth, request);
             log.info("Student updated successfully with ID: {}", studentId);
             return ResponseEntity.ok(savedStudent);
         } catch (NoSuchElementException e) {

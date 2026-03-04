@@ -28,6 +28,9 @@ public class StudentFeesGenerationService {
     @Autowired
     private StudentFeesRepository studentFeesRepository;
 
+    @Autowired
+    private AuditService auditService;
+
     @Transactional
     @Scheduled(cron = "0 0 0 1 3 *") // Run at 00:00 on 1st March every year
     public void generateStudentFeesForNextYear() {
@@ -76,6 +79,18 @@ public class StudentFeesGenerationService {
                     log.debug("Skipping fee generation for student ID: {} as they were created in the current year ({}).", student.getStudentId(), currentYearValue);
                 }
             }
+
+            auditService.log(
+                    "SYSTEM",
+                    "SYSTEM",
+                    "GENERATE_STUDENT_FEES",
+                    "StudentFees",
+                    nextAcademicYear,
+                    null,
+                    "Generated fees for " + feesGeneratedCount + " students",
+                    "SYSTEM"
+            );
+
             log.info("Student fees generation completed. Fees generated for {} students for year {}.", feesGeneratedCount, nextAcademicYear);
         } catch (DataAccessException e) {
             log.error("Data access error during student fees generation schedule.", e);
