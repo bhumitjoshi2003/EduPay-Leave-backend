@@ -1,7 +1,7 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.AuditLog;
-import com.indraacademy.ias_management.repository.AuditLogRepository;
+import com.indraacademy.ias_management.repository.AuditRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 public class AuditService {
 
     @Autowired
-    private AuditLogRepository auditLogRepository;
+    private AuditRepository auditLogRepository;
 
     public void log(
             String username,
