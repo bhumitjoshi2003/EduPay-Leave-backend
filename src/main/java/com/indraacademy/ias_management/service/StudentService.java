@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,20 +29,12 @@ public class StudentService {
     private static final Logger log = LoggerFactory.getLogger(StudentService.class);
     private static final DateTimeFormatter YEAR_FORMATTER = DateTimeFormatter.ofPattern("yyyy");
 
-    @Autowired
-    private StudentRepository studentRepository;
-
-    @Autowired
-    private StudentFeesService studentFeesService;
-
-    @Autowired
-    private UserDetailsServiceImpl userDetailsService;
-
-    @Autowired
-    private SecurityUtil securityUtil;
-
-    @Autowired
-    private AuditService auditService;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private StudentFeesService studentFeesService;
+    @Autowired private UserDetailsServiceImpl userDetailsService;
+    @Autowired private SecurityUtil securityUtil;
+    @Autowired private AuditService auditService;
+    @Autowired private ObjectMapper objectMapper;
 
     private String getAcademicYear(LocalDate date) {
         Year currentYear = Year.of(date.getYear());
@@ -208,6 +202,8 @@ public class StudentService {
                 log.info("Status updated for student {} → {}", studentId, newStatus);
             }
 
+            String oldValue = objectMapper.writeValueAsString(existingStudentOptional.get());
+
             Student savedStudent = studentRepository.save(updatedStudent);
 
             auditService.log(
@@ -216,8 +212,8 @@ public class StudentService {
                     "UPDATE_STUDENT",
                     "Student",
                     studentId,
-                    existingStudent.toString(),
-                    savedStudent.toString(),
+                    oldValue,
+                    objectMapper.writeValueAsString(savedStudent),
                     request.getRemoteAddr()
             );
 

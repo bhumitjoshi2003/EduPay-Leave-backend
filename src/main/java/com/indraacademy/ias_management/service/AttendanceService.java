@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.time.LocalDate;
 import java.util.Collections;
@@ -29,6 +31,7 @@ public class AttendanceService {
     @Autowired private StudentRepository studentRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     @Transactional
     public void saveAttendance(List<Attendance> attendanceList, HttpServletRequest request) {
@@ -60,7 +63,7 @@ public class AttendanceService {
                     "Attendance",
                     absentDate + "_" + className,
                     oldValue,
-                    attendanceList.toString(),
+                    objectMapper.writeValueAsString(attendanceList),
                     request.getRemoteAddr()
             );
 
@@ -69,6 +72,8 @@ public class AttendanceService {
         } catch (DataAccessException e) {
             log.error("Error saving attendance for date {} and class {}", absentDate, className, e);
             throw new RuntimeException("Could not save attendance", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -300,7 +305,7 @@ public class AttendanceService {
             List<Attendance> oldRecords =
                     attendanceRepository.findByDateAndClassName(date, className);
 
-            String oldValue = oldRecords.toString();
+            String oldValue = objectMapper.writeValueAsString(oldRecords);
 
             attendanceRepository.deleteByDateAndClassName(date, className);
 
@@ -320,6 +325,8 @@ public class AttendanceService {
         } catch (DataAccessException e) {
             log.error("Error deleting attendance for date {} and class {}", date, className, e);
             throw new RuntimeException("Could not delete attendance", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 }

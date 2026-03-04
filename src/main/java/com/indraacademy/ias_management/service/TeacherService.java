@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.util.Collections;
 import java.util.List;
@@ -27,6 +29,9 @@ public class TeacherService {
 
     @Autowired
     private SecurityUtil securityUtil;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     public Optional<Teacher> getTeacher(String teacherId) {
         if (teacherId == null || teacherId.trim().isEmpty()) {
@@ -64,6 +69,11 @@ public class TeacherService {
         try {
             Optional<Teacher> existingTeacher = teacherRepository.findById(teacher.getTeacherId());
 
+            String oldValue = null;
+            if(existingTeacher.isPresent()){
+                oldValue = objectMapper.writeValueAsString(existingTeacher.get());
+            }
+
             Teacher savedTeacher = teacherRepository.save(teacher);
 
             auditService.log(
@@ -72,16 +82,16 @@ public class TeacherService {
                     "UPDATE_TEACHER",
                     "Teacher",
                     teacher.getTeacherId(),
-                    existingTeacher.map(Object::toString).orElse(null),
-                    savedTeacher.toString(),
+                    oldValue,
+                    objectMapper.writeValueAsString(savedTeacher),
                     request.getRemoteAddr()
             );
 
             return savedTeacher;
 
-        } catch (DataAccessException e) {
-            log.error("Data access error updating teacher with ID: {}", teacher.getTeacherId(), e);
-            throw new RuntimeException("Failed to update teacher due to a database issue.", e);
+        } catch (DataAccessException | JsonProcessingException e) {
+            log.error("Error updating teacher with ID: {}", teacher.getTeacherId(), e);
+            throw new RuntimeException("Failed to update teacher.", e);
         }
     }
 

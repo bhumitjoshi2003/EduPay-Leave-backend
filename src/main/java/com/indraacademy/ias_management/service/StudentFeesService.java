@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +34,7 @@ public class StudentFeesService {
     @Autowired private BusFeesService busFeesService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     private String getAcademicYear(LocalDate date) {
         Year currentYear = Year.of(date.getYear());
@@ -69,23 +72,33 @@ public class StudentFeesService {
             studentFees.setManuallyPaid(studentFees.getManuallyPaid());
             studentFees.setManualPaymentReceived(studentFees.getManualPaymentReceived());
 
-            StudentFees saved = studentFeesRepository.save(studentFees);
+            Optional<StudentFees> existingFees =
+                    Optional.ofNullable(studentFeesRepository.findById(studentFees.getId()).orElse(null));
+
+            String oldValue = null;
+            if(existingFees.isPresent()){
+                oldValue = objectMapper.writeValueAsString(existingFees.get());
+            }
+
+            StudentFees savedFees = studentFeesRepository.save(studentFees);
 
             auditService.log(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_STUDENT_FEES_MANUAL",
                     "StudentFees",
-                    saved.getId().toString(),
-                    null,
-                    "Manual payment updated",
+                    studentFees.getId().toString(),
+                    oldValue,
+                    objectMapper.writeValueAsString(savedFees),
                     "SYSTEM"
             );
 
-            return saved;
+            return savedFees;
         } catch (DataAccessException e) {
             log.error("Data access error during student fees update for ID: {}", studentFees.getId(), e);
             throw new RuntimeException("Could not update student fees due to data access issue.", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
