@@ -12,6 +12,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -29,6 +31,7 @@ public class LeaveService {
     @Autowired private NotificationService notificationService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     @Transactional
     public void applyLeave(Leave leave, HttpServletRequest request){
@@ -49,7 +52,7 @@ public class LeaveService {
                     "Leave",
                     String.valueOf(savedLeave.getId()),
                     null,
-                    savedLeave.toString(),
+                    objectMapper.writeValueAsString(savedLeave),
                     request.getRemoteAddr()
             );
 
@@ -69,6 +72,8 @@ public class LeaveService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not apply leave", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -89,7 +94,7 @@ public class LeaveService {
                 throw new IllegalArgumentException("Leave not found for student " + studentId);
             }
 
-            String oldValue = leave.toString();
+            String oldValue = objectMapper.writeValueAsString(leave);
             String leaveIdString = String.valueOf(leave.getId());
 
             leaveRepository.deleteByStudentIdAndLeaveDate(studentId, leaveDate);
@@ -122,6 +127,8 @@ public class LeaveService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not delete leave", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -137,7 +144,7 @@ public class LeaveService {
             Leave leave = leaveRepository.findById(leaveId)
                     .orElseThrow(() -> new IllegalArgumentException("Leave not found with ID " + leaveId));
 
-            String oldValue = leave.toString();
+            String oldValue = objectMapper.writeValueAsString(leave);
 
             leaveRepository.deleteById(leaveId);
 
@@ -169,6 +176,8 @@ public class LeaveService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not delete leave", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 

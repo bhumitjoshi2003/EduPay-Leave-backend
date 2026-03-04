@@ -9,6 +9,8 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -25,6 +27,7 @@ public class EventService {
     @Autowired private AuthService authService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     public Event createEvent(Event event, String authorizationHeader, HttpServletRequest request) {
 
@@ -54,7 +57,7 @@ public class EventService {
                     "Event",
                     savedEvent.getId().toString(),
                     null,
-                    savedEvent.toString(),
+                    objectMapper.writeValueAsString(savedEvent),
                     request.getRemoteAddr()
             );
 
@@ -62,6 +65,8 @@ public class EventService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not create event", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -126,43 +131,44 @@ public class EventService {
         try {
             String userId = authService.getUserIdFromToken(authorizationHeader);
 
-            return eventRepository.findById(id).map(event -> {
+            Event event = eventRepository.findById(id)
+                    .orElseThrow(() -> new IllegalArgumentException("Event not found with ID: " + id));
 
-                String oldValue = event.toString();
+            String oldValue = objectMapper.writeValueAsString(event);
 
-                event.setTitle(eventDetails.getTitle());
-                event.setDescription(eventDetails.getDescription());
-                event.setStartDate(eventDetails.getStartDate());
-                event.setEndDate(eventDetails.getEndDate());
-                event.setStartTime(eventDetails.getStartTime());
-                event.setEndTime(eventDetails.getEndTime());
-                event.setLocation(eventDetails.getLocation());
-                event.setCategory(eventDetails.getCategory());
-                event.setTargetAudience(eventDetails.getTargetAudience());
-                event.setVideoLinks(eventDetails.getVideoLinks());
-                event.setImageUrl(eventDetails.getImageUrl());
-                event.setCreatedBy(userId);
-                event.setUpdatedAt(LocalDateTime.now().toLocalDate());
+            event.setTitle(eventDetails.getTitle());
+            event.setDescription(eventDetails.getDescription());
+            event.setStartDate(eventDetails.getStartDate());
+            event.setEndDate(eventDetails.getEndDate());
+            event.setStartTime(eventDetails.getStartTime());
+            event.setEndTime(eventDetails.getEndTime());
+            event.setLocation(eventDetails.getLocation());
+            event.setCategory(eventDetails.getCategory());
+            event.setTargetAudience(eventDetails.getTargetAudience());
+            event.setVideoLinks(eventDetails.getVideoLinks());
+            event.setImageUrl(eventDetails.getImageUrl());
+            event.setCreatedBy(userId);
+            event.setUpdatedAt(LocalDateTime.now().toLocalDate());
 
-                Event updatedEvent = eventRepository.save(event);
+            Event updatedEvent = eventRepository.save(event);
 
-                auditService.log(
-                        securityUtil.getUsername(),
-                        securityUtil.getRole(),
-                        "UPDATE_EVENT",
-                        "Event",
-                        id.toString(),
-                        oldValue,
-                        updatedEvent.toString(),
-                        request.getRemoteAddr()
-                );
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_EVENT",
+                    "Event",
+                    id.toString(),
+                    oldValue,
+                    objectMapper.writeValueAsString(updatedEvent),
+                    request.getRemoteAddr()
+            );
 
-                return updatedEvent;
-
-            }).orElseThrow(() -> new IllegalArgumentException("Event not found with ID: " + id));
+            return updatedEvent;
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not update event", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize event for audit log", e);
         }
     }
 

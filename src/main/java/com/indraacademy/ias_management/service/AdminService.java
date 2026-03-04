@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -17,14 +19,10 @@ public class AdminService {
 
     private static final Logger log = LoggerFactory.getLogger(AdminService.class);
 
-    @Autowired
-    private AdminRepository adminRepository;
-
-    @Autowired
-    private AuditService auditService;
-
-    @Autowired
-    private SecurityUtil securityUtil;
+    @Autowired private AdminRepository adminRepository;
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     public List<Admin> getAllAdmins() {
         log.info("Attempting to fetch all admins");
@@ -99,7 +97,7 @@ public class AdminService {
             Admin existingAdmin = adminRepository.findById(adminId)
                     .orElseThrow(() -> new RuntimeException("Admin not found"));
 
-            String oldValue = existingAdmin.toString();
+            String oldValue = objectMapper.writeValueAsString(existingAdmin);
 
             existingAdmin.setName(admin.getName());
             existingAdmin.setEmail(admin.getEmail());
@@ -116,7 +114,7 @@ public class AdminService {
                     "Admin",
                     adminId,
                     oldValue,
-                    updatedAdmin.toString(),
+                    objectMapper.writeValueAsString(updatedAdmin),
                     request.getRemoteAddr()
             );
 
@@ -126,6 +124,8 @@ public class AdminService {
         } catch (DataAccessException e) {
             log.error("Database access error occurred while updating admin ID: {}", adminId, e);
             throw new RuntimeException("Could not update admin due to data access issue", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -142,7 +142,7 @@ public class AdminService {
             Admin existingAdmin = adminRepository.findById(adminId)
                     .orElseThrow(() -> new RuntimeException("Admin not found"));
 
-            String oldValue = existingAdmin.toString();
+            String oldValue = objectMapper.writeValueAsString(existingAdmin);
 
             adminRepository.deleteById(adminId);
 
@@ -162,6 +162,8 @@ public class AdminService {
         } catch (DataAccessException e) {
             log.error("Database access error occurred while deleting admin ID: {}", adminId, e);
             throw new RuntimeException("Could not delete admin due to data access issue", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 }

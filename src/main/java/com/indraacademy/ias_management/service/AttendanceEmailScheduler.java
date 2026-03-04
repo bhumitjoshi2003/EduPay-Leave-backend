@@ -21,12 +21,9 @@ public class AttendanceEmailScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(AttendanceEmailScheduler.class);
 
-    @Autowired
-    private AttendanceRepository attendanceRepository;
-    @Autowired
-    private StudentRepository studentRepository;
-    @Autowired
-    private EmailService emailService;
+    @Autowired private AttendanceRepository attendanceRepository;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private EmailService emailService;
 
     @Scheduled(cron = "0 15 12 * * *")
     public void sendAttendanceEmails() {

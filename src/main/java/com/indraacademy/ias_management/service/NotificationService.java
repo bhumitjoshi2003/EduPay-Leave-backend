@@ -5,7 +5,6 @@ import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
-import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +14,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.time.LocalDateTime;
 import java.time.Period;
@@ -34,6 +35,7 @@ public class NotificationService {
     @Autowired private UserNotificationRepository userNotificationRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     @Transactional
     public Notification createBroadNotification(Notification notification,
@@ -58,7 +60,7 @@ public class NotificationService {
                     "Notification",
                     savedNotification.getId().toString(),
                     null,
-                    savedNotification.toString(),
+                    objectMapper.writeValueAsString(savedNotification),
                     request.getRemoteAddr()
             );
 
@@ -66,6 +68,8 @@ public class NotificationService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not create broad notification", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -260,7 +264,7 @@ public class NotificationService {
             Notification notification = notificationRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
 
-            String oldValue = notification.toString();
+            String oldValue = objectMapper.writeValueAsString(notification);
 
             notification.setTitle(updatedNotification.getTitle());
             notification.setMessage(updatedNotification.getMessage());
@@ -279,7 +283,7 @@ public class NotificationService {
                     "Notification",
                     id.toString(),
                     oldValue,
-                    savedNotification.toString(),
+                    objectMapper.writeValueAsString(savedNotification),
                     request.getRemoteAddr()
             );
 
@@ -287,6 +291,8 @@ public class NotificationService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not update notification", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -301,7 +307,7 @@ public class NotificationService {
             Notification notification = notificationRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
 
-            String oldValue = notification.toString();
+            String oldValue = objectMapper.writeValueAsString(notification);
 
             notificationRepository.deleteById(id);
 
@@ -318,6 +324,8 @@ public class NotificationService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not delete notification", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 

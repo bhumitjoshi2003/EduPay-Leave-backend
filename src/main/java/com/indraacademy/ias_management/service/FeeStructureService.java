@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -22,6 +24,7 @@ public class FeeStructureService {
 
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     @Autowired
     private FeeStructureRepository feeStructureRepository;
@@ -94,7 +97,7 @@ public class FeeStructureService {
             List<FeeStructure> existingFees =
                     feeStructureRepository.findByAcademicYear(academicYear);
 
-            String oldValue = existingFees.toString();
+            String oldValue = objectMapper.writeValueAsString(existingFees);
 
             if (!existingFees.isEmpty()) {
                 feeStructureRepository.deleteAll(existingFees);
@@ -128,7 +131,7 @@ public class FeeStructureService {
                     "FeeStructure",
                     academicYear,
                     oldValue,
-                    savedFees.toString(),
+                    objectMapper.writeValueAsString(savedFees),
                     request.getRemoteAddr()
             );
 
@@ -136,6 +139,8 @@ public class FeeStructureService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not update fee structures", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -183,7 +188,7 @@ public class FeeStructureService {
                     "FeeStructure",
                     academicYear,
                     null,
-                    savedFees.toString(),
+                    objectMapper.writeValueAsString(savedFees),
                     request.getRemoteAddr()
             );
 
@@ -191,6 +196,8 @@ public class FeeStructureService {
 
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not create new fee session", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 }

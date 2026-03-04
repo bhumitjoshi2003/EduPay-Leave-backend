@@ -10,6 +10,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -21,14 +23,10 @@ public class BusFeesService {
 
     private static final Logger log = LoggerFactory.getLogger(BusFeesService.class);
 
-    @Autowired
-    private BusFeesRepository busFeesRepository;
-
-    @Autowired
-    private AuditService auditService;
-
-    @Autowired
-    private SecurityUtil securityUtil;
+    @Autowired private BusFeesRepository busFeesRepository;
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectMapper objectMapper;
 
     public List<BusFees> getAllRecords() {
         log.info("Attempting to fetch all bus fees records.");
@@ -98,7 +96,7 @@ public class BusFeesService {
         try {
             // Capture old state before deletion
             List<BusFees> existingFees = busFeesRepository.findByAcademicYear(academicYear);
-            String oldValue = existingFees.toString();
+            String oldValue = objectMapper.writeValueAsString(existingFees);
 
             if (!existingFees.isEmpty()) {
                 busFeesRepository.deleteAll(existingFees);
@@ -131,7 +129,7 @@ public class BusFeesService {
                     "BusFees",
                     academicYear,
                     oldValue,
-                    savedFees.toString(),
+                    objectMapper.writeValueAsString(savedFees),
                     request.getRemoteAddr()
             );
 
@@ -142,6 +140,8 @@ public class BusFeesService {
         } catch (DataAccessException e) {
             log.error("Data access error during updateBusFees for year: {}", academicYear, e);
             throw new RuntimeException("Could not update bus fees", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 }
