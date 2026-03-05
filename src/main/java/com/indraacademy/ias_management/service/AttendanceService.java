@@ -51,7 +51,7 @@ public class AttendanceService {
             List<Attendance> oldRecords =
                     attendanceRepository.findByDateAndClassName(absentDate, className);
 
-            String oldValue = oldRecords.toString();
+            String oldValue = objectMapper.writeValueAsString(oldRecords);
 
             attendanceRepository.deleteByDateAndClassName(absentDate, className);
             attendanceRepository.saveAll(attendanceList);
