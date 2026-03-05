@@ -16,7 +16,6 @@ public class AuditQueryService {
     private AuditRepository auditRepository;
 
     public Page<AuditLog> getAuditLogs(AuditFilterDTO filter, Pageable pageable) {
-
         return auditRepository.findAll(
                 AuditSpecification.filter(filter),
                 pageable

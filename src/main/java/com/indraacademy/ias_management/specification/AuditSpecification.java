@@ -21,30 +21,24 @@ public class AuditSpecification {
 
             List<Predicate> predicates = new ArrayList<>();
 
-            // Typed timestamp expression (explicit) to avoid generic inference issues
             Expression<LocalDateTime> timestamp = root.get("timestamp").as(LocalDateTime.class);
 
-            // 1. Username filter
             if (filter.getUsername() != null && !filter.getUsername().trim().isEmpty()) {
                 predicates.add(cb.equal(root.get("username"), filter.getUsername()));
             }
 
-            // 2. Role filter
             if (filter.getRole() != null && !filter.getRole().trim().isEmpty()) {
                 predicates.add(cb.equal(root.get("role"), filter.getRole()));
             }
 
-            // 3. Entity Name filter
             if (filter.getEntityName() != null && !filter.getEntityName().trim().isEmpty()) {
                 predicates.add(cb.equal(root.get("entityName"), filter.getEntityName()));
             }
 
-            // 4. Action filter
             if (filter.getAction() != null && !filter.getAction().trim().isEmpty()) {
                 predicates.add(cb.equal(root.get("action"), filter.getAction()));
             }
 
-            // 5. Start Date filter
             if (filter.getStartDate() != null) {
                 predicates.add(
                         cb.greaterThanOrEqualTo(
@@ -54,7 +48,6 @@ public class AuditSpecification {
                 );
             }
 
-            // 6. End Date filter (production-safe)
             if (filter.getEndDate() != null) {
                 predicates.add(
                         cb.lessThan(
@@ -64,6 +57,7 @@ public class AuditSpecification {
                 );
             }
 
+            query.orderBy(cb.desc(root.get("timestamp")));
             return cb.and(predicates.toArray(new Predicate[0]));
         };
     }
