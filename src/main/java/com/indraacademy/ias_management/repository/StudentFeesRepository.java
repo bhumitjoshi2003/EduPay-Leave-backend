@@ -16,4 +16,7 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
 
     @Query("SELECT DISTINCT sf.year FROM StudentFees sf WHERE sf.studentId = :studentId")
     List<String> findDistinctYearsByStudentId(String studentId);
+
+    @Query("SELECT sf FROM StudentFees sf WHERE sf.year = :year AND sf.month = :month AND sf.paid = false")
+    List<StudentFees> findAllUnpaidByYearAndMonth(String year, Integer month);
 }

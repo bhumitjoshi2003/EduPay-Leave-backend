@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface StudentRepository extends JpaRepository<Student, String> {
@@ -44,4 +45,6 @@ public interface StudentRepository extends JpaRepository<Student, String> {
              and (s.leavingDate is null or s.leavingDate > :today)
            """)
     void updateStatusActive(@Param("today") LocalDate today);
+
+    Optional<Student> findByStudentId(String studentId);
 }

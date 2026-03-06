@@ -35,7 +35,7 @@ public class EmailService {
         }
 
         log.info("Attempting to send async email to: {} with subject: {}", to, subject);
-
+        System.out.println("Sending");
         try {
             SimpleMailMessage message = new SimpleMailMessage();
             message.setFrom(emailSender);
@@ -44,6 +44,7 @@ public class EmailService {
             message.setText(body);
 
             javaMailSender.send(message);
+            System.out.println("Sent");
             log.info("Successfully sent async email to: {}", to);
         } catch (MailException e) {
             log.error("MailException occurred while sending async email to: {} with subject: {}", to, subject, e);
