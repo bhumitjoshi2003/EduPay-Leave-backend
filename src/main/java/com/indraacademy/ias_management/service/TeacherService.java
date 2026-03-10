@@ -117,7 +117,7 @@ public class TeacherService {
                     "Teacher",
                     savedTeacher.getTeacherId(),
                     null,
-                    savedTeacher.toString(),
+                    objectMapper.writeValueAsString(savedTeacher),
                     request.getRemoteAddr()
             );
 
@@ -127,8 +127,9 @@ public class TeacherService {
             log.error("Data access error while adding teacher with ID: {}", teacher.getTeacherId(), e);
             throw new RuntimeException("Failed to add teacher due to a database issue.", e);
         } catch (IllegalArgumentException e) {
-            // Re-throw specific business exceptions
             throw e;
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 }

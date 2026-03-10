@@ -70,7 +70,7 @@ public class StudentService {
                     "Student",
                     savedStudent.getStudentId(),
                     null,
-                    "Student created in class " + savedStudent.getClassName(),
+                    objectMapper.writeValueAsString(savedStudent),
                     request.getRemoteAddr()
             );
 
