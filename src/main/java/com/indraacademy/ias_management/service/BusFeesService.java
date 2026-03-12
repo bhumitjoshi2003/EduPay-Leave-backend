@@ -107,7 +107,6 @@ public class BusFeesService {
             for (BusFees fee : updatedFees) {
 
                 if (fee.getMinDistance() == null ||
-                        fee.getMaxDistance() == null ||
                         fee.getFees() == null) {
                     continue;
                 }
