@@ -46,4 +46,12 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
 
     @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date > :leaveDate")
     long countWorkingDaysAfterLeave(@Param("className") String className, @Param("year") int year, @Param("month") int month, @Param("leaveDate") LocalDate leaveDate);
+
+    @Query("SELECT a FROM Attendance a WHERE a.studentId = :studentId " +
+            "AND a.date >= :startDate AND a.date <= :endDate")
+    List<Attendance> findByStudentIdAndDateRange(
+            @Param("studentId") String studentId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
 }

@@ -100,4 +100,14 @@ public class AttendanceController {
                     .body("Failed to delete attendance records.");
         }
     }
+
+    @GetMapping("/student/{studentId}/month/{month}/year/{year}")
+    public ResponseEntity<List<Attendance>> getStudentMonthlyAttendance(
+            @PathVariable String studentId,
+            @PathVariable int month,
+            @PathVariable int year) {
+        log.info("Request for monthly attendance: Student {}, Year {}, Month {}", studentId, year, month);
+        List<Attendance> list = attendanceService.getAttendanceByStudentMonthAndYear(studentId, year, month);
+        return ResponseEntity.ok(list);
+    }
 }
