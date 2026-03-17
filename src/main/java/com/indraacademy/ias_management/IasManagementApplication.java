@@ -1,6 +1,8 @@
 package com.indraacademy.ias_management;
 
+import jakarta.annotation.PostConstruct;
 import org.modelmapper.ModelMapper;
+import java.util.TimeZone;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
@@ -23,6 +25,11 @@ public class IasManagementApplication implements WebMvcConfigurer {
 
 	public static void main(String[] args) {
 		SpringApplication.run(IasManagementApplication.class, args);
+	}
+
+	@PostConstruct
+	public void init() {
+		TimeZone.setDefault(TimeZone.getTimeZone("Asia/Kolkata"));
 	}
 
 	@Override
