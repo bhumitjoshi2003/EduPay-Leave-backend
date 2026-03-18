@@ -46,5 +46,5 @@ jobs:
               -e SPRING_MAIL_PASSWORD='${{ secrets.MAIL_PASSWORD }}' \
               -e JWT_PRIVATE_KEY='${{ secrets.JWT_PRIVATE_KEY }}' \
               -e JWT_PUBLIC_KEY='${{ secrets.JWT_PUBLIC_KEY }}' \
-              -e FRONTEND_URL='${{ secrets.DB_URL }}' \
+              -e FRONTEND_URL='${{ secrets.FRONTEND_URL }}' \
               ias-backend
