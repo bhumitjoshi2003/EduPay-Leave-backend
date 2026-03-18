@@ -42,12 +42,7 @@ public class SecurityConfig {
                 }))
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/login",
-                                "/api/auth/reset-password",
-                                "/api/auth/register",
-                                "/api/auth/request-password-reset",
-                                "/api/auth/refresh-token",
-                                "/actuator/health").permitAll()
+                        .requestMatchers("/api/**").permitAll()
                         .requestMatchers("/uploads/events/images/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
                         .anyRequest().authenticated()
