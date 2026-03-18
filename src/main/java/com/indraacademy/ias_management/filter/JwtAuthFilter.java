@@ -35,108 +35,75 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     @Autowired
     private UserDetailsService userDetailsService;
 
-//    @Override
-//    protected void doFilterInternal(HttpServletRequest request,
-//                                    HttpServletResponse response,
-//                                    FilterChain filterChain)
-//            throws ServletException, IOException {
-//
-//        String path = request.getRequestURI();
-//
-//        // Bypass auth for public endpoints
-//        if (path.startsWith("/api/auth/login")
-//                || path.startsWith("/api/auth/refresh-token")
-//                || path.startsWith("/api/auth/request-password-reset")
-//                || path.startsWith("/api/auth/reset-password")) {
-//
-//            filterChain.doFilter(request, response);
-//            return;
-//        }
-//
-//        String authHeader = request.getHeader("Authorization");
-//
-//        if (authHeader != null && authHeader.startsWith("Bearer ")) {
-//
-//            String token = authHeader.substring(7);
-//            String userId;
-//            String role;
-//
-//            try {
-//                userId = jwtUtil.extractUserId(token);
-//                role = jwtUtil.extractUserRole(token);
-//
-//                log.debug("JWT extracted for userId={}, role={}", userId, role);
-//
-//            } catch (ExpiredJwtException e) {
-//                log.warn("Expired JWT token for request: {}", request.getRequestURI());
-//                response.setStatus(HttpStatus.UNAUTHORIZED.value());
-//                response.getWriter().write("{\"message\": \"Token Expired\"}");
-//                return;
-//            } catch (Exception e) {
-//                log.error("Invalid JWT token: {}", e.getMessage());
-//                response.setStatus(HttpStatus.UNAUTHORIZED.value());
-//                return;
-//            }
-//
-//            // Only authenticate if no context exists yet
-//            if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-//                try {
-//                    UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
-//
-//                    if (jwtUtil.validateToken(token, userDetails)) {
-//                        UsernamePasswordAuthenticationToken authentication =
-//                                new UsernamePasswordAuthenticationToken(
-//                                        userDetails, null,
-//                                        List.of(new SimpleGrantedAuthority("ROLE_" + role))
-//                                );
-//
-//                        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-//                        SecurityContextHolder.getContext().setAuthentication(authentication);
-//
-//                        log.debug("JWT validated & security context set for userId={}", userId);
-//
-//                    } else {
-//                        log.warn("JWT validation failed for userId={}", userId);
-//                    }
-//                } catch (Exception e) {
-//                    log.error("Failed to load user details for userId={}: {}", userId, e.getMessage());
-//                }
-//            }
-//        }
-//
-//        filterChain.doFilter(request, response);
-//    }
-
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain)
             throws ServletException, IOException {
 
-        try {
-            String path = request.getRequestURI();
+        String path = request.getRequestURI();
 
-            // 🔥 VERY IMPORTANT: skip auth endpoints
-            if (path.startsWith("/api/auth") || path.startsWith("/api/public")) {
-                filterChain.doFilter(request, response);
+        // Bypass auth for public endpoints
+        if (path.startsWith("/api/auth/login")
+                || path.startsWith("/api/auth/refresh-token")
+                || path.startsWith("/api/auth/request-password-reset")
+                || path.startsWith("/api/auth/reset-password")) {
+
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        String authHeader = request.getHeader("Authorization");
+
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+
+            String token = authHeader.substring(7);
+            String userId;
+            String role;
+
+            try {
+                userId = jwtUtil.extractUserId(token);
+                role = jwtUtil.extractUserRole(token);
+
+                log.debug("JWT extracted for userId={}, role={}", userId, role);
+
+            } catch (ExpiredJwtException e) {
+                log.warn("Expired JWT token for request: {}", request.getRequestURI());
+                response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                response.getWriter().write("{\"message\": \"Token Expired\"}");
+                return;
+            } catch (Exception e) {
+                log.error("Invalid JWT token: {}", e.getMessage());
+                response.setStatus(HttpStatus.UNAUTHORIZED.value());
                 return;
             }
 
-            String authHeader = request.getHeader("Authorization");
+            // Only authenticate if no context exists yet
+            if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+                try {
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
 
-            if (authHeader != null && authHeader.startsWith("Bearer ")) {
-                String token = authHeader.substring(7);
+                    if (jwtUtil.validateToken(token, userDetails)) {
+                        UsernamePasswordAuthenticationToken authentication =
+                                new UsernamePasswordAuthenticationToken(
+                                        userDetails, null,
+                                        List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                                );
 
-                // validate token (your logic)
-                // set authentication if valid
+                        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                        log.debug("JWT validated & security context set for userId={}", userId);
+
+                    } else {
+                        log.warn("JWT validation failed for userId={}", userId);
+                    }
+                } catch (Exception e) {
+                    log.error("Failed to load user details for userId={}: {}", userId, e.getMessage());
+                }
             }
-
-        } catch (Exception e) {
-            // 🔥 DO NOT THROW ERROR
-            e.printStackTrace(); // just log
         }
 
-        // 🔥 ALWAYS CONTINUE
         filterChain.doFilter(request, response);
     }
 }

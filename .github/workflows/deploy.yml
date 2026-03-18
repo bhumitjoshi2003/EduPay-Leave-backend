@@ -38,7 +38,7 @@ jobs:
               --health-timeout=5s \
               --health-retries=3 \
               --name ias-backend-container \
-              -p 8080:8080 \
+              -p 127.0.0.1:8080:8080 \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e SPRING_DATASOURCE_URL='${{ secrets.DB_URL }}' \
               -e SPRING_DATASOURCE_USERNAME='${{ secrets.DB_USERNAME }}' \
