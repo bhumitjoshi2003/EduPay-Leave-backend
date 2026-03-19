@@ -342,4 +342,17 @@ public class AttendanceService {
             throw new RuntimeException("Could not retrieve monthly attendance");
         }
     }
+
+    public List<Attendance> getAttendanceByStudentClassMonthAndYear(String studentId, String className, int year, int month) {
+        log.info("Fetching monthly attendance for Student: {} in Class: {} for {}-{}", studentId, className, year, month);
+        try {
+            LocalDate startDate = LocalDate.of(year, month, 1);
+            LocalDate endDate = startDate.withDayOfMonth(startDate.lengthOfMonth());
+
+            return attendanceRepository.findByStudentIdAndClassNameAndDateRange(studentId, className, startDate, endDate);
+        } catch (Exception e) {
+            log.error("Error fetching attendance for student: {} in class: {}", studentId, className, e);
+            throw new RuntimeException("Could not retrieve attendance records");
+        }
+    }
 }

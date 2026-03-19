@@ -54,4 +54,14 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate
     );
+
+    @Query("SELECT a FROM Attendance a WHERE a.studentId = :studentId " +
+            "AND a.className = :className " +
+            "AND a.date >= :startDate AND a.date <= :endDate")
+    List<Attendance> findByStudentIdAndClassNameAndDateRange(
+            @Param("studentId") String studentId,
+            @Param("className") String className,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
 }

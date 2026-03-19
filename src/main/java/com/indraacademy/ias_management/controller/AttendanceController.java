@@ -110,4 +110,16 @@ public class AttendanceController {
         List<Attendance> list = attendanceService.getAttendanceByStudentMonthAndYear(studentId, year, month);
         return ResponseEntity.ok(list);
     }
+
+
+    @GetMapping("/student/{studentId}/month/{month}/year/{year}")
+    public ResponseEntity<List<Attendance>> getStudentMonthlyAttendance(
+            @PathVariable String studentId,
+            @PathVariable int month,
+            @PathVariable int year,
+            @RequestParam String className) {
+
+        List<Attendance> list = attendanceService.getAttendanceByStudentClassMonthAndYear(studentId, className, year, month);
+        return ResponseEntity.ok(list);
+    }
 }
