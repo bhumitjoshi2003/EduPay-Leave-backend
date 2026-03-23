@@ -40,6 +40,7 @@ jobs:
               --name ias-backend-container \
               -p 127.0.0.1:8080:8080 \
               -e SPRING_PROFILES_ACTIVE=prod \
+              -e SPRING_JPA_DATABASE_PLATFORM=org.hibernate.dialect.PostgreSQLDialect
               -e SPRING_DATASOURCE_URL='${{ secrets.DB_URL }}' \
               -e SPRING_DATASOURCE_USERNAME='${{ secrets.DB_USERNAME }}' \
               -e SPRING_DATASOURCE_PASSWORD='${{ secrets.DB_PASSWORD }}' \
