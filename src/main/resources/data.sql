@@ -1,8 +1,37 @@
-INSERT INTO bus_fees (academic_year, min_distance, max_distance, fees) VALUES ('2023-2024', 0, 3, 500);
-INSERT INTO bus_fees (academic_year, min_distance, max_distance, fees) VALUES ('2024-2025', 0, 3, 600);
-INSERT INTO bus_fees (academic_year, min_distance, max_distance, fees) VALUES ('2023-2024', 4, 8, 700);
-INSERT INTO bus_fees (academic_year, min_distance, max_distance, fees) VALUES ('2024-2025', 4, 8, 800);
-INSERT INTO bus_fees (academic_year, min_distance, max_distance, fees) VALUES ('2024-2025', 9, NULL, 1000);
+INSERT INTO fee_structure
+(academic_year, class_name, tuition_fee, admission_fee, annual_charges, eca_project, examination_fee, lab_charges)
+VALUES
+-- Pre-primary
+('2026-2027', 'Play group', 1400, 2500, 1500, 2200, 400, 0),
+('2026-2027', 'Nursery', 1700, 5000, 1500, 2200, 400, 0),
+('2026-2027', 'LKG', 1800, 5000, 1500, 2200, 400, 0),
+('2026-2027', 'UKG', 1800, 5000, 1500, 2200, 400, 0),
+
+-- Primary
+('2026-2027', '1', 2200, 5000, 2300, 2500, 500, 0),
+('2026-2027', '2', 2200, 5000, 2300, 2500, 500, 0),
+('2026-2027', '3', 2500, 5000, 2300, 2500, 500, 0),
+('2026-2027', '4', 2500, 5000, 2300, 2500, 500, 0),
+('2026-2027', '5', 2500, 5000, 2300, 2500, 500, 0),
+
+-- Middle
+('2026-2027', '6', 2750, 5000, 2500, 2700, 600, 0),
+('2026-2027', '7', 2750, 5000, 2500, 2700, 600, 0),
+('2026-2027', '8', 2750, 5000, 2500, 2700, 600, 0),
+
+-- Secondary
+('2026-2027', '9', 3200, 5000, 3200, 3000, 700, 1500),
+('2026-2027', '10', 3200, 5000, 3200, 3000, 700, 1500),
+
+-- Senior Secondary
+('2026-2027', '11', 4200, 5000, 3500, 3000, 700, 2100),
+('2026-2027', '12', 4200, 5000, 3500, 3000, 700, 2100);
+
+
+INSERT INTO bus_fees (academic_year, min_distance, max_distance, fees) VALUES
+('2026-2027', 0, 3, 900),
+('2026-2027', 3, 8, 1100),
+('2026-2027', 8, NULL, 1300);
 
 
 INSERT INTO fee_structure (academic_year, class_name, tuition_fee, admission_fee, annual_charges, eca_project, examination_fee, lab_charges)
