@@ -24,7 +24,8 @@ public class EmailService {
     @Autowired private JavaMailSender javaMailSender;
     @Autowired private StudentRepository studentRepository;
 
-    @Value("${spring.mail.username}")
+
+    @Value("${app.mail.from:noreply@edunexify.co.in}")
     private String emailSender;
 
     @Async
