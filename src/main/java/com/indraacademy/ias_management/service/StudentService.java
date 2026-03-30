@@ -84,7 +84,7 @@ public class StudentService {
 
             log.info("Successfully saved new student with ID: {}", savedStudent.getStudentId());
 
-            String academicYear = getAcademicYear(LocalDate.now());
+            String academicYear = getAcademicYear(savedStudent.getJoiningDate());
 
             // After successfully saving the student, create the default fees entries
             studentFeesService.createDefaultStudentFees(
@@ -92,7 +92,8 @@ public class StudentService {
                     savedStudent.getClassName(),
                     academicYear,
                     savedStudent.getTakesBus(),
-                    savedStudent.getDistance()
+                    savedStudent.getDistance(),
+                    savedStudent.getJoiningDate()
             );
             log.info("Created default fee entries for student ID: {}", savedStudent.getStudentId());
 

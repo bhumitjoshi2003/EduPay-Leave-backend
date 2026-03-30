@@ -321,7 +321,7 @@ public class StudentFeesService {
     }
 
     @Transactional
-    public void createDefaultStudentFees(String studentId, String className, String year, Boolean takesBus, Double distance) {
+    public void createDefaultStudentFees(String studentId, String className, String year, Boolean takesBus, Double distance, LocalDate joiningDate) {
         if (studentId == null || studentId.trim().isEmpty() || className == null || className.trim().isEmpty() || year == null || year.trim().isEmpty() || takesBus == null) {
             log.warn("Attempted to create default fees with null/empty parameters. ID: {}, Year: {}", studentId, year);
             throw new IllegalArgumentException("Student ID, Class Name, Year, and Takes Bus status must be provided.");
@@ -329,8 +329,23 @@ public class StudentFeesService {
 
         log.info("Creating 12 months of default fees for student ID: {} Year: {}", studentId, year);
 
+        int joiningMonth = joiningDate.getMonthValue();
+
+        int startMonth;
+        int endMonth;
+
+        if (joiningMonth >= 1 && joiningMonth <= 3) {
+            // Jan–Mar → only remaining months till March
+            startMonth = joiningMonth;
+            endMonth = 3;
+        } else {
+            // Apr–Dec → full academic year
+            startMonth = 4;
+            endMonth = 12;
+        }
+
         try {
-            for (int month = 1; month <= 12; month++) {
+            for (int month = startMonth; month <= endMonth; month++) {
                 StudentFees studentFee = new StudentFees();
                 studentFee.setStudentId(studentId);
                 studentFee.setClassName(className);
