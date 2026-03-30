@@ -61,6 +61,14 @@ public class StudentService {
                 log.warn("Student with ID {} already exists.", student.getStudentId());
                 throw new IllegalArgumentException("Student with ID " + student.getStudentId() + " already exists.");
             }
+
+            LocalDate today = LocalDate.now();
+            if (student.getJoiningDate() != null && student.getJoiningDate().isAfter(today)) {
+                student.setStatus(StudentStatus.UPCOMING);
+            }
+            else {
+                student.setStatus(StudentStatus.ACTIVE);
+            }
             Student savedStudent = studentRepository.save(student);
 
             auditService.log(
