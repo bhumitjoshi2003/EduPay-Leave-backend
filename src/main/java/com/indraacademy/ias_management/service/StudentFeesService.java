@@ -336,11 +336,11 @@ public class StudentFeesService {
 
         if (joiningMonth >= 1 && joiningMonth <= 3) {
             // Jan–Mar → only remaining months till March
-            startMonth = joiningMonth;
-            endMonth = 3;
+            startMonth = joiningMonth+9;
+            endMonth = 12;
         } else {
-            // Apr–Dec → full academic year
-            startMonth = 4;
+            // April–March → full academic year
+            startMonth = 1;
             endMonth = 12;
         }
 
