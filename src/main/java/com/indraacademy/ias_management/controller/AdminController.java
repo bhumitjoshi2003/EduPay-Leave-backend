@@ -18,7 +18,7 @@ import java.util.NoSuchElementException;
 @RestController
 @RequestMapping("/api/admins")
 @CrossOrigin(origins = "http://localhost:4200")
-@PreAuthorize("hasRole('" + Role.ADMIN + "')")
+@PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
 public class AdminController {
 
     private static final Logger log = LoggerFactory.getLogger(AdminController.class);
