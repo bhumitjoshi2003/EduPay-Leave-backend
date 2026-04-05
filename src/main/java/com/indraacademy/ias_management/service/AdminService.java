@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.repository.AdminRepository;
+import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AdminService {
@@ -23,6 +25,7 @@ public class AdminService {
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UserRepository userRepository;
 
     public List<Admin> getAllAdmins() {
         log.info("Attempting to fetch all admins");
@@ -129,6 +132,7 @@ public class AdminService {
         }
     }
 
+    @Transactional
     public void deleteAdmin(String adminId, HttpServletRequest request) {
 
         if (adminId == null || adminId.trim().isEmpty()) {
@@ -145,6 +149,11 @@ public class AdminService {
             String oldValue = objectMapper.writeValueAsString(existingAdmin);
 
             adminRepository.deleteById(adminId);
+
+            userRepository.findByUserId(adminId).ifPresent(user -> {
+                userRepository.delete(user);
+                log.info("Deleted corresponding user credentials for ID: {}", adminId);
+            });
 
             auditService.log(
                     securityUtil.getUsername(),
