@@ -1,12 +1,14 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Admin;
+import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -26,6 +28,7 @@ public class AdminService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UserRepository userRepository;
+    @Autowired private PasswordEncoder passwordEncoder;
 
     public List<Admin> getAllAdmins() {
         log.info("Attempting to fetch all admins");
@@ -55,6 +58,7 @@ public class AdminService {
         }
     }
 
+    @Transactional
     public Admin createAdmin(Admin admin, HttpServletRequest request) {
 
         if (admin == null) {
@@ -67,6 +71,13 @@ public class AdminService {
         try {
             Admin savedAdmin = adminRepository.save(admin);
 
+            User newUser = new User();
+            newUser.setUserId(savedAdmin.getAdminId());
+            newUser.setEmail(savedAdmin.getEmail());
+            newUser.setRole("ADMIN");
+            newUser.setPassword(passwordEncoder.encode(admin.getDob().toString()));
+            userRepository.save(newUser);
+
             auditService.log(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
@@ -74,7 +85,7 @@ public class AdminService {
                     "Admin",
                     savedAdmin.getAdminId(),
                     null,
-                    savedAdmin.toString(),
+                    objectMapper.writeValueAsString(savedAdmin),
                     request.getRemoteAddr()
             );
 
@@ -84,6 +95,8 @@ public class AdminService {
         } catch (DataAccessException e) {
             log.error("Database access error occurred while creating admin with email: {}", admin.getEmail(), e);
             throw new RuntimeException("Could not create admin due to data access issue", e);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
     }
 

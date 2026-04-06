@@ -26,6 +26,23 @@ public class AdminController {
     @Autowired
     private AdminService adminService;
 
+    @PostMapping
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
+    public ResponseEntity<Admin> registerNewAdmin(@RequestBody Admin admin, HttpServletRequest request) {
+        log.info("Request from Super Admin to create a new admin with email: {}", admin.getEmail());
+        try {
+            Admin savedAdmin = adminService.createAdmin(admin, request);
+            log.info("Successfully created new Admin with ID: {}", savedAdmin.getAdminId());
+            return ResponseEntity.ok(savedAdmin);
+        } catch (IllegalArgumentException e) {
+            log.error("Validation error during admin creation: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            log.error("Unexpected error during admin creation", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
     @GetMapping("/{adminId}")
     public ResponseEntity<Admin> getAdmin(@PathVariable String adminId) {
         log.info("Request to get Admin with ID: {}", adminId);
@@ -46,6 +63,7 @@ public class AdminController {
     }
 
     @PutMapping("/{adminId}")
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
     public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin, HttpServletRequest request) {
         log.info("Request to update Admin with ID: {}", adminId);
         try {
@@ -62,6 +80,7 @@ public class AdminController {
     }
 
     @DeleteMapping("/{adminId}")
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
     public ResponseEntity<Void> deleteAdmin(@PathVariable String adminId, HttpServletRequest request) {
         log.warn("Request to delete Admin with ID: {}", adminId);
         try {

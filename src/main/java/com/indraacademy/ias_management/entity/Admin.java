@@ -14,19 +14,19 @@ import java.time.LocalDateTime;
 public class Admin {
 
     @Id
-    @Column(name = "admin_id") // Changed column name to "admin_id"
+    @Column(name = "admin_id", nullable = false)
     private String adminId;
 
-    @Column(name = "name")
+    @Column(name = "name", nullable = false)
     private String name;
 
-    @Column(name = "email")
+    @Column(name = "email", nullable = false)
     private String email;
 
-    @Column(name = "phone_number")
+    @Column(name = "phone_number", nullable = false)
     private String phoneNumber;
 
-    @Column(name = "dob")
+    @Column(name = "dob", nullable = false)
     private LocalDate dob;
 
     @Column(name = "gender")

@@ -50,7 +50,7 @@ public class StudentController {
             return new ResponseEntity<>(savedStudent, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
             log.warn("Student registration failed (Conflict): {}", e.getMessage());
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.CONFLICT); // 409 Conflict
+            return new ResponseEntity<>(e.getMessage(), HttpStatus.CONFLICT);
         } catch (Exception e) {
             log.error("Unexpected error during student registration.", e);
             return new ResponseEntity<>("Failed to register student.", HttpStatus.INTERNAL_SERVER_ERROR);
