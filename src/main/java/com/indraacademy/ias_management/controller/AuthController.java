@@ -136,46 +136,69 @@ public class AuthController {
         }
     }
 
-
-
     @PostMapping("/change-password")
-    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request, @RequestHeader(name = "Authorization") String authorizationHeader) {
+    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request,
+                                            @RequestHeader(name = "Authorization") String authorizationHeader) {
+
+        // 1. Extract info from Token
         String callingUserId = authService.getUserIdFromToken(authorizationHeader);
-        String role = authService.getRoleFromToken(authorizationHeader);
-        log.info("Request to change password by user: {} (Role: {})", callingUserId, role);
+        String callingUserRole = authService.getRoleFromToken(authorizationHeader);
 
-        String targetUserId = callingUserId;
-        if(Role.ADMIN.equals(role)){
-            targetUserId = request.getUserId();
-            log.info("Admin is changing password for target user: {}", targetUserId);
-        }
+        String targetUserId = (request.getUserId() != null && !request.getUserId().isEmpty())
+                ? request.getUserId()
+                : callingUserId;
 
-        if (targetUserId == null) {
-            log.error("Target user ID is null in change password request.");
-            return ResponseEntity.badRequest().body("User ID is required.");
-        }
+        log.info("Password change request by {} ({}) for target {}", callingUserId, callingUserRole, targetUserId);
 
         Optional<User> userOptional = userRepository.findByUserId(targetUserId);
         if (userOptional.isEmpty()) {
-            log.warn("User {} not found for password change.", targetUserId);
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Target user not found");
         }
 
-        User user = userOptional.get();
-        if(!Role.ADMIN.equals(role) && (request.getOldPassword() == null || request.getOldPassword().isEmpty())){
-            log.warn("Non-admin user {} failed to provide old password.", callingUserId);
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Old password is required for non-admin users.");
+        User targetUser = userOptional.get();
+        String targetUserRole = targetUser.getRole();
+        boolean isSelfUpdate = callingUserId.equals(targetUserId);
+
+        if (!isSelfUpdate) {
+            // Only Admins or Super Admins can change others' passwords
+            if (!"ADMIN".equals(callingUserRole) && !"SUPER_ADMIN".equals(callingUserRole)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Access Denied: You cannot change other users' passwords.");
+            }
+
+            // Regular ADMINs cannot touch other ADMINs or SUPER_ADMINs
+            if ("ADMIN".equals(callingUserRole)) {
+                if ("SUPER_ADMIN".equals(targetUserRole) || "ADMIN".equals(targetUserRole)) {
+                    log.warn("Unauthorized attempt: Admin {} tried to reset Admin {}", callingUserId, targetUserId);
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                            .body("Admins cannot change passwords for other Admins or Super Admins.");
+                }
+            }
         }
 
-        if (!Role.ADMIN.equals(role) && !passwordEncoder.matches(request.getOldPassword(), user.getPassword())) {
-            log.warn("Invalid old password provided by user: {}", callingUserId);
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid old password");
+        // If changing YOUR OWN password, you must provide the old one.
+        if (isSelfUpdate) {
+            if (request.getOldPassword() == null || request.getOldPassword().isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body("Current password is required to change your own password.");
+            }
+            if (!passwordEncoder.matches(request.getOldPassword(), targetUser.getPassword())) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body("Invalid current password.");
+            }
         }
 
-        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
-        userRepository.save(user);
-        log.info("Password changed successfully for user: {}", targetUserId);
-        return ResponseEntity.ok("Password changed successfully");
+        // Save New Password
+        try {
+            targetUser.setPassword(passwordEncoder.encode(request.getNewPassword()));
+            userRepository.save(targetUser);
+
+            log.info("Password successfully updated for user {}", targetUserId);
+            return ResponseEntity.ok("Password changed successfully");
+        } catch (Exception e) {
+            log.error("Database error during password update for {}: {}", targetUserId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to update password.");
+        }
     }
 
     @PostMapping("/request-password-reset")
