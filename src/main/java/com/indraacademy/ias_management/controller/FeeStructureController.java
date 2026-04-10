@@ -54,7 +54,7 @@ public class FeeStructureController {
         return ResponseEntity.ok(feeStructures);
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.FINANCE_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{academicYear}")
     public ResponseEntity<List<FeeStructure>> updateFeeStructures(@PathVariable String academicYear, @RequestBody List<FeeStructure> updatedFees, HttpServletRequest request) {
         log.info("Request to update fee structures for academic year: {}", academicYear);
@@ -69,7 +69,7 @@ public class FeeStructureController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.FINANCE_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
     @PostMapping("/{academicYear}")
     public ResponseEntity<List<FeeStructure>> createNewSession(@PathVariable String academicYear, @RequestBody List<FeeStructure> newFees, HttpServletRequest request) {
         log.info("Request to create new fee session for year: {}", academicYear);

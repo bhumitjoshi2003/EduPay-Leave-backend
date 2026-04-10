@@ -53,7 +53,7 @@ public class BusFeesController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.FINANCE_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{academicYear}")
     public ResponseEntity<List<BusFees>> updateFees(@PathVariable String academicYear, @RequestBody List<BusFees> updatedFees, HttpServletRequest request) {
         log.info("Request to update bus fees for academic year: {}", academicYear);
