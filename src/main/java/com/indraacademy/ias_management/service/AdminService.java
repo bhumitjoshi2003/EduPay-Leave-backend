@@ -107,7 +107,17 @@ public class AdminService {
             throw new IllegalArgumentException("Invalid admin update request");
         }
 
+        String loggedInUserId = securityUtil.getUsername();
+        String loggedInUserRole = securityUtil.getRole();
+
         log.info("Attempting to update admin with ID: {}", adminId);
+
+        if (!"SUPER_ADMIN".equals(loggedInUserRole)) {
+            if (!loggedInUserId.equals(adminId)) {
+                log.warn("Access Denied: Admin {} tried to edit Admin {}", loggedInUserId, adminId);
+                throw new RuntimeException("Access Denied: You can only edit your own profile.");
+            }
+        }
 
         try {
             Admin existingAdmin = adminRepository.findById(adminId)

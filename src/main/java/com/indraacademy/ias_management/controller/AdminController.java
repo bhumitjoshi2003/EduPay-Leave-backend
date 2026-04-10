@@ -63,7 +63,6 @@ public class AdminController {
     }
 
     @PutMapping("/{adminId}")
-    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
     public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin, HttpServletRequest request) {
         log.info("Request to update Admin with ID: {}", adminId);
         try {
