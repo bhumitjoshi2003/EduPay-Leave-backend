@@ -25,10 +25,12 @@ public class SecurityUtil {
             return "UNKNOWN";
         }
 
-        return authentication.getAuthorities()
+        String authority = authentication.getAuthorities()
                 .stream()
                 .findFirst()
                 .map(GrantedAuthority::getAuthority)
                 .orElse("UNKNOWN");
+
+        return authority.startsWith("ROLE_") ? authority.substring(5) : authority;
     }
 }

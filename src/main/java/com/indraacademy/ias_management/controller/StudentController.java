@@ -58,13 +58,13 @@ public class StudentController {
     }
 
     @GetMapping("/{studentId}")
-    public ResponseEntity<Student> getStudent(@PathVariable String studentId, @RequestHeader(name = "Authorization") String authorizationHeader) {
-        String role = authService.getRoleFromToken(authorizationHeader);
+    public ResponseEntity<Student> getStudent(@PathVariable String studentId) {
+        String role = authService.getRole();
 
         final String resolvedStudentId;
 
         if(Role.STUDENT.equals(role)){
-            resolvedStudentId = authService.getUserIdFromToken(authorizationHeader);
+            resolvedStudentId = authService.getUserId();
             log.info("Student accessing their own record with ID: {}", resolvedStudentId);
         } else {
             resolvedStudentId = studentId;

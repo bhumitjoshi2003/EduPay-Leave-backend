@@ -30,7 +30,6 @@ public class NotificationService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationService.class);
 
-    @Autowired private AuthService authService;
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private UserNotificationRepository userNotificationRepository;
     @Autowired private AuditService auditService;
@@ -39,7 +38,6 @@ public class NotificationService {
 
     @Transactional
     public Notification createBroadNotification(Notification notification,
-                                                String authorizationHeader,
                                                 HttpServletRequest request) {
 
         if (notification == null || notification.getTitle() == null || notification.getMessage() == null) {
@@ -47,8 +45,7 @@ public class NotificationService {
         }
 
         try {
-            String createdBy = authService.getUserIdFromToken(authorizationHeader);
-            notification.setCreatedBy(createdBy);
+            notification.setCreatedBy(securityUtil.getUsername());
             notification.setCreatedAt(LocalDateTime.now());
 
             Notification savedNotification = notificationRepository.save(notification);
@@ -253,7 +250,6 @@ public class NotificationService {
     @Transactional
     public Notification updateNotification(Long id,
                                            Notification updatedNotification,
-                                           String authorizationHeader,
                                            HttpServletRequest request) {
 
         if (id == null || updatedNotification == null) {
@@ -271,8 +267,7 @@ public class NotificationService {
             notification.setType(updatedNotification.getType());
             notification.setAudience(updatedNotification.getAudience());
 
-            String updatedBy = authService.getUserIdFromToken(authorizationHeader);
-            notification.setCreatedBy(updatedBy); // acting as updatedBy
+            notification.setCreatedBy(securityUtil.getUsername()); // acting as updatedBy
 
             Notification savedNotification = notificationRepository.save(notification);
 

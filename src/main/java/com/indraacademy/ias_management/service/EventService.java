@@ -24,12 +24,11 @@ public class EventService {
     private static final Logger log = LoggerFactory.getLogger(EventService.class);
 
     @Autowired private EventRepository eventRepository;
-    @Autowired private AuthService authService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
 
-    public Event createEvent(Event event, String authorizationHeader, HttpServletRequest request) {
+    public Event createEvent(Event event, HttpServletRequest request) {
 
         if (event == null) {
             throw new IllegalArgumentException("Event object must not be null.");
@@ -41,8 +40,7 @@ public class EventService {
         }
 
         try {
-            String userId = authService.getUserIdFromToken(authorizationHeader);
-            event.setCreatedBy(userId);
+            event.setCreatedBy(securityUtil.getUsername());
 
             LocalDateTime now = LocalDateTime.now();
             event.setCreatedAt(now.toLocalDate());
@@ -116,7 +114,6 @@ public class EventService {
 
     public Event updateEvent(Long id,
                              Event eventDetails,
-                             String authorizationHeader,
                              HttpServletRequest request) {
 
         if (id == null || eventDetails == null) {
@@ -129,8 +126,6 @@ public class EventService {
         }
 
         try {
-            String userId = authService.getUserIdFromToken(authorizationHeader);
-
             Event event = eventRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("Event not found with ID: " + id));
 
@@ -147,7 +142,7 @@ public class EventService {
             event.setTargetAudience(eventDetails.getTargetAudience());
             event.setVideoLinks(eventDetails.getVideoLinks());
             event.setImageUrl(eventDetails.getImageUrl());
-            event.setCreatedBy(userId);
+            event.setCreatedBy(securityUtil.getUsername());
             event.setUpdatedAt(LocalDateTime.now().toLocalDate());
 
             Event updatedEvent = eventRepository.save(event);

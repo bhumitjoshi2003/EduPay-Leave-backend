@@ -27,10 +27,10 @@ public class EventController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> createEvent(@RequestBody Event event, @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
+    public ResponseEntity<?> createEvent(@RequestBody Event event, HttpServletRequest request) {
         log.info("Request to create new event: {}", event.getTitle());
         try {
-            Event createdEvent = eventService.createEvent(event, authorizationHeader, request);
+            Event createdEvent = eventService.createEvent(event, request);
             log.info("Event created successfully with ID: {}", createdEvent.getId());
             return new ResponseEntity<>(createdEvent, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
@@ -79,10 +79,10 @@ public class EventController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<Event> updateEvent(@PathVariable Long id, @RequestBody Event eventDetails,  @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
+    public ResponseEntity<Event> updateEvent(@PathVariable Long id, @RequestBody Event eventDetails, HttpServletRequest request) {
         log.info("Request to update event with ID: {}", id);
         try {
-            Event updatedEvent = eventService.updateEvent(id, eventDetails, authorizationHeader, request);
+            Event updatedEvent = eventService.updateEvent(id, eventDetails, request);
             log.info("Event updated successfully with ID: {}", id);
             return new ResponseEntity<>(updatedEvent, HttpStatus.OK);
         } catch (NoSuchElementException e) {

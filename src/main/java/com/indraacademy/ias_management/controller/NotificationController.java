@@ -28,10 +28,10 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> createNotification(@RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader, HttpServletRequest request) {
+    public ResponseEntity<?> createNotification(@RequestBody Notification notification, HttpServletRequest request) {
         log.info("Request to create broad notification with title: {}", notification.getTitle());
         try{
-            Notification createdNotification = notificationService.createBroadNotification(notification, authorizationHeader, request);
+            Notification createdNotification = notificationService.createBroadNotification(notification, request);
             log.info("Notification created successfully with ID: {}", createdNotification.getId());
             return new ResponseEntity<>(createdNotification, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
@@ -55,10 +55,9 @@ public class NotificationController {
     }
 
     @GetMapping("/user")
-    public ResponseEntity<List<UserNotificationDTO>> getUserNotifications(
-            @RequestHeader(name = "authorization") String authorizationHeader) {
-        String userId = authService.getUserIdFromToken(authorizationHeader);
-        String userRole = authService.getRoleFromToken(authorizationHeader);
+    public ResponseEntity<List<UserNotificationDTO>> getUserNotifications() {
+        String userId = authService.getUserId();
+        String userRole = authService.getRole();
         log.info("Fetching notifications for userId: {} with role: {}", userId, userRole);
         try {
             List<UserNotificationDTO> userNotifications = notificationService.getNotificationsForUser(userId, userRole);
@@ -83,10 +82,10 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, @RequestHeader(name="authorization") String authorizationHeader, HttpServletRequest request) {
+    public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, HttpServletRequest request) {
         log.info("Updating notification with ID: {}", id);
         try {
-            Notification savedNotification = notificationService.updateNotification(id, notification, authorizationHeader, request);
+            Notification savedNotification = notificationService.updateNotification(id, notification, request);
             log.info("Notification updated successfully with ID: {}", id);
             return new ResponseEntity<>(savedNotification, HttpStatus.OK);
         } catch (NoSuchElementException e) {
@@ -119,10 +118,9 @@ public class NotificationController {
     }
 
     @GetMapping("/user/unread/count")
-    public ResponseEntity<Long> getUnreadNotificationCount(
-            @RequestHeader(name = "authorization") String authorizationHeader) {
-        String userId = authService.getUserIdFromToken(authorizationHeader);
-        String userRole = authService.getRoleFromToken(authorizationHeader);
+    public ResponseEntity<Long> getUnreadNotificationCount() {
+        String userId = authService.getUserId();
+        String userRole = authService.getRole();
         log.info("Fetching unread notification count for userId: {} with role: {}", userId, userRole);
         try {
             long count = notificationService.getUnreadNotificationCount(userId, userRole);
@@ -134,9 +132,8 @@ public class NotificationController {
     }
 
     @PutMapping("/user/read-all")
-    public ResponseEntity<Void> markAllNotificationsAsRead(
-            @RequestHeader(name = "authorization") String authorizationHeader) {
-        String userId = authService.getUserIdFromToken(authorizationHeader);
+    public ResponseEntity<Void> markAllNotificationsAsRead() {
+        String userId = authService.getUserId();
         log.info("Marking all notifications as read for user ID {}", userId);
         try {
             notificationService.markAllNotificationsAsRead(userId);
