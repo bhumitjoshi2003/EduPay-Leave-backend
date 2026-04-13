@@ -8,8 +8,10 @@ import com.razorpay.Order;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
 import com.razorpay.Utils;
+import jakarta.annotation.PostConstruct;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
@@ -32,20 +34,21 @@ public class RazorpayService {
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private NotificationService notificationService;
 
-    // IMPORTANT: In a real-world application, these should be loaded securely from environment variables,
-    // NOT hardcoded, and the keys should be production keys if live.
-    private static final String KEY_ID = "rzp_test_uzFJONVXH4vqou";
-    private static final String KEY_SECRET = "Ykv9bqCiYKyxz6y0OSWwwKX4";
+    @Value("${razorpay.key.id}")
+    private String keyId;
 
-    private final RazorpayClient razorpayClient;
+    @Value("${razorpay.key.secret}")
+    private String keySecret;
 
-    public RazorpayService() throws RazorpayException {
+    private RazorpayClient razorpayClient;
+
+    @PostConstruct
+    public void init() {
         try {
-            this.razorpayClient = new RazorpayClient(KEY_ID, KEY_SECRET);
+            this.razorpayClient = new RazorpayClient(keyId, keySecret);
             log.info("Razorpay Client initialized successfully.");
         } catch (RazorpayException e) {
-            log.error("Failed to initialize Razorpay Client. Check API keys.", e);
-            // Re-throw as RuntimeException or let the container handle it
+            log.error("Failed to initialize Razorpay Client.", e);
             throw new RuntimeException("Failed to initialize Razorpay client", e);
         }
     }
@@ -70,6 +73,7 @@ public class RazorpayService {
             Order order = razorpayClient.Orders.create(options);
 
             Map<String, Object> response = new HashMap<>();
+            response.put("razorpayKey", this.keyId);
             response.put("orderId", order.get("id"));
             response.put("amount", order.get("amount")); // Amount in paisa
             response.put("studentId", studentId);
@@ -120,7 +124,7 @@ public class RazorpayService {
         try {
             // 1. Signature Verification
             payload = orderId + "|" + paymentId;
-            boolean isValid = Utils.verifySignature(payload, signature, KEY_SECRET);
+            boolean isValid = Utils.verifySignature(payload, signature, keySecret);
 
             if (!isValid) {
                 log.warn("Signature verification failed for Order ID: {}", orderId);
