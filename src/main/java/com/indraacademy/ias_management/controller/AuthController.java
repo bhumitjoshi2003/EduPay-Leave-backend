@@ -57,6 +57,12 @@ public class AuthController {
     @Value("${frontend.url}")
     private String frontendUrl;
 
+    @Value("${auth.cookie.secure}")
+    private boolean isSecure;
+
+    @Value("${auth.cookie.sameSite}")
+    private String sameSite;
+
     @GetMapping("/hari")
     public String message() {
         return "HARIBOL";
@@ -136,22 +142,8 @@ public class AuthController {
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
-        ResponseCookie accessCookie = ResponseCookie.from("accessToken", accessToken)
-                .httpOnly(true)
-                .path("/")
-                .sameSite("Strict")
-                .maxAge(Duration.ofHours(1))
-                .build();
-
-        ResponseCookie refreshCookie = ResponseCookie.from("refreshToken", refreshToken)
-                .httpOnly(true)
-                .path("/")
-                .sameSite("Strict")
-                .maxAge(Duration.ofDays(7))
-                .build();
-
-        response.addHeader(HttpHeaders.SET_COOKIE, accessCookie.toString());
-        response.addHeader(HttpHeaders.SET_COOKIE, refreshCookie.toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", accessToken, Duration.ofHours(1)).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", refreshToken, Duration.ofDays(7)).toString());
 
         Map<String, String> body = new LinkedHashMap<>();
         body.put("userId", loggedIn.getUserId());
@@ -160,6 +152,16 @@ public class AuthController {
         body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole()));
 
         return ResponseEntity.ok(body);
+    }
+
+    private ResponseCookie buildCookie(String name, String value, Duration maxAge) {
+        return ResponseCookie.from(name, value)
+                .httpOnly(true)
+                .secure(isSecure)
+                .path("/")
+                .sameSite(sameSite)
+                .maxAge(maxAge)
+                .build();
     }
 
     private String resolveName(String userId, String role) {
@@ -218,14 +220,7 @@ public class AuthController {
             User loggedIn = userOptional.get();
             String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole());
 
-            ResponseCookie accessCookie = ResponseCookie.from("accessToken", newAccessToken)
-                    .httpOnly(true)
-                    .path("/")
-                    .sameSite("Strict")
-                    .maxAge(Duration.ofHours(1))
-                    .build();
-
-            response.addHeader(HttpHeaders.SET_COOKIE, accessCookie.toString());
+            response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", newAccessToken, Duration.ofHours(1)).toString());
 
             Map<String, String> body = new LinkedHashMap<>();
             body.put("userId", loggedIn.getUserId());
@@ -242,22 +237,8 @@ public class AuthController {
 
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletResponse response) {
-        ResponseCookie clearAccess = ResponseCookie.from("accessToken", "")
-                .httpOnly(true)
-                .path("/")
-                .sameSite("Strict")
-                .maxAge(0)
-                .build();
-
-        ResponseCookie clearRefresh = ResponseCookie.from("refreshToken", "")
-                .httpOnly(true)
-                .path("/")
-                .sameSite("Strict")
-                .maxAge(0)
-                .build();
-
-        response.addHeader(HttpHeaders.SET_COOKIE, clearAccess.toString());
-        response.addHeader(HttpHeaders.SET_COOKIE, clearRefresh.toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", "", Duration.ZERO).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
 
         return ResponseEntity.ok("Logged out successfully");
     }
