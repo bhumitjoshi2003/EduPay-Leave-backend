@@ -2,7 +2,13 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.ChangePasswordRequest;
+import com.indraacademy.ias_management.entity.Admin;
+import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.repository.AdminRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.EmailService;
@@ -10,19 +16,25 @@ import com.indraacademy.ias_management.util.JwtUtil;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.web.util.WebUtils;
 
+import java.time.Duration;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -38,6 +50,9 @@ public class AuthController {
     @Autowired private JwtUtil jwtUtil;
     @Autowired private EmailService emailService;
     @Autowired private AuthService authService;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private TeacherRepository teacherRepository;
+    @Autowired private AdminRepository adminRepository;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -45,6 +60,30 @@ public class AuthController {
     @GetMapping("/hari")
     public String message() {
         return "HARIBOL";
+    }
+
+    /**
+     * Returns fresh user info from the database on every call.
+     * The JwtAuthFilter validates the HttpOnly accessToken cookie and populates
+     * the SecurityContext, so this endpoint is always authoritative — never stale.
+     * Returns 401 automatically if the cookie is missing or expired.
+     */
+    @GetMapping("/me")
+    public ResponseEntity<?> me() {
+        String userId = authService.getUserId();
+        Optional<User> userOptional = userRepository.findByUserId(userId);
+        if (userOptional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+
+        User user = userOptional.get();
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("userId", user.getUserId());
+        body.put("role", user.getRole());
+        body.put("name", resolveName(user.getUserId(), user.getRole()));
+        body.put("className", resolveClassName(user.getUserId(), user.getRole()));
+
+        return ResponseEntity.ok(body);
     }
 
 //    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
@@ -73,42 +112,94 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody User user) {
+    public ResponseEntity<?> login(@RequestBody User user, HttpServletResponse response) {
         Optional<User> found = userRepository.findByUserId(user.getUserId());
         if (found.isEmpty() || !passwordEncoder.matches(user.getPassword(), found.get().getPassword())) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid credentials");
         }
 
+        User loggedIn = found.get();
+
         String accessToken = Jwts.builder()
-                .setSubject(found.get().getUserId())
-                .claim("role", found.get().getRole())
-                .claim("userId", found.get().getUserId())
+                .setSubject(loggedIn.getUserId())
+                .claim("role", loggedIn.getRole())
+                .claim("userId", loggedIn.getUserId())
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + (1000 * 60 * 60))) // 60 min
+                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60)))
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
         String refreshToken = Jwts.builder()
-                .setSubject(found.get().getUserId())
+                .setSubject(loggedIn.getUserId())
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 7))) // 7 days
+                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 7)))
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
-        return ResponseEntity.ok(new HashMap<String, String>() {{
-            put("accessToken", accessToken);
-            put("refreshToken", refreshToken);
-        }});
+        ResponseCookie accessCookie = ResponseCookie.from("accessToken", accessToken)
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Strict")
+                .maxAge(Duration.ofHours(1))
+                .build();
+
+        ResponseCookie refreshCookie = ResponseCookie.from("refreshToken", refreshToken)
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Strict")
+                .maxAge(Duration.ofDays(7))
+                .build();
+
+        response.addHeader(HttpHeaders.SET_COOKIE, accessCookie.toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, refreshCookie.toString());
+
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("userId", loggedIn.getUserId());
+        body.put("role", loggedIn.getRole());
+        body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole()));
+        body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole()));
+
+        return ResponseEntity.ok(body);
+    }
+
+    private String resolveName(String userId, String role) {
+        try {
+            if (Role.STUDENT.equals(role)) {
+                return studentRepository.findByStudentId(userId).map(Student::getName).orElse(null);
+            } else if (Role.TEACHER.equals(role)) {
+                return teacherRepository.findById(userId).map(Teacher::getName).orElse(null);
+            } else {
+                return adminRepository.findById(userId).map(Admin::getName).orElse(null);
+            }
+        } catch (Exception e) {
+            log.warn("Could not resolve name for userId={}: {}", userId, e.getMessage());
+            return null;
+        }
+    }
+
+    private String resolveClassName(String userId, String role) {
+        try {
+            if (Role.STUDENT.equals(role)) {
+                return studentRepository.findByStudentId(userId).map(Student::getClassName).orElse(null);
+            } else if (Role.TEACHER.equals(role)) {
+                return teacherRepository.findById(userId).map(Teacher::getClassTeacher).orElse(null);
+            }
+        } catch (Exception e) {
+            log.warn("Could not resolve className for userId={}: {}", userId, e.getMessage());
+        }
+        return null;
     }
 
 
     @PostMapping("/refresh-token")
-    public ResponseEntity<?> refreshToken(@RequestBody HashMap<String, String> request) {
+    public ResponseEntity<?> refreshToken(HttpServletRequest request, HttpServletResponse response) {
 
-        String refreshToken = request.get("refreshToken");
-        if (refreshToken == null) {
-            return ResponseEntity.badRequest().body("Refresh Token missing");
+        jakarta.servlet.http.Cookie refreshCookieRaw = WebUtils.getCookie(request, "refreshToken");
+        if (refreshCookieRaw == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token missing");
         }
+
+        String refreshToken = refreshCookieRaw.getValue();
 
         try {
             Claims claims = Jwts.parserBuilder()
@@ -124,25 +215,59 @@ public class AuthController {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid refresh token");
             }
 
-            // Create new Access Token
-            String newAccessToken = jwtUtil.generateAccessToken(userId, userOptional.get().getRole());
+            User loggedIn = userOptional.get();
+            String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole());
 
-            return ResponseEntity.ok(new HashMap<String, String>() {{
-                put("accessToken", newAccessToken);
-            }});
+            ResponseCookie accessCookie = ResponseCookie.from("accessToken", newAccessToken)
+                    .httpOnly(true)
+                    .path("/")
+                    .sameSite("Strict")
+                    .maxAge(Duration.ofHours(1))
+                    .build();
+
+            response.addHeader(HttpHeaders.SET_COOKIE, accessCookie.toString());
+
+            Map<String, String> body = new LinkedHashMap<>();
+            body.put("userId", loggedIn.getUserId());
+            body.put("role", loggedIn.getRole());
+            body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole()));
+            body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole()));
+
+            return ResponseEntity.ok(body);
 
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token expired");
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token expired or invalid");
         }
     }
 
-    @PostMapping("/change-password")
-    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request,
-                                            @RequestHeader(name = "Authorization") String authorizationHeader) {
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletResponse response) {
+        ResponseCookie clearAccess = ResponseCookie.from("accessToken", "")
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Strict")
+                .maxAge(0)
+                .build();
 
-        // 1. Extract info from Token
-        String callingUserId = authService.getUserIdFromToken(authorizationHeader);
-        String callingUserRole = authService.getRoleFromToken(authorizationHeader);
+        ResponseCookie clearRefresh = ResponseCookie.from("refreshToken", "")
+                .httpOnly(true)
+                .path("/")
+                .sameSite("Strict")
+                .maxAge(0)
+                .build();
+
+        response.addHeader(HttpHeaders.SET_COOKIE, clearAccess.toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, clearRefresh.toString());
+
+        return ResponseEntity.ok("Logged out successfully");
+    }
+
+    @PostMapping("/change-password")
+    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
+
+        // 1. Extract info from SecurityContext (populated by JwtAuthFilter from the accessToken cookie)
+        String callingUserId = authService.getUserId();
+        String callingUserRole = authService.getRole();
 
         String targetUserId = (request.getUserId() != null && !request.getUserId().isEmpty())
                 ? request.getUserId()

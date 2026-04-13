@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.util.JwtUtil;
 import io.jsonwebtoken.ExpiredJwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -20,6 +21,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.WebUtils;
 
 import java.io.IOException;
 import java.util.List;
@@ -53,54 +55,56 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String authHeader = request.getHeader("Authorization");
+        Cookie accessCookie = WebUtils.getCookie(request, "accessToken");
 
-        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+        if (accessCookie == null) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
-            String token = authHeader.substring(7);
-            String userId;
-            String role;
+        String token = accessCookie.getValue();
+        String userId;
+        String role;
 
+        try {
+            userId = jwtUtil.extractUserId(token);
+            role = jwtUtil.extractUserRole(token);
+
+            log.debug("JWT extracted from cookie for userId={}, role={}", userId, role);
+
+        } catch (ExpiredJwtException e) {
+            log.warn("Expired JWT cookie for request: {}", request.getRequestURI());
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.getWriter().write("{\"message\": \"Token Expired\"}");
+            return;
+        } catch (Exception e) {
+            log.error("Invalid JWT cookie: {}", e.getMessage());
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            return;
+        }
+
+        // Only authenticate if no context exists yet
+        if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
-                userId = jwtUtil.extractUserId(token);
-                role = jwtUtil.extractUserRole(token);
+                UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
 
-                log.debug("JWT extracted for userId={}, role={}", userId, role);
+                if (jwtUtil.validateToken(token, userDetails)) {
+                    UsernamePasswordAuthenticationToken authentication =
+                            new UsernamePasswordAuthenticationToken(
+                                    userDetails, null,
+                                    List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                            );
 
-            } catch (ExpiredJwtException e) {
-                log.warn("Expired JWT token for request: {}", request.getRequestURI());
-                response.setStatus(HttpStatus.UNAUTHORIZED.value());
-                response.getWriter().write("{\"message\": \"Token Expired\"}");
-                return;
-            } catch (Exception e) {
-                log.error("Invalid JWT token: {}", e.getMessage());
-                response.setStatus(HttpStatus.UNAUTHORIZED.value());
-                return;
-            }
+                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
 
-            // Only authenticate if no context exists yet
-            if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                try {
-                    UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
+                    log.debug("JWT validated & security context set for userId={}", userId);
 
-                    if (jwtUtil.validateToken(token, userDetails)) {
-                        UsernamePasswordAuthenticationToken authentication =
-                                new UsernamePasswordAuthenticationToken(
-                                        userDetails, null,
-                                        List.of(new SimpleGrantedAuthority("ROLE_" + role))
-                                );
-
-                        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                        SecurityContextHolder.getContext().setAuthentication(authentication);
-
-                        log.debug("JWT validated & security context set for userId={}", userId);
-
-                    } else {
-                        log.warn("JWT validation failed for userId={}", userId);
-                    }
-                } catch (Exception e) {
-                    log.error("Failed to load user details for userId={}: {}", userId, e.getMessage());
+                } else {
+                    log.warn("JWT validation failed for userId={}", userId);
                 }
+            } catch (Exception e) {
+                log.error("Failed to load user details for userId={}: {}", userId, e.getMessage());
             }
         }
 

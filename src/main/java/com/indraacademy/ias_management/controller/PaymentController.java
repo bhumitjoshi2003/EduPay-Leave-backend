@@ -126,8 +126,7 @@ public class PaymentController {
     @GetMapping("/history/student/{studentId}")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     public ResponseEntity<Page<Payment>> getPaymentHistoryOfStudent(
-            @PathVariable String studentId, Pageable pageable,
-            @RequestHeader(name = "Authorization") String authorizationHeader){
+            @PathVariable String studentId, Pageable pageable){
 
         log.info("Request for payment history for student: {}", studentId);
         try {

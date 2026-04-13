@@ -39,13 +39,13 @@ public class StudentFeesController {
     @GetMapping("/{studentId}/{year}")
     public ResponseEntity<List<StudentFees>> getStudentFees(
             @PathVariable String studentId,
-            @PathVariable String year, @RequestHeader(name = "Authorization") String authorizationHeader) {
+            @PathVariable String year) {
 
-        String role = authService.getRoleFromToken(authorizationHeader);
+        String role = authService.getRole();
         final String resolvedStudentId;
 
         if(Role.STUDENT.equals(role)){
-            resolvedStudentId = authService.getUserIdFromToken(authorizationHeader);
+            resolvedStudentId = authService.getUserId();
             log.info("Student {} accessing their fees for year: {}", resolvedStudentId, year);
         } else {
             resolvedStudentId = studentId;
@@ -153,13 +153,13 @@ public class StudentFeesController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "')")
     @GetMapping("/{studentId}/{year}/{month}")
-    public ResponseEntity<StudentFees> getStudentFee(@PathVariable String studentId, @PathVariable String year, @PathVariable Integer month, @RequestHeader(name = "Authorization") String authorizationHeader) {
+    public ResponseEntity<StudentFees> getStudentFee(@PathVariable String studentId, @PathVariable String year, @PathVariable Integer month) {
 
-        String role = authService.getRoleFromToken(authorizationHeader);
+        String role = authService.getRole();
         final String resolvedStudentId;
 
-        if (role.equals("STUDENT")) {
-            resolvedStudentId = authService.getUserIdFromToken(authorizationHeader);
+        if (Role.STUDENT.equals(role)) {
+            resolvedStudentId = authService.getUserId();
         } else {
             resolvedStudentId = studentId;
         }

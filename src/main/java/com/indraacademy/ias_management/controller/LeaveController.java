@@ -31,8 +31,8 @@ public class LeaveController {
 
     @PreAuthorize("hasAnyRole('" + Role.STUDENT + "')")
     @PostMapping("/apply-leave")
-    public ResponseEntity<String> applyLeave(@RequestBody Leave leave, @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
-        String studentId = authService.getUserIdFromToken(authorizationHeader);
+    public ResponseEntity<String> applyLeave(@RequestBody Leave leave, HttpServletRequest request) {
+        String studentId = authService.getUserId();
         log.info("Request to apply leave for student ID: {}", studentId);
 
         try {
@@ -50,9 +50,9 @@ public class LeaveController {
 
     @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.ADMIN + "')")
     @DeleteMapping("/delete/{studentId}/{leaveDate}")
-    public ResponseEntity<String> deleteLeave(@PathVariable String studentId, @PathVariable String leaveDate, @RequestHeader(name = "Authorization") String authorizationHeader, HttpServletRequest request) {
-        String userId = authService.getUserIdFromToken(authorizationHeader);
-        String role = authService.getRoleFromToken(authorizationHeader);
+    public ResponseEntity<String> deleteLeave(@PathVariable String studentId, @PathVariable String leaveDate, HttpServletRequest request) {
+        String userId = authService.getUserId();
+        String role = authService.getRole();
         log.warn("Request to delete leave for {} on {} by user {} ({})", studentId, leaveDate, userId, role);
 
         String finalStudentId = studentId;
@@ -94,11 +94,10 @@ public class LeaveController {
     @GetMapping("/student/{studentId}")
     public ResponseEntity<Page<Leave>> getLeavesOfStudent(
             @PathVariable String studentId,
-            Pageable pageable,
-            @RequestHeader(name = "Authorization") String authorizationHeader) {
+            Pageable pageable) {
 
-        // This method forces the studentId to be pulled from the token, ignoring the path variable, which seems intended for security.
-        String authenticatedStudentId = authService.getUserIdFromToken(authorizationHeader);
+        // Pulls the studentId from the SecurityContext to prevent users from querying other students' leaves.
+        String authenticatedStudentId = authService.getUserId();
         log.info("Request to get leaves for student ID: {} (authenticated as {})", studentId, authenticatedStudentId);
 
         try {
