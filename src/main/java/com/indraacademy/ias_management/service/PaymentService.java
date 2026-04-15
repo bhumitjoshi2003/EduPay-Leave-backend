@@ -19,7 +19,9 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 
 @Service
 public class PaymentService {
@@ -149,6 +151,26 @@ public class PaymentService {
         }
     }
 
+    private String getMonthNamesFromBinary(String monthBinary) {
+        if (monthBinary == null || monthBinary.length() != 12) {
+            return "N/A";
+        }
+
+        String[] monthNames = {
+                "April", "May", "June", "July", "August", "September",
+                "October", "November", "December", "January", "February", "March"
+        };
+
+        List<String> selectedMonths = new ArrayList<>();
+        for (int i = 0; i < monthBinary.length(); i++) {
+            if (monthBinary.charAt(i) == '1') {
+                selectedMonths.add(monthNames[i]);
+            }
+        }
+
+        return selectedMonths.isEmpty() ? "No Month Selected" : String.join(", ", selectedMonths);
+    }
+
     private String buildReceiptHtml(Payment payment) {
         // Embed logo as base64 data URI so Flying Saucer can render it without filesystem access
         String logoDataUri = "";
@@ -166,6 +188,7 @@ public class PaymentService {
                 ? payment.getStatus().toUpperCase() : "N/A";
         String paymentMode = payment.isPaidManually() ? "Cash / Manual" : "Online (Razorpay)";
         String generatedOn = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a"));
+        String formattedMonths = getMonthNamesFromBinary(payment.getMonth());
 
         // Build optional fee rows (only include non-zero charges)
         StringBuilder feeRows = new StringBuilder();
@@ -197,55 +220,57 @@ public class PaymentService {
              + "            color: #1A1A1A; margin: 0; padding: 0; }\n"
              /* ── Header ─────────────────────────────────────────── */
              + "    .header       { text-align: center; padding-bottom: 8pt;"
-             + "                   border-bottom: 2pt solid #3C5A28; }\n"
-             + "    .school-name  { font-size: 16pt; font-weight: bold; color: #3C5A28;"
+             + "                   border-bottom: 3pt solid #C8960C; }\n"
+             + "    .school-name  { font-size: 16pt; font-weight: bold; color: #1B3A6B;"
              + "                   margin: 6pt 0 2pt 0; }\n"
              + "    .school-sub   { font-size: 7.5pt; color: #666666; margin: 0; }\n"
              /* ── Title bar ──────────────────────────────────────── */
-             + "    .title-bar    { background-color: #3C5A28; color: #FFFFFF;"
+             + "    .title-bar    { background-color: #1B3A6B; color: #FFFFFF;"
              + "                   text-align: center; padding: 5pt 0 4pt 0; margin: 9pt 0 9pt 0; }\n"
              + "    .title-main   { font-size: 13pt; font-weight: bold;"
              + "                   letter-spacing: 2pt; margin: 0; }\n"
-             + "    .title-sub    { font-size: 7.5pt; margin: 2pt 0 0 0; }\n"
+             + "    .title-sub    { font-size: 7.5pt; margin: 2pt 0 0 0; color: #C8D8F0; }\n"
              /* ── Two-column info cards ───────────────────────────── */
              + "    .info-outer   { width: 100%; border-collapse: collapse; margin-bottom: 9pt; }\n"
              + "    .info-card    { width: 49%; vertical-align: top;"
-             + "                   border: 1pt solid #B8CFA0; }\n"
+             + "                   border: 1pt solid #BFC9D9; }\n"
              + "    .card-gap     { width: 2%; }\n"
-             + "    .card-header  { background-color: #4A7230; color: #FFFFFF;"
+             + "    .card-header-student { background-color: #1B3A6B; color: #FFFFFF;"
+             + "                   font-weight: bold; font-size: 8pt; padding: 3pt 7pt; }\n"
+             + "    .card-header-payment { background-color: #0D6B6B; color: #FFFFFF;"
              + "                   font-weight: bold; font-size: 8pt; padding: 3pt 7pt; }\n"
              + "    .card-body    { width: 100%; border-collapse: collapse; }\n"
              + "    .card-row td  { padding: 3pt 7pt; font-size: 8.5pt;"
-             + "                   border-bottom: 1pt solid #E4EFD8; }\n"
+             + "                   border-bottom: 1pt solid #DDE6F2; }\n"
              + "    .lbl          { color: #666666; width: 44%; }\n"
              + "    .val          { font-weight: bold; color: #1A1A1A; }\n"
-             + "    .status-success { color: #2E7D32; font-weight: bold; }\n"
+             + "    .status-success { color: #1B7C2A; font-weight: bold; }\n"
              + "    .status-fail    { color: #C62828; font-weight: bold; }\n"
              /* ── Fee breakdown table ─────────────────────────────── */
              + "    .fee-table    { width: 100%; border-collapse: collapse;"
-             + "                   border: 1pt solid #B8CFa0; }\n"
-             + "    .fee-th       { background-color: #3C5A28; color: #FFFFFF;"
+             + "                   border: 1pt solid #BFC9D9; }\n"
+             + "    .fee-th       { background-color: #1B3A6B; color: #FFFFFF;"
              + "                   font-size: 9pt; font-weight: bold; padding: 4pt 9pt; text-align: left; }\n"
-             + "    .fee-th-amt   { background-color: #3C5A28; color: #FFFFFF;"
+             + "    .fee-th-amt   { background-color: #1B3A6B; color: #FFFFFF;"
              + "                   font-size: 9pt; font-weight: bold; padding: 4pt 9pt; text-align: right; }\n"
              + "    .fee-even td  { background-color: #FFFFFF; padding: 3.5pt 9pt;"
-             + "                   font-size: 8.5pt; border-bottom: 1pt solid #DDE8CE; }\n"
-             + "    .fee-odd  td  { background-color: #F2F7EE; padding: 3.5pt 9pt;"
-             + "                   font-size: 8.5pt; border-bottom: 1pt solid #DDE8CE; }\n"
+             + "                   font-size: 8.5pt; border-bottom: 1pt solid #DDE6F2; }\n"
+             + "    .fee-odd  td  { background-color: #F0F4FA; padding: 3.5pt 9pt;"
+             + "                   font-size: 8.5pt; border-bottom: 1pt solid #DDE6F2; }\n"
              + "    .amt-col      { text-align: right; font-weight: bold; }\n"
              /* ── Totals ──────────────────────────────────────────── */
              + "    .total-table  { width: 100%; border-collapse: collapse;"
-             + "                   border: 1pt solid #3C5A28; margin-top: 0; }\n"
-             + "    .subtotal-row td { background-color: #EEF5E8; padding: 4.5pt 9pt;"
-             + "                      font-size: 9pt; font-weight: bold;"
-             + "                      border-bottom: 1pt solid #B8CFa0; }\n"
-             + "    .paid-row td  { background-color: #3C5A28; color: #FFFFFF;"
+             + "                   border: 1pt solid #BFC9D9; margin-top: 0; }\n"
+             + "    .subtotal-row td { background-color: #E8EDF5; padding: 4.5pt 9pt;"
+             + "                      font-size: 9pt; font-weight: bold; color: #1B3A6B;"
+             + "                      border-bottom: 1pt solid #BFC9D9; }\n"
+             + "    .paid-row td  { background-color: #C8960C; color: #FFFFFF;"
              + "                   padding: 5.5pt 9pt; font-size: 10.5pt; font-weight: bold; }\n"
              + "    .right        { text-align: right; }\n"
              /* ── Signature & footer ──────────────────────────────── */
              + "    .sig-area     { text-align: right; margin-top: 24pt;"
              + "                   font-size: 8pt; color: #555555; }\n"
-             + "    .footer       { margin-top: 14pt; border-top: 1pt solid #B8CFa0;"
+             + "    .footer       { margin-top: 14pt; border-top: 2pt solid #C8960C;"
              + "                   padding-top: 6pt; text-align: center;"
              + "                   font-size: 7pt; color: #999999; }\n"
              + "  </style>\n"
@@ -255,19 +280,19 @@ public class PaymentService {
              + "  <div class=\"header\">\n"
              + "    " + logoHtml + "\n"
              + "    <p class=\"school-name\">Indra Academy Sr. Sec. School</p>\n"
-             + "    <p class=\"school-sub\">Vill. Indroli, P.O. Sanganer, Jaipur &#8211; 303906"
-             + " &#160;|&#160; Affiliated to RBSE</p>\n"
+             + "    <p class=\"school-sub\">Vill. Dumkabangar Halduchaur, Haldwani &#8211; 263139"
+             + " &#160;|&#160; Affiliated to CBSE</p>\n"
              + "  </div>\n"
              /* ── Title bar ──────────────────────────────────────── */
              + "  <div class=\"title-bar\">\n"
              + "    <p class=\"title-main\">FEE RECEIPT</p>\n"
-             + "    <p class=\"title-sub\">Month: " + esc(payment.getMonth())
+             + "    <p class=\"title-sub\">Month: " + esc(formattedMonths)
              +                        " &#160;|&#160; Session: " + esc(payment.getSession()) + "</p>\n"
              + "  </div>\n"
              /* ── Two-column info cards ───────────────────────────── */
              + "  <table class=\"info-outer\"><tr>\n"
              + "    <td class=\"info-card\">\n"
-             + "      <div class=\"card-header\">STUDENT INFORMATION</div>\n"
+             + "      <div class=\"card-header-student\">STUDENT INFORMATION</div>\n"
              + "      <table class=\"card-body\"><tbody>\n"
              + "        <tr class=\"card-row\"><td class=\"lbl\">Student ID</td>"
              +           "<td class=\"val\">" + esc(payment.getStudentId()) + "</td></tr>\n"
@@ -281,7 +306,7 @@ public class PaymentService {
              + "    </td>\n"
              + "    <td class=\"card-gap\"></td>\n"
              + "    <td class=\"info-card\">\n"
-             + "      <div class=\"card-header\">PAYMENT DETAILS</div>\n"
+             + "      <div class=\"card-header-payment\">PAYMENT DETAILS</div>\n"
              + "      <table class=\"card-body\"><tbody>\n"
              + "        <tr class=\"card-row\"><td class=\"lbl\">Receipt No.</td>"
              +           "<td class=\"val\">" + esc(payment.getPaymentId()) + "</td></tr>\n"
