@@ -35,6 +35,9 @@ public class Teacher {
     @Column(name = "class_teacher")
     private String classTeacher;
 
+    @Column(name = "joining_date")
+    private LocalDate joiningDate;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -108,6 +111,14 @@ public class Teacher {
 
     public void setClassTeacher(String classTeacher) {
         this.classTeacher = classTeacher;
+    }
+
+    public LocalDate getJoiningDate() {
+        return joiningDate;
+    }
+
+    public void setJoiningDate(LocalDate joiningDate) {
+        this.joiningDate = joiningDate;
     }
 
     public void setCreatedAt(LocalDateTime createdAt) {
