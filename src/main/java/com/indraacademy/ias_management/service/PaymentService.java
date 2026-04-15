@@ -3,11 +3,6 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.repository.PaymentRepository;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
@@ -17,12 +12,14 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.xhtmlrenderer.pdf.ITextRenderer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Objects;
+import java.util.Base64;
 
 @Service
 public class PaymentService {
@@ -137,231 +134,214 @@ public class PaymentService {
             return null;
         }
 
-        try (PDDocument document = new PDDocument();
-             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
-
-            PDPage page = new PDPage();
-            document.addPage(page);
-
-            PDPageContentStream content = new PDPageContentStream(document, page);
-
-            PDType1Font boldFont = PDType1Font.HELVETICA_BOLD;
-            PDType1Font regularFont = PDType1Font.HELVETICA;
-
-            float margin = 50;
-            float y = 750;
-            float width = page.getMediaBox().getWidth() - 2 * margin;
-            float tableX = margin;
-            float rowHeight = 20;
-            float sectionSpacing = 15;
-
-            // 1. Load Logo
-            try (var logoStream = new ClassPathResource("images/logo.png").getInputStream()) {
-                PDImageXObject logo = PDImageXObject.createFromByteArray(
-                        document,
-                        logoStream.readAllBytes(),
-                        "logo"
-                );
-                float imageWidth = 100;
-                float imageHeight = 100;
-                float centerX = (page.getMediaBox().getWidth() - imageWidth) / 2;
-                content.drawImage(logo, centerX, y - imageHeight, imageWidth, imageHeight);
-                y -= (imageHeight + 35);
-            } catch (IOException e) {
-                log.error("Failed to load or draw logo image.", e);
-            }
-
-            // 2. School Name Header
-            content.setNonStrokingColor(60, 90, 40);
-            content.addRect(margin, y, width, 25);
-            content.fill();
-
-            String schoolName = "Indra Academy Sr. Sec. School";
-            float fontSize = 18;
-            float textWidth = boldFont.getStringWidth(schoolName) / 1000 * fontSize;
-            float pageWidth = page.getMediaBox().getWidth();
-            float center = (pageWidth - textWidth) / 2;
-
-            content.beginText();
-            content.setFont(boldFont, fontSize);
-            content.setNonStrokingColor(255,255,255);
-            content.newLineAtOffset(center, y + 7);
-            content.showText(schoolName);
-            content.endText();
-
-            // 3. Fee Receipt Title
-            String feeReceiptText = "Fee Receipt";
-            float feeFontSize = 17;
-            float feeTextWidth = boldFont.getStringWidth(feeReceiptText) / 1000 * feeFontSize;
-            pageWidth = page.getMediaBox().getWidth();
-            float feeTextX = (pageWidth - feeTextWidth) / 2;
-            float feeTextY = y + 7 - 40;
-
-            content.setNonStrokingColor(0, 0, 0);
-            content.beginText();
-            content.setFont(boldFont, feeFontSize);
-            content.newLineAtOffset(feeTextX, feeTextY);
-            content.showText(feeReceiptText);
-            content.endText();
-
-            float lineY = feeTextY - 3;
-            content.setStrokingColor(0, 0, 0);
-            content.setLineWidth(1f);
-            content.moveTo(feeTextX, lineY);
-            content.lineTo(feeTextX + feeTextWidth, lineY);
-            content.stroke();
-
-            y -= (rowHeight + sectionSpacing + 30);
-
-            // 4. Draw Sections
-            DateTimeFormatter paymentDateFormat = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a");
-
-            y = drawSection(content, "Student Info", boldFont, regularFont, y, width, tableX, rowHeight,
-                    new String[][]{
-                            {"Student ID", Objects.toString(payment.getStudentId(), "")},
-                            {"Name", Objects.toString(payment.getStudentName(), "")},
-                            {"Class", Objects.toString(payment.getClassName(), "")},
-                            {"Session", Objects.toString(payment.getSession(), "")}
-                    });
-
-            y -= sectionSpacing;
-            y = drawSection(content, "Payment Info", boldFont, regularFont, y, width, tableX, rowHeight,
-                    new String[][]{
-                            {"Payment ID", Objects.toString(payment.getPaymentId(), "")},
-                            {"Order ID", Objects.toString(payment.getOrderId(), "")},
-                            {"Date", payment.getPaymentDate() != null ? payment.getPaymentDate().format(paymentDateFormat) : "N/A"},
-                            {"Status", Objects.toString(payment.getStatus(), "N/A").toUpperCase()}
-                    });
-
-            y -= sectionSpacing;
-            y = drawSection(content, "Fee Breakdown", boldFont, regularFont, y, width, tableX, rowHeight,
-                    new String[][]{
-                            {"Tuition Fee", "Rs. " + payment.getTuitionFee()},
-                            {"Bus Fee", "Rs. " + payment.getBusFee()},
-                            {"Annual Charges", "Rs. " + payment.getAnnualCharges()},
-                            {"Lab Charges", "Rs. " + payment.getLabCharges()},
-                            {"ECA Project", "Rs. " + payment.getEcaProject()},
-                            {"Examination Fee", "Rs. " + payment.getExaminationFee()},
-                            payment.getAdditionalCharges() > 0 ? new String[]{"Leave Charges", "Rs. " + payment.getAdditionalCharges()} : null,
-                            payment.getLateFees() > 0 ? new String[]{"Late Fees", "Rs. " + payment.getLateFees()} : null,
-                            payment.getPlatformFee() > 0 ? new String[]{"Platform Fee", "Rs. " + payment.getPlatformFee()} : null
-                    });
-
-            y -= sectionSpacing;
-            y = drawSection(content, "Total Summary", boldFont, regularFont, y, width, tableX, rowHeight,
-                    new String[][]{
-                            {"Total Amount", "Rs. " + payment.getAmount()},
-                            {"Paid", "Rs. " + payment.getAmountPaid()}
-                    });
-
-            content.close();
-
-            document.save(baos);
+        try {
+            String html = buildReceiptHtml(payment);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ITextRenderer renderer = new ITextRenderer();
+            renderer.setDocumentFromString(html);
+            renderer.layout();
+            renderer.createPDF(baos);
             log.info("PDF generated successfully for payment ID: {}", paymentId);
             return baos.toByteArray();
-
-        } catch (IOException e) {
-            log.error("IOException occurred during PDF generation for payment ID: {}", paymentId, e);
-            throw new RuntimeException("Failed to generate PDF receipt due to I/O error.", e);
         } catch (Exception e) {
-            log.error("Unexpected error occurred during PDF generation for payment ID: {}", paymentId, e);
-            throw new RuntimeException("An unexpected error occurred during PDF generation.", e);
+            log.error("Error generating PDF for payment ID: {}", paymentId, e);
+            throw new RuntimeException("Failed to generate PDF receipt.", e);
         }
     }
 
-    // Helper method implementation is retained from original code to avoid introducing errors
-    private float drawSection(PDPageContentStream content, String title,
-                              PDType1Font headerFont, PDType1Font textFont,
-                              float y, float width, float x, float rowHeight, String[][] rows) throws IOException {
-
-        int rowsCount = 0;
-        for (String[] row : rows) {
-            if (row != null) rowsCount++;
+    private String buildReceiptHtml(Payment payment) {
+        // Embed logo as base64 data URI so Flying Saucer can render it without filesystem access
+        String logoDataUri = "";
+        try {
+            byte[] logoBytes = new ClassPathResource("images/logo.png").getInputStream().readAllBytes();
+            logoDataUri = "data:image/png;base64," + Base64.getEncoder().encodeToString(logoBytes);
+        } catch (IOException e) {
+            log.warn("Logo not found, PDF will be generated without it.");
         }
 
-        float sectionHeight = rowHeight * (rowsCount + 1);
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a");
+        String paymentDate = payment.getPaymentDate() != null
+                ? payment.getPaymentDate().format(fmt) : "N/A";
+        String status = payment.getStatus() != null
+                ? payment.getStatus().toUpperCase() : "N/A";
+        String paymentMode = payment.isPaidManually() ? "Cash / Manual" : "Online (Razorpay)";
+        String generatedOn = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a"));
 
-        // Draw background for header
-        content.setNonStrokingColor(210, 210, 210);
-        content.addRect(x, y, width, rowHeight);
-        content.fill();
+        // Build optional fee rows (only include non-zero charges)
+        StringBuilder feeRows = new StringBuilder();
+        int rowIdx = 0;
+        rowIdx = appendFeeRow(feeRows, "Tuition Fee",      payment.getTuitionFee(),      rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Bus Fee",          payment.getBusFee(),           rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Annual Charges",   payment.getAnnualCharges(),    rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Lab Charges",      payment.getLabCharges(),       rowIdx);
+        rowIdx = appendFeeRow(feeRows, "ECA / Project",    payment.getEcaProject(),       rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Examination Fee",  payment.getExaminationFee(),   rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Leave Charges",    payment.getAdditionalCharges(), rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Late Fees",        payment.getLateFees(),         rowIdx);
+               appendFeeRow(feeRows, "Platform Fee",      payment.getPlatformFee(),      rowIdx);
 
-        // Draw border rectangle around the entire section
-        content.setStrokingColor(0, 0, 0);
-        content.setLineWidth(0.5f);
-        content.addRect(x, y - sectionHeight + rowHeight, width, sectionHeight);
-        content.stroke();
+        String logoHtml = logoDataUri.isEmpty() ? ""
+                : "<img src=\"" + logoDataUri + "\" style=\"width: 75pt; height: 75pt;\" alt=\"logo\"/><br/>";
 
-        // Draw header text
-        content.beginText();
-        content.setNonStrokingColor(0, 0, 0);
-        content.setFont(headerFont, 13);
-        content.newLineAtOffset(x + 5, y + 5);
-        content.showText(title);
-        content.endText();
+        String statusClass = "SUCCESS".equals(status) ? "status-success" : "status-fail";
 
-        float currentY = y - rowHeight;
-        int color = 0;
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+             + "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\""
+             + " \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\n"
+             + "<html xmlns=\"http://www.w3.org/1999/xhtml\">\n"
+             + "<head>\n"
+             + "  <meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/>\n"
+             + "  <style type=\"text/css\">\n"
+             + "    @page { size: A4; margin: 14mm 16mm 14mm 16mm; }\n"
+             + "    body  { font-family: Arial, Helvetica, sans-serif; font-size: 9pt;"
+             + "            color: #1A1A1A; margin: 0; padding: 0; }\n"
+             /* ── Header ─────────────────────────────────────────── */
+             + "    .header       { text-align: center; padding-bottom: 8pt;"
+             + "                   border-bottom: 2pt solid #3C5A28; }\n"
+             + "    .school-name  { font-size: 16pt; font-weight: bold; color: #3C5A28;"
+             + "                   margin: 6pt 0 2pt 0; }\n"
+             + "    .school-sub   { font-size: 7.5pt; color: #666666; margin: 0; }\n"
+             /* ── Title bar ──────────────────────────────────────── */
+             + "    .title-bar    { background-color: #3C5A28; color: #FFFFFF;"
+             + "                   text-align: center; padding: 5pt 0 4pt 0; margin: 9pt 0 9pt 0; }\n"
+             + "    .title-main   { font-size: 13pt; font-weight: bold;"
+             + "                   letter-spacing: 2pt; margin: 0; }\n"
+             + "    .title-sub    { font-size: 7.5pt; margin: 2pt 0 0 0; }\n"
+             /* ── Two-column info cards ───────────────────────────── */
+             + "    .info-outer   { width: 100%; border-collapse: collapse; margin-bottom: 9pt; }\n"
+             + "    .info-card    { width: 49%; vertical-align: top;"
+             + "                   border: 1pt solid #B8CFA0; }\n"
+             + "    .card-gap     { width: 2%; }\n"
+             + "    .card-header  { background-color: #4A7230; color: #FFFFFF;"
+             + "                   font-weight: bold; font-size: 8pt; padding: 3pt 7pt; }\n"
+             + "    .card-body    { width: 100%; border-collapse: collapse; }\n"
+             + "    .card-row td  { padding: 3pt 7pt; font-size: 8.5pt;"
+             + "                   border-bottom: 1pt solid #E4EFD8; }\n"
+             + "    .lbl          { color: #666666; width: 44%; }\n"
+             + "    .val          { font-weight: bold; color: #1A1A1A; }\n"
+             + "    .status-success { color: #2E7D32; font-weight: bold; }\n"
+             + "    .status-fail    { color: #C62828; font-weight: bold; }\n"
+             /* ── Fee breakdown table ─────────────────────────────── */
+             + "    .fee-table    { width: 100%; border-collapse: collapse;"
+             + "                   border: 1pt solid #B8CFa0; }\n"
+             + "    .fee-th       { background-color: #3C5A28; color: #FFFFFF;"
+             + "                   font-size: 9pt; font-weight: bold; padding: 4pt 9pt; text-align: left; }\n"
+             + "    .fee-th-amt   { background-color: #3C5A28; color: #FFFFFF;"
+             + "                   font-size: 9pt; font-weight: bold; padding: 4pt 9pt; text-align: right; }\n"
+             + "    .fee-even td  { background-color: #FFFFFF; padding: 3.5pt 9pt;"
+             + "                   font-size: 8.5pt; border-bottom: 1pt solid #DDE8CE; }\n"
+             + "    .fee-odd  td  { background-color: #F2F7EE; padding: 3.5pt 9pt;"
+             + "                   font-size: 8.5pt; border-bottom: 1pt solid #DDE8CE; }\n"
+             + "    .amt-col      { text-align: right; font-weight: bold; }\n"
+             /* ── Totals ──────────────────────────────────────────── */
+             + "    .total-table  { width: 100%; border-collapse: collapse;"
+             + "                   border: 1pt solid #3C5A28; margin-top: 0; }\n"
+             + "    .subtotal-row td { background-color: #EEF5E8; padding: 4.5pt 9pt;"
+             + "                      font-size: 9pt; font-weight: bold;"
+             + "                      border-bottom: 1pt solid #B8CFa0; }\n"
+             + "    .paid-row td  { background-color: #3C5A28; color: #FFFFFF;"
+             + "                   padding: 5.5pt 9pt; font-size: 10.5pt; font-weight: bold; }\n"
+             + "    .right        { text-align: right; }\n"
+             /* ── Signature & footer ──────────────────────────────── */
+             + "    .sig-area     { text-align: right; margin-top: 24pt;"
+             + "                   font-size: 8pt; color: #555555; }\n"
+             + "    .footer       { margin-top: 14pt; border-top: 1pt solid #B8CFa0;"
+             + "                   padding-top: 6pt; text-align: center;"
+             + "                   font-size: 7pt; color: #999999; }\n"
+             + "  </style>\n"
+             + "</head>\n"
+             + "<body>\n"
+             /* ── Header ─────────────────────────────────────────── */
+             + "  <div class=\"header\">\n"
+             + "    " + logoHtml + "\n"
+             + "    <p class=\"school-name\">Indra Academy Sr. Sec. School</p>\n"
+             + "    <p class=\"school-sub\">Vill. Indroli, P.O. Sanganer, Jaipur &#8211; 303906"
+             + " &#160;|&#160; Affiliated to RBSE</p>\n"
+             + "  </div>\n"
+             /* ── Title bar ──────────────────────────────────────── */
+             + "  <div class=\"title-bar\">\n"
+             + "    <p class=\"title-main\">FEE RECEIPT</p>\n"
+             + "    <p class=\"title-sub\">Month: " + esc(payment.getMonth())
+             +                        " &#160;|&#160; Session: " + esc(payment.getSession()) + "</p>\n"
+             + "  </div>\n"
+             /* ── Two-column info cards ───────────────────────────── */
+             + "  <table class=\"info-outer\"><tr>\n"
+             + "    <td class=\"info-card\">\n"
+             + "      <div class=\"card-header\">STUDENT INFORMATION</div>\n"
+             + "      <table class=\"card-body\"><tbody>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Student ID</td>"
+             +           "<td class=\"val\">" + esc(payment.getStudentId()) + "</td></tr>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Name</td>"
+             +           "<td class=\"val\">" + esc(payment.getStudentName()) + "</td></tr>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Class</td>"
+             +           "<td class=\"val\">" + esc(payment.getClassName()) + "</td></tr>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Session</td>"
+             +           "<td class=\"val\">" + esc(payment.getSession()) + "</td></tr>\n"
+             + "      </tbody></table>\n"
+             + "    </td>\n"
+             + "    <td class=\"card-gap\"></td>\n"
+             + "    <td class=\"info-card\">\n"
+             + "      <div class=\"card-header\">PAYMENT DETAILS</div>\n"
+             + "      <table class=\"card-body\"><tbody>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Receipt No.</td>"
+             +           "<td class=\"val\">" + esc(payment.getPaymentId()) + "</td></tr>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Date &amp; Time</td>"
+             +           "<td class=\"val\">" + esc(paymentDate) + "</td></tr>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Mode</td>"
+             +           "<td class=\"val\">" + paymentMode + "</td></tr>\n"
+             + "        <tr class=\"card-row\"><td class=\"lbl\">Status</td>"
+             +           "<td class=\"val\"><span class=\"" + statusClass + "\">" + status + "</span></td></tr>\n"
+             + "      </tbody></table>\n"
+             + "    </td>\n"
+             + "  </tr></table>\n"
+             /* ── Fee breakdown ───────────────────────────────────── */
+             + "  <table class=\"fee-table\"><thead>\n"
+             + "    <tr><th class=\"fee-th\">Fee Description</th>"
+             +          "<th class=\"fee-th-amt\">Amount (Rs.)</th></tr>\n"
+             + "  </thead><tbody>\n"
+             + feeRows
+             + "  </tbody></table>\n"
+             /* ── Totals ──────────────────────────────────────────── */
+             + "  <table class=\"total-table\"><tbody>\n"
+             + "    <tr class=\"subtotal-row\">"
+             +       "<td>Total Fees Charged</td>"
+             +       "<td class=\"right\">Rs. " + payment.getAmount() + "</td></tr>\n"
+             + "    <tr class=\"paid-row\">"
+             +       "<td>Amount Paid</td>"
+             +       "<td class=\"right\">Rs. " + payment.getAmountPaid() + "</td></tr>\n"
+             + "  </tbody></table>\n"
+             /* ── Signature ───────────────────────────────────────── */
+             + "  <div class=\"sig-area\">\n"
+             + "    <p>Authorised Signatory</p>\n"
+             + "    <p>_________________________</p>\n"
+             + "    <p>For Indra Academy</p>\n"
+             + "  </div>\n"
+             /* ── Footer ─────────────────────────────────────────── */
+             + "  <div class=\"footer\">\n"
+             + "    <p>This is a computer-generated receipt and does not require a physical signature.</p>\n"
+             + "    <p>Generated on: " + generatedOn + "</p>\n"
+             + "  </div>\n"
+             + "</body>\n"
+             + "</html>";
+    }
 
-        for (String[] row : rows) {
-            if (row == null) continue;
+    /** Appends a fee row only when amount &gt; 0. Returns the incremented row index. */
+    private int appendFeeRow(StringBuilder sb, String label, int amount, int rowIdx) {
+        if (amount <= 0) return rowIdx;
+        String cls = (rowIdx % 2 == 0) ? "fee-even" : "fee-odd";
+        sb.append("    <tr class=\"").append(cls).append("\">")
+          .append("<td>").append(esc(label)).append("</td>")
+          .append("<td class=\"amt-col\">").append(amount).append("</td>")
+          .append("</tr>\n");
+        return rowIdx + 1;
+    }
 
-            // Draw row background color (alternating)
-            if (color % 2 == 0) {
-                content.setNonStrokingColor(255, 255, 255);
-            } else {
-                content.setNonStrokingColor(240, 240, 240);
-            }
-            content.addRect(x, currentY, width, rowHeight);
-            content.fill();
-
-            // Draw horizontal line at top of row
-            content.setStrokingColor(0, 0, 0);
-            content.setLineWidth(0.3f);
-            content.moveTo(x, currentY + rowHeight);
-            content.lineTo(x + width, currentY + rowHeight);
-            content.stroke();
-
-            // Draw vertical line between columns
-            float colDividerX = x + width * 0.4f;
-            content.moveTo(colDividerX, currentY);
-            content.lineTo(colDividerX, currentY + rowHeight);
-            content.stroke();
-
-            // Draw label text
-            content.setNonStrokingColor(0, 0, 0);
-            content.beginText();
-            if ("Total Amount".equals(row[0]) || "Paid".equals(row[0])) {
-                content.setFont(headerFont, 11);
-            } else {
-                content.setFont(textFont, 11);
-            }
-            content.newLineAtOffset(x + 5, currentY + 5);
-            content.showText(row[0]);
-            content.endText();
-
-            // Draw value text
-            content.beginText();
-            if ("Total Amount".equals(row[0]) || "Paid".equals(row[0])) {
-                content.setFont(headerFont, 11);
-            } else {
-                content.setFont(textFont, 11);
-            }
-            content.newLineAtOffset(colDividerX + 5, currentY + 5);
-            content.showText(row[1]);
-            content.endText();
-
-            currentY -= rowHeight;
-            color++;
-        }
-
-        // Draw bottom horizontal line for last row
-        content.setStrokingColor(0, 0, 0);
-        content.setLineWidth(0.5f);
-        content.moveTo(x, currentY + rowHeight);
-        content.lineTo(x + width, currentY + rowHeight);
-        content.stroke();
-
-        return currentY;
+    /** Minimal HTML escaping for user-supplied strings. */
+    private String esc(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 }

@@ -124,7 +124,7 @@ public class PaymentController {
     }
 
     @GetMapping("/history/student/{studentId}")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+//    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")    // to be removed
     public ResponseEntity<Page<Payment>> getPaymentHistoryOfStudent(
             @PathVariable String studentId, Pageable pageable){
 
@@ -138,7 +138,7 @@ public class PaymentController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+//    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")   // to be removed
     @GetMapping("/history/details/{paymentId}")
     public ResponseEntity<PaymentResponseDTO> getPaymentHistoryDetails(@PathVariable String paymentId) {
         log.info("Request for payment details for ID: {}", paymentId);
@@ -156,7 +156,7 @@ public class PaymentController {
     }
 
     @GetMapping("/history/receipt/{paymentId}")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+//    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")   // to be removed
     public ResponseEntity<byte[]> downloadPaymentReceipt(@PathVariable String paymentId) {
         log.info("Request to download receipt for payment ID: {}", paymentId);
 
