@@ -2,23 +2,29 @@ package com.indraacademy.ias_management.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.dto.BulkImportResultDTO;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.StudentBulkImportService;
 import com.indraacademy.ias_management.service.StudentService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +40,7 @@ public class StudentController {
     private static final Logger log = LoggerFactory.getLogger(StudentController.class);
 
     @Autowired private StudentService studentService;
+    @Autowired private StudentBulkImportService studentBulkImportService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private StudentRepository studentRepository;
     @Autowired private UserRepository userRepository;
@@ -133,6 +140,43 @@ public class StudentController {
         return studentService.getInactiveStudentsByClass(className).stream()
                 .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
                 .collect(Collectors.toList());
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/bulk")
+    public ResponseEntity<?> bulkImportStudents(
+            @RequestParam("file") MultipartFile file,
+            HttpServletRequest request) {
+        log.info("Received bulk student import request, file size: {} bytes", file.getSize());
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().body("Uploaded file is empty.");
+        }
+        try {
+            BulkImportResultDTO result = studentBulkImportService.bulkImport(file, request);
+            log.info("Bulk import completed: {} total, {} successful, {} failed",
+                    result.getTotalRows(), result.getSuccessful(), result.getFailed());
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            log.warn("Bulk import rejected: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Unexpected error during bulk student import.", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to process the CSV file.");
+        }
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/bulk/template")
+    public ResponseEntity<byte[]> downloadBulkImportTemplate() {
+        log.info("Request to download student bulk import CSV template");
+        String csvContent = String.join(",", StudentBulkImportService.TEMPLATE_HEADERS) + "\r\n";
+        byte[] bytes = csvContent.getBytes(StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"student_import_template.csv\"")
+                .contentType(MediaType.parseMediaType("text/csv"))
+                .body(bytes);
     }
 
 }
