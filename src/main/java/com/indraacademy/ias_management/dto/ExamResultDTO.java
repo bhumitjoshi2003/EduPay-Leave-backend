@@ -14,6 +14,7 @@ public class ExamResultDTO {
     private String examName;
     private String className;
     private String session;
+    private String studentName;
     private List<SubjectResultDTO> subjects;
     private Double totalMarksObtained;
     private Double totalMaxMarks;
@@ -21,12 +22,14 @@ public class ExamResultDTO {
     private Integer overallRank;
 
     public ExamResultDTO(Long examId, String examName, String className, String session,
-                         List<SubjectResultDTO> subjects, Double totalMarksObtained,
-                         Double totalMaxMarks, Double percentage, Integer overallRank) {
+                         String studentName, List<SubjectResultDTO> subjects,
+                         Double totalMarksObtained, Double totalMaxMarks,
+                         Double percentage, Integer overallRank) {
         this.examId = examId;
         this.examName = examName;
         this.className = className;
         this.session = session;
+        this.studentName = studentName;
         this.subjects = subjects;
         this.totalMarksObtained = totalMarksObtained;
         this.totalMaxMarks = totalMaxMarks;
@@ -38,6 +41,7 @@ public class ExamResultDTO {
     public String getExamName() { return examName; }
     public String getClassName() { return className; }
     public String getSession() { return session; }
+    public String getStudentName() { return studentName; }
     public List<SubjectResultDTO> getSubjects() { return subjects; }
     public Double getTotalMarksObtained() { return totalMarksObtained; }
     public Double getTotalMaxMarks() { return totalMaxMarks; }

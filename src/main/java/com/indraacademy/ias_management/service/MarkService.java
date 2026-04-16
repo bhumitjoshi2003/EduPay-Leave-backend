@@ -233,7 +233,7 @@ public class MarkService {
 
             results.add(new ExamResultDTO(
                     exam.getId(), exam.getExamName(), exam.getClassName(), exam.getSession(),
-                    subjectResults, studentTotal, maxTotal, percentage, overallRank));
+                    student.getName(), subjectResults, studentTotal, maxTotal, percentage, overallRank));
         }
 
         return results;
