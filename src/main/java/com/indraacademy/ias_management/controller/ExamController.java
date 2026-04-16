@@ -1,0 +1,124 @@
+package com.indraacademy.ias_management.controller;
+
+import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.entity.ExamConfig;
+import com.indraacademy.ias_management.entity.ExamSubjectEntry;
+import com.indraacademy.ias_management.service.ExamConfigService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+
+@RestController
+@RequestMapping("/api/exams")
+@CrossOrigin(origins = "http://localhost:4200")
+@PreAuthorize("hasRole('" + Role.ADMIN + "')")
+public class ExamController {
+
+    private static final Logger log = LoggerFactory.getLogger(ExamController.class);
+
+    @Autowired private ExamConfigService examConfigService;
+
+    // ─── ExamConfig ───────────────────────────────────────────────────────────
+
+    @GetMapping
+    public ResponseEntity<List<ExamConfig>> getExams(
+            @RequestParam(required = false) String session,
+            @RequestParam(required = false) String className) {
+        log.info("GET /api/exams?session={}&className={}", session, className);
+        return ResponseEntity.ok(examConfigService.getExams(session, className));
+    }
+
+    @PostMapping
+    public ResponseEntity<?> addExam(@RequestBody Map<String, String> body) {
+        String session   = body.get("session");
+        String className = body.get("className");
+        String examName  = body.get("examName");
+        log.info("POST /api/exams: session={}, className={}, examName={}", session, className, examName);
+        try {
+            ExamConfig saved = examConfigService.addExam(session, className, examName);
+            return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteExam(@PathVariable Long id) {
+        log.info("DELETE /api/exams/{}", id);
+        try {
+            examConfigService.deleteExam(id);
+            return ResponseEntity.noContent().build();
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
+
+    @GetMapping("/{examId}/subjects")
+    public ResponseEntity<?> getExamSubjects(@PathVariable Long examId) {
+        log.info("GET /api/exams/{}/subjects", examId);
+        try {
+            return ResponseEntity.ok(examConfigService.getExamSubjects(examId));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping("/{examId}/subjects")
+    public ResponseEntity<?> addExamSubject(@PathVariable Long examId,
+                                            @RequestBody Map<String, Object> body) {
+        String subjectName = (String) body.get("subjectName");
+        Integer maxMarks   = body.get("maxMarks") != null
+                ? Integer.valueOf(body.get("maxMarks").toString()) : null;
+        LocalDate examDate = body.get("examDate") != null
+                ? LocalDate.parse(body.get("examDate").toString()) : null;
+        log.info("POST /api/exams/{}/subjects: subject={}, maxMarks={}", examId, subjectName, maxMarks);
+        try {
+            ExamSubjectEntry saved = examConfigService.addExamSubject(examId, subjectName, maxMarks, examDate);
+            return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PutMapping("/subjects/{entryId}")
+    public ResponseEntity<?> updateExamSubject(@PathVariable Long entryId,
+                                               @RequestBody Map<String, Object> body) {
+        Integer maxMarks = body.get("maxMarks") != null
+                ? Integer.valueOf(body.get("maxMarks").toString()) : null;
+        LocalDate examDate = body.get("examDate") != null
+                ? LocalDate.parse(body.get("examDate").toString()) : null;
+        log.info("PUT /api/exams/subjects/{}: maxMarks={}, examDate={}", entryId, maxMarks, examDate);
+        try {
+            ExamSubjectEntry updated = examConfigService.updateExamSubject(entryId, maxMarks, examDate);
+            return ResponseEntity.ok(updated);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/subjects/{entryId}")
+    public ResponseEntity<?> deleteExamSubject(@PathVariable Long entryId) {
+        log.info("DELETE /api/exams/subjects/{}", entryId);
+        try {
+            examConfigService.deleteExamSubject(entryId);
+            return ResponseEntity.noContent().build();
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+}
