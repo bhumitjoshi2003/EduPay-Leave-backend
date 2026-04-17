@@ -1,59 +1,127 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
-import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.service.EmailService;
-import com.indraacademy.ias_management.util.JwtUtil;
+import com.indraacademy.ias_management.service.NotificationService;
+import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
-
 @RestController
 @RequestMapping("/api/admin")
-@CrossOrigin(origins = "http://localhost:4200")
 public class NoticeController {
 
     private static final Logger log = LoggerFactory.getLogger(NoticeController.class);
 
-    @Autowired
-    private StudentRepository studentRepository; // Note: This repository should ideally be accessed via a Service layer.
-
     @Autowired private EmailService emailService;
+    @Autowired private NotificationService notificationService;
 
-    @Autowired private JwtUtil jwtUtil; // Note: Not used in the controller, could be removed if unnecessary.
-
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+    /**
+     * POST /api/admin/notice
+     *
+     * Request fields:
+     *   title        — notification title (required)
+     *   subject      — email subject line (required when deliveryMode is EMAIL or BOTH)
+     *   body         — notice body text (required)
+     *   targetClass  — audience selector (required); valid values:
+     *                    "All"                           → all students
+     *                    "<className>"                   → students of that class (e.g. "Class 10")
+     *                    "ALL_TEACHERS"                  → all teachers
+     *                    "CLASS_WITH_TEACHER:<className>" → students of that class + their class teacher
+     *   deliveryMode — optional, defaults to BOTH; valid values:
+     *                    "IN_APP" → save to notification table only, no email
+     *                    "EMAIL"  → send email only, do not save in-app
+     *                    "BOTH"   → send email AND save in-app
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping("/notice")
-    public ResponseEntity<?> sendEmailToStudents(@RequestBody Map<String, Object> requestBody) {
-        String title = (String) requestBody.get("title");
-        String subject = (String) requestBody.get("subject");
-        String body = (String) requestBody.get("body");
-        String selectedClass = (String) requestBody.get("targetClass");
+    public ResponseEntity<?> sendNotice(@RequestBody Map<String, Object> requestBody,
+                                        HttpServletRequest request) {
+        String title        = (String) requestBody.get("title");
+        String subject      = (String) requestBody.get("subject");
+        String body         = (String) requestBody.get("body");
+        String targetClass  = (String) requestBody.get("targetClass");
+        String deliveryMode = requestBody.getOrDefault("deliveryMode", "BOTH").toString().toUpperCase();
 
-        log.info("Request to send bulk email notice (Title: {}) to class: {}", title, selectedClass);
+        log.info("Notice request — title: {}, targetClass: {}, deliveryMode: {}", title, targetClass, deliveryMode);
 
-        if (title == null || title.isEmpty() || subject == null || subject.isEmpty() || body == null || body.isEmpty() || selectedClass == null || selectedClass.isEmpty()) {
-            log.warn("Notice failed validation: Missing required fields.");
-            return ResponseEntity.badRequest().body("Title, subject, body and class are required.");
+        // --- Validation ---
+        if (title == null || title.isBlank()
+                || body == null || body.isBlank()
+                || targetClass == null || targetClass.isBlank()) {
+            return ResponseEntity.badRequest().body("title, body and targetClass are required.");
+        }
+        if (!deliveryMode.equals("IN_APP") && !deliveryMode.equals("EMAIL") && !deliveryMode.equals("BOTH")) {
+            return ResponseEntity.badRequest().body("deliveryMode must be IN_APP, EMAIL, or BOTH.");
+        }
+        boolean sendEmail  = deliveryMode.equals("EMAIL") || deliveryMode.equals("BOTH");
+        boolean saveInApp  = deliveryMode.equals("IN_APP") || deliveryMode.equals("BOTH");
+
+        if (sendEmail && (subject == null || subject.isBlank())) {
+            return ResponseEntity.badRequest().body("subject is required when deliveryMode is EMAIL or BOTH.");
         }
 
         try {
-            emailService.sendBulkEmailToClass(subject, body, selectedClass);
-            log.info("Emails sent successfully to class: {}", selectedClass);
-            return ResponseEntity.ok(Map.of("message", "Emails sent successfully to selected class students."));
+            // --- Email dispatch ---
+            if (sendEmail) {
+                if ("ALL_TEACHERS".equalsIgnoreCase(targetClass)) {
+                    emailService.sendBulkEmailToTeachers(subject, body);
+                    log.info("Bulk email sent to all teachers.");
+                } else if (targetClass.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
+                    String className = targetClass.substring("CLASS_WITH_TEACHER:".length()).trim();
+                    emailService.sendBulkEmailToClassWithTeacher(subject, body, className);
+                    log.info("Bulk email sent to class {} and their class teacher.", className);
+                } else {
+                    // "All" or a specific class name → students only
+                    emailService.sendBulkEmailToClass(subject, body, targetClass);
+                    log.info("Bulk email sent to class: {}", targetClass);
+                }
+            }
+
+            // --- In-app notification ---
+            if (saveInApp) {
+                String audience = resolveAudience(targetClass);
+                Notification notification = new Notification();
+                notification.setTitle(title);
+                notification.setMessage(body);
+                notification.setType("NOTICE");
+                notification.setAudience(audience);
+                notificationService.createBroadNotification(notification, request);
+                log.info("In-app notification saved with audience: {}", audience);
+            }
+
+            return ResponseEntity.ok(Map.of("message", "Notice sent successfully."));
+
         } catch (IllegalArgumentException e) {
-            log.error("Email service failed with bad request for class {}: {}", selectedClass, e.getMessage());
+            log.error("Notice request rejected: {}", e.getMessage());
             return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            log.error("An unexpected error occurred while sending bulk email notice to class: {}", selectedClass, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to send emails due to an internal error.");
+            log.error("Unexpected error sending notice.", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to send notice due to an internal error.");
         }
+    }
+
+    /**
+     * Maps a targetClass value to the audience string stored in the notifications table.
+     *
+     * "All"                            → "ALL"
+     * "ALL_TEACHERS"                   → "TEACHERS"
+     * "CLASS_WITH_TEACHER:<className>" → "CLASS_WITH_TEACHER:<className>"
+     * "<className>"                    → "CLASS:<className>"
+     */
+    private String resolveAudience(String targetClass) {
+        if ("All".equalsIgnoreCase(targetClass)) return "ALL";
+        if ("ALL_TEACHERS".equalsIgnoreCase(targetClass)) return "TEACHERS";
+        if (targetClass.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) return targetClass;
+        return "CLASS:" + targetClass;
     }
 }

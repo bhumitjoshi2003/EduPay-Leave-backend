@@ -11,6 +11,7 @@ public class UserNotificationDTO {
     private String message;
     private String type;
 
+    private Boolean isRead;
     private LocalDateTime createdAt;
 
     public Long getId() {
@@ -51,6 +52,14 @@ public class UserNotificationDTO {
 
     public void setType(String type) {
         this.type = type;
+    }
+
+    public Boolean getIsRead() {
+        return isRead;
+    }
+
+    public void setIsRead(Boolean isRead) {
+        this.isRead = isRead;
     }
 
     public LocalDateTime getCreatedAt() {

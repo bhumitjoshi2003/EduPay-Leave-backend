@@ -1,7 +1,9 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
@@ -23,6 +25,7 @@ public class EmailService {
 
     @Autowired private JavaMailSender javaMailSender;
     @Autowired private StudentRepository studentRepository;
+    @Autowired private TeacherRepository teacherRepository;
 
 
     @Value("${app.mail.from:noreply@edunexify.co.in}")
@@ -125,5 +128,58 @@ public class EmailService {
 
         log.info("Found {} unique email addresses for class: {}", toEmails.size(), selectedClass);
         sendBulkEmail(toEmails, subject, body);
+    }
+
+    public void sendBulkEmailToTeachers(String subject, String body) {
+        if (subject == null || body == null) {
+            log.warn("Attempted to send bulk email to teachers with missing fields. Aborting.");
+            return;
+        }
+        log.info("Fetching all teachers for bulk email with subject: {}", subject);
+        try {
+            List<String> emails = teacherRepository.findAll().stream()
+                    .map(Teacher::getEmail)
+                    .filter(email -> email != null && !email.trim().isEmpty())
+                    .distinct()
+                    .toList();
+            if (emails.isEmpty()) {
+                log.warn("No teacher emails found. Aborting.");
+                return;
+            }
+            log.info("Sending bulk email to {} teachers.", emails.size());
+            sendBulkEmail(emails, subject, body);
+        } catch (DataAccessException e) {
+            log.error("Data access error fetching teachers for bulk email.", e);
+        }
+    }
+
+    public void sendBulkEmailToClassWithTeacher(String subject, String body, String className) {
+        if (subject == null || body == null || className == null) {
+            log.warn("Attempted to send class+teacher email with missing fields. Aborting.");
+            return;
+        }
+        log.info("Sending bulk email to students of class {} and their class teacher.", className);
+        try {
+            List<String> emails = new java.util.ArrayList<>(
+                    studentRepository.findByClassName(className).stream()
+                            .map(Student::getEmail)
+                            .filter(email -> email != null && !email.trim().isEmpty())
+                            .toList()
+            );
+            teacherRepository.findByClassTeacher(className)
+                    .map(Teacher::getEmail)
+                    .filter(email -> email != null && !email.trim().isEmpty())
+                    .ifPresent(emails::add);
+
+            List<String> distinct = emails.stream().distinct().toList();
+            if (distinct.isEmpty()) {
+                log.warn("No emails found for class {} with teacher. Aborting.", className);
+                return;
+            }
+            log.info("Sending bulk email to {} recipients (class {} + teacher).", distinct.size(), className);
+            sendBulkEmail(distinct, subject, body);
+        } catch (DataAccessException e) {
+            log.error("Data access error fetching recipients for class+teacher email.", e);
+        }
     }
 }

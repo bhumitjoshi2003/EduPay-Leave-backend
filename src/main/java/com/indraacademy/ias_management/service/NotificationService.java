@@ -2,8 +2,12 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.UserNotificationDTO;
 import com.indraacademy.ias_management.entity.Notification;
+import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,6 +36,8 @@ public class NotificationService {
 
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private UserNotificationRepository userNotificationRepository;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private TeacherRepository teacherRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -116,6 +122,30 @@ public class NotificationService {
         }
         log.info("Fetching notifications for user: {} with role: {}", userId, userRole);
 
+        // Resolve extra context needed for audience matching
+        String studentClassName = null;
+        String teacherAssignedClass = null;
+
+        if ("STUDENT".equalsIgnoreCase(userRole)) {
+            try {
+                studentClassName = studentRepository.findByStudentId(userId)
+                        .map(Student::getClassName)
+                        .orElse(null);
+            } catch (DataAccessException e) {
+                log.warn("Could not resolve class name for student: {}", userId, e);
+            }
+        } else if ("TEACHER".equalsIgnoreCase(userRole)) {
+            try {
+                teacherAssignedClass = teacherRepository.findById(userId)
+                        .map(Teacher::getClassTeacher)
+                        .orElse(null);
+            } catch (DataAccessException e) {
+                log.warn("Could not resolve assigned class for teacher: {}", userId, e);
+            }
+        }
+        final String resolvedClassName = studentClassName;
+        final String resolvedTeacherClass = teacherAssignedClass;
+
         List<UserNotification> userNotifications;
         List<Notification> broadNotifications;
 
@@ -123,20 +153,23 @@ public class NotificationService {
             // 1. Fetch existing user-specific notifications
             userNotifications = new ArrayList<>(userNotificationRepository.findByUserIdOrderByCreatedAtDesc(userId));
 
-            // 2. Fetch broad/general notifications based on user's role
+            // 2. Fetch broad/general notifications applicable to this user
             broadNotifications = notificationRepository.findAll().stream()
                     .filter(notification -> {
                         String audience = notification.getAudience();
                         if (audience == null) return false;
 
                         if ("STUDENT".equalsIgnoreCase(userRole)) {
-                            return "ALL".equalsIgnoreCase(audience) ||
-                                    "STUDENTS".equalsIgnoreCase(audience) ||
-                                    userId.equals(audience);
+                            return "ALL".equalsIgnoreCase(audience)
+                                    || "STUDENTS".equalsIgnoreCase(audience)
+                                    || userId.equals(audience)
+                                    || (resolvedClassName != null && audience.equalsIgnoreCase("CLASS:" + resolvedClassName))
+                                    || (resolvedClassName != null && audience.equalsIgnoreCase("CLASS_WITH_TEACHER:" + resolvedClassName));
                         } else if ("TEACHER".equalsIgnoreCase(userRole)) {
-                            return "ALL".equalsIgnoreCase(audience) ||
-                                    "TEACHERS".equalsIgnoreCase(audience) ||
-                                    userId.equals(audience);
+                            return "ALL".equalsIgnoreCase(audience)
+                                    || "TEACHERS".equalsIgnoreCase(audience)
+                                    || userId.equals(audience)
+                                    || (resolvedTeacherClass != null && audience.equalsIgnoreCase("CLASS_WITH_TEACHER:" + resolvedTeacherClass));
                         }
                         return false;
                     })
@@ -146,7 +179,7 @@ public class NotificationService {
             throw new RuntimeException("Could not retrieve notifications due to data access issue", e);
         }
 
-        // 3. Create UserNotification entries for relevant broad notifications if they don't exist
+        // 3. Create UserNotification entries for applicable broad notifications if they don't exist yet
         int newNotificationsCount = 0;
         for (Notification broadNotif : broadNotifications) {
             try {
@@ -161,12 +194,11 @@ public class NotificationService {
                 }
             } catch (DataAccessException e) {
                 log.error("Data access error creating UserNotification for broad notification ID: {} for user: {}", broadNotif.getId(), userId, e);
-                // Continue loop to process remaining notifications
             }
         }
         log.debug("Created {} new UserNotification entries for user {}.", newNotificationsCount, userId);
 
-        // 4. Sort the combined list
+        // 4. Sort combined list newest-first
         userNotifications.sort((n1, n2) -> n2.getCreatedAt().compareTo(n1.getCreatedAt()));
 
         // 5. Convert to DTOs
@@ -175,6 +207,7 @@ public class NotificationService {
                     UserNotificationDTO dto = new UserNotificationDTO();
                     dto.setId(userNotif.getId());
                     dto.setUserId(userNotif.getUserId());
+                    dto.setIsRead(userNotif.getIsRead());
                     dto.setCreatedAt(userNotif.getCreatedAt());
 
                     Notification notification = userNotif.getNotification();
@@ -210,21 +243,15 @@ public class NotificationService {
             log.warn("Attempted to mark notifications as read with null user ID.");
             return;
         }
-        log.info("Marking all personalized unread notifications as read for user: {}", userId);
+        log.info("Marking all unread notifications as read for user: {}", userId);
 
         try {
-            List<UserNotification> notificationsToMark = userNotificationRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId)
-                    .stream()
-                    // Filter to only mark personalized/direct notifications as read, NOT broad ones.
-                    // This is based on the assumption that the original intent was only to mark specific ones.
-                    .filter(un -> un.getNotification() != null && userId.equals(un.getNotification().getAudience()))
-                    .toList();
-
-            for (UserNotification notification : notificationsToMark) {
-                notification.setIsRead(true);
-                userNotificationRepository.save(notification);
+            List<UserNotification> unread = userNotificationRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId);
+            for (UserNotification un : unread) {
+                un.setIsRead(true);
+                userNotificationRepository.save(un);
             }
-            log.info("Marked {} personalized notifications as read for user: {}", notificationsToMark.size(), userId);
+            log.info("Marked {} notifications as read for user: {}", unread.size(), userId);
         } catch (DataAccessException e) {
             log.error("Data access error marking notifications as read for user: {}", userId, e);
             throw new RuntimeException("Could not mark notifications as read due to data access issue", e);

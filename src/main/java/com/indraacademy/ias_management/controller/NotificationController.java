@@ -26,7 +26,7 @@ public class NotificationController {
     @Autowired private NotificationService notificationService;
     private static final Logger log = LoggerFactory.getLogger(NotificationController.class);
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> createNotification(@RequestBody Notification notification, HttpServletRequest request) {
         log.info("Request to create broad notification with title: {}", notification.getTitle());
@@ -80,7 +80,7 @@ public class NotificationController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{id}")
     public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, HttpServletRequest request) {
         log.info("Updating notification with ID: {}", id);
@@ -100,7 +100,7 @@ public class NotificationController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteNotification(@PathVariable Long id, HttpServletRequest request) {
         log.warn("Request to delete notification with ID: {}", id);
