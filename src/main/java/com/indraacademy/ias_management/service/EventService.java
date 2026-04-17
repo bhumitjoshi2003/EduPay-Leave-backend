@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.repository.EventRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
@@ -22,6 +23,9 @@ import java.util.Optional;
 public class EventService {
 
     private static final Logger log = LoggerFactory.getLogger(EventService.class);
+
+    @Value("${app.backend-url:http://localhost:8080}")
+    private String backendUrl;
 
     @Autowired private EventRepository eventRepository;
     @Autowired private AuditService auditService;
@@ -76,11 +80,10 @@ public class EventService {
         log.info("Fetching event by ID: {}", id);
         try {
             Optional<Event> event = eventRepository.findById(id);
-            if (event.isPresent()) {
-                log.info("Event found with ID: {}", id);
-            } else {
-                log.warn("Event not found with ID: {}", id);
-            }
+            event.ifPresentOrElse(
+                    e -> { resolveImageUrl(e); log.info("Event found with ID: {}", id); },
+                    () -> log.warn("Event not found with ID: {}", id)
+            );
             return event;
         } catch (DataAccessException e) {
             log.error("Data access error fetching event ID: {}", id, e);
@@ -100,6 +103,7 @@ public class EventService {
             LocalDate lastDayOfMonth = firstDayOfMonth.withDayOfMonth(firstDayOfMonth.lengthOfMonth());
 
             List<Event> events = eventRepository.findByStartDateLessThanEqualAndEndDateGreaterThanEqual(lastDayOfMonth, firstDayOfMonth);
+            events.forEach(this::resolveImageUrl);
             log.info("Found {} events for year: {} and month: {}", events.size(), year, month);
             return events;
         } catch (DataAccessException e) {
@@ -164,6 +168,19 @@ public class EventService {
             throw new RuntimeException("Could not update event", e);
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Failed to serialize event for audit log", e);
+        }
+    }
+
+    /**
+     * Ensures imageUrl is an absolute URL.
+     * Existing DB records stored only the relative path (e.g. /uploads/events/images/…).
+     * New uploads store the full URL directly from FileStorageService.
+     * This method is a no-op for already-absolute URLs.
+     */
+    private void resolveImageUrl(Event event) {
+        String url = event.getImageUrl();
+        if (url != null && url.startsWith("/")) {
+            event.setImageUrl(backendUrl + url);
         }
     }
 

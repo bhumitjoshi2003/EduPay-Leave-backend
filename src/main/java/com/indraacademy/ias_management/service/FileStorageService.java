@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.config.FileStorageProperties;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,9 @@ public class FileStorageService {
     private static final Logger log = LoggerFactory.getLogger(FileStorageService.class);
 
     private final Path fileStorageLocation;
+
+    @Value("${app.backend-url:http://localhost:8080}")
+    private String backendUrl;
 
     @Autowired
     public FileStorageService(FileStorageProperties fileStorageProperties) {
@@ -70,8 +74,9 @@ public class FileStorageService {
             Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
 
             String relativePath = "/uploads/events/images/" + fileName;
-            log.info("File stored successfully. Unique name: {}, Relative path: {}", fileName, relativePath);
-            return relativePath;
+            String absoluteUrl = backendUrl + relativePath;
+            log.info("File stored successfully. Unique name: {}, URL: {}", fileName, absoluteUrl);
+            return absoluteUrl;
         } catch (IOException ex) {
             log.error("Could not store file {}. Target location: {}", originalFilename, this.fileStorageLocation.resolve(fileName), ex);
             throw new RuntimeException("Could not store file " + originalFilename + ". Please try again!", ex);
