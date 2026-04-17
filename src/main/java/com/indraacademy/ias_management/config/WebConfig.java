@@ -22,7 +22,7 @@ public class WebConfig implements WebMvcConfigurer {
         // Map the /uploads/events/images/** URL pattern to the file system directory
         String absolutePath = Paths.get(fileStorageProperties.getDirectory()).toAbsolutePath().normalize().toString();
 
-        registry.addResourceHandler("/uploads/events/images/**")
-                .addResourceLocations("file:" + absolutePath + "/"); // Ensure trailing slash for directory
+        registry.addResourceHandler("/api/uploads/events/images/**")
+                .addResourceLocations("file:" + absolutePath + "/");
     }
 }

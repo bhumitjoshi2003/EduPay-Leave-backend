@@ -168,18 +168,33 @@ public class EventService {
     }
 
     /**
-     * Ensures imageUrl is a relative path (e.g. /uploads/events/images/…).
-     * Strips any absolute host prefix that may have been stored in older records
-     * (e.g. "http://localhost:8080/uploads/…" → "/uploads/…").
+     * Normalizes imageUrl to the /api/uploads/events/images/… relative path.
+     * Handles three legacy formats stored in DB:
+     *   - "http://localhost:8080/uploads/…"  (old absolute with wrong host)
+     *   - "http://…/api/uploads/…"           (old absolute with /api prefix)
+     *   - "/uploads/…"                        (relative without /api prefix)
      */
     private void resolveImageUrl(Event event) {
         String url = event.getImageUrl();
-        if (url != null && url.startsWith("http")) {
+        if (url == null) return;
+
+        // Strip absolute host prefix if present
+        if (url.startsWith("http")) {
             int pathStart = url.indexOf("/uploads/");
-            if (pathStart >= 0) {
-                event.setImageUrl(url.substring(pathStart));
+            int apiPathStart = url.indexOf("/api/uploads/");
+            if (apiPathStart >= 0) {
+                url = url.substring(apiPathStart); // already has /api prefix
+            } else if (pathStart >= 0) {
+                url = url.substring(pathStart);    // missing /api prefix
             }
         }
+
+        // Ensure /api prefix
+        if (url.startsWith("/uploads/")) {
+            url = "/api" + url;
+        }
+
+        event.setImageUrl(url);
     }
 
     public void deleteEvent(Long id) {

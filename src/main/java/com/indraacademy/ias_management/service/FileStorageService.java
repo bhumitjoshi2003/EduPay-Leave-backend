@@ -73,7 +73,7 @@ public class FileStorageService {
             Path targetLocation = this.fileStorageLocation.resolve(fileName);
             Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
 
-            String relativePath = "/uploads/events/images/" + fileName;
+            String relativePath = "/api/uploads/events/images/" + fileName;
             log.info("File stored successfully. Unique name: {}, path: {}", fileName, relativePath);
             return relativePath;
         } catch (IOException ex) {
