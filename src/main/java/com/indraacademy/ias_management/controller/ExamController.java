@@ -19,8 +19,6 @@ import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/exams")
-@CrossOrigin(origins = "http://localhost:4200")
-@PreAuthorize("hasRole('" + Role.ADMIN + "')")
 public class ExamController {
 
     private static final Logger log = LoggerFactory.getLogger(ExamController.class);
@@ -29,6 +27,7 @@ public class ExamController {
 
     // ─── ExamConfig ───────────────────────────────────────────────────────────
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping
     public ResponseEntity<List<ExamConfig>> getExams(
             @RequestParam(required = false) String session,
@@ -37,6 +36,7 @@ public class ExamController {
         return ResponseEntity.ok(examConfigService.getExams(session, className));
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> addExam(@RequestBody Map<String, String> body) {
         String session   = body.get("session");
@@ -51,6 +51,7 @@ public class ExamController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteExam(@PathVariable Long id) {
         log.info("DELETE /api/exams/{}", id);
@@ -64,6 +65,7 @@ public class ExamController {
 
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping("/{examId}/subjects")
     public ResponseEntity<?> getExamSubjects(@PathVariable Long examId) {
         log.info("GET /api/exams/{}/subjects", examId);
@@ -74,6 +76,7 @@ public class ExamController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping("/{examId}/subjects")
     public ResponseEntity<?> addExamSubject(@PathVariable Long examId,
                                             @RequestBody Map<String, Object> body) {
@@ -93,6 +96,7 @@ public class ExamController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PutMapping("/subjects/{entryId}")
     public ResponseEntity<?> updateExamSubject(@PathVariable Long entryId,
                                                @RequestBody Map<String, Object> body) {
@@ -111,6 +115,7 @@ public class ExamController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/subjects/{entryId}")
     public ResponseEntity<?> deleteExamSubject(@PathVariable Long entryId) {
         log.info("DELETE /api/exams/subjects/{}", entryId);
