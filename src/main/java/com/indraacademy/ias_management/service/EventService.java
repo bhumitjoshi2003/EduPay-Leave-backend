@@ -5,7 +5,6 @@ import com.indraacademy.ias_management.repository.EventRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
@@ -23,9 +22,6 @@ import java.util.Optional;
 public class EventService {
 
     private static final Logger log = LoggerFactory.getLogger(EventService.class);
-
-    @Value("${app.backend-url:http://localhost:8080}")
-    private String backendUrl;
 
     @Autowired private EventRepository eventRepository;
     @Autowired private AuditService auditService;
@@ -172,15 +168,17 @@ public class EventService {
     }
 
     /**
-     * Ensures imageUrl is an absolute URL.
-     * Existing DB records stored only the relative path (e.g. /uploads/events/images/…).
-     * New uploads store the full URL directly from FileStorageService.
-     * This method is a no-op for already-absolute URLs.
+     * Ensures imageUrl is a relative path (e.g. /uploads/events/images/…).
+     * Strips any absolute host prefix that may have been stored in older records
+     * (e.g. "http://localhost:8080/uploads/…" → "/uploads/…").
      */
     private void resolveImageUrl(Event event) {
         String url = event.getImageUrl();
-        if (url != null && url.startsWith("/")) {
-            event.setImageUrl(backendUrl + url);
+        if (url != null && url.startsWith("http")) {
+            int pathStart = url.indexOf("/uploads/");
+            if (pathStart >= 0) {
+                event.setImageUrl(url.substring(pathStart));
+            }
         }
     }
 

@@ -74,9 +74,8 @@ public class FileStorageService {
             Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
 
             String relativePath = "/uploads/events/images/" + fileName;
-            String absoluteUrl = backendUrl + relativePath;
-            log.info("File stored successfully. Unique name: {}, URL: {}", fileName, absoluteUrl);
-            return absoluteUrl;
+            log.info("File stored successfully. Unique name: {}, path: {}", fileName, relativePath);
+            return relativePath;
         } catch (IOException ex) {
             log.error("Could not store file {}. Target location: {}", originalFilename, this.fileStorageLocation.resolve(fileName), ex);
             throw new RuntimeException("Could not store file " + originalFilename + ". Please try again!", ex);
