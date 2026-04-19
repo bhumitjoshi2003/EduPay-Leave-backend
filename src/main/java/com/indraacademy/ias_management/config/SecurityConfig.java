@@ -49,6 +49,7 @@ public class SecurityConfig {
                                 "/api/auth/refresh-token",
                                 "/actuator/health").permitAll()
                         .requestMatchers("/api/uploads/events/images/**").permitAll()
+                        .requestMatchers("/api/uploads/student-photos/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
                         .anyRequest().authenticated()
                 )

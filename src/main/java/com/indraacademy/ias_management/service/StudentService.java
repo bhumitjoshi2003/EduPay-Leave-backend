@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -14,7 +15,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.format.DateTimeFormatter;
@@ -28,6 +36,9 @@ public class StudentService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentService.class);
     private static final DateTimeFormatter YEAR_FORMATTER = DateTimeFormatter.ofPattern("yyyy");
+
+    @Value("${student.photo.directory:./uploads/student-photos}")
+    private String photoDirectory;
 
     @Autowired private StudentRepository studentRepository;
     @Autowired private StudentFeesService studentFeesService;
@@ -248,6 +259,37 @@ public class StudentService {
         } catch (Exception e) {
             log.error("Unexpected error while updating student with ID: {}", studentId, e);
             throw new RuntimeException("An unexpected error occurred while updating the student.", e);
+        }
+    }
+
+    @Transactional
+    public String uploadPhoto(String studentId, MultipartFile file) {
+        Student student = studentRepository.findByStudentId(studentId)
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+
+        String originalFilename = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
+        String ext = "";
+        int dotIndex = originalFilename.lastIndexOf('.');
+        if (dotIndex > 0) ext = originalFilename.substring(dotIndex).toLowerCase();
+
+        try {
+            Path storageDir = Paths.get(photoDirectory).toAbsolutePath().normalize();
+            Files.createDirectories(storageDir);
+
+            // One photo per student — overwrite any previous upload
+            String fileName = studentId + ext;
+            Path targetLocation = storageDir.resolve(fileName);
+            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+
+            String relativeUrl = "/uploads/student-photos/" + fileName;
+            student.setPhotoUrl(relativeUrl);
+            studentRepository.save(student);
+
+            log.info("Photo uploaded for student {}: {}", studentId, relativeUrl);
+            return relativeUrl;
+        } catch (IOException e) {
+            log.error("Failed to store photo for student {}", studentId, e);
+            throw new RuntimeException("Could not store photo for student " + studentId, e);
         }
     }
 }

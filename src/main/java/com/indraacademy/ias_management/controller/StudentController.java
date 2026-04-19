@@ -167,6 +167,37 @@ public class StudentController {
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{studentId}/photo")
+    public ResponseEntity<?> uploadStudentPhoto(@PathVariable String studentId,
+                                                @RequestParam("file") MultipartFile file) {
+        String currentUserId = authService.getUserId();
+        String currentRole   = authService.getRole();
+
+        // STUDENT can only upload their own photo
+        if (Role.TEACHER.equals(currentRole)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Teachers cannot upload student photos.");
+        }
+        if (Role.STUDENT.equals(currentRole) && !studentId.equals(currentUserId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Students can only upload their own photo.");
+        }
+
+        log.info("Photo upload for student {} by {} ({})", studentId, currentUserId, currentRole);
+
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().body("Uploaded file is empty.");
+        }
+
+        try {
+            String photoUrl = studentService.uploadPhoto(studentId, file);
+            return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("Photo upload failed for student {}", studentId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to upload photo.");
+        }
+    }
+
     @GetMapping("/bulk/template")
     public ResponseEntity<byte[]> downloadBulkImportTemplate() {
         log.info("Request to download student bulk import CSV template");

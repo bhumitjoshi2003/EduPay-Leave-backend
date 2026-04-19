@@ -57,6 +57,9 @@ public class Student {
     @Column(name = "status")
     private StudentStatus status;
 
+    @Column(name = "photo_url")
+    private String photoUrl;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -206,4 +209,8 @@ public class Student {
     public void setLeavingDate(LocalDate leavingDate) { this.leavingDate = leavingDate; }
 
     public void setStatus(StudentStatus status) { this.status = status; }
+
+    public String getPhotoUrl() { return photoUrl; }
+
+    public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
 }

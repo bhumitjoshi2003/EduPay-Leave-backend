@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.config;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -12,6 +13,9 @@ public class WebConfig implements WebMvcConfigurer {
 
     private final FileStorageProperties fileStorageProperties;
 
+    @Value("${student.photo.directory:./uploads/student-photos}")
+    private String studentPhotoDirectory;
+
     @Autowired
     public WebConfig(FileStorageProperties fileStorageProperties) {
         this.fileStorageProperties = fileStorageProperties;
@@ -19,10 +23,12 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // Map the /uploads/events/images/** URL pattern to the file system directory
-        String absolutePath = Paths.get(fileStorageProperties.getDirectory()).toAbsolutePath().normalize().toString();
-
+        String eventsPath = Paths.get(fileStorageProperties.getDirectory()).toAbsolutePath().normalize().toString();
         registry.addResourceHandler("/api/uploads/events/images/**")
-                .addResourceLocations("file:" + absolutePath + "/");
+                .addResourceLocations("file:" + eventsPath + "/");
+
+        String photosPath = Paths.get(studentPhotoDirectory).toAbsolutePath().normalize().toString();
+        registry.addResourceHandler("/api/uploads/student-photos/**")
+                .addResourceLocations("file:" + photosPath + "/");
     }
 }
