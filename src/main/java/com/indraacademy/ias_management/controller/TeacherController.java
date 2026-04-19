@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.BulkImportResultDTO;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.TeacherBulkImportService;
 import com.indraacademy.ias_management.service.TeacherService;
 import com.indraacademy.ias_management.service.UserDetailsServiceImpl;
@@ -21,6 +22,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.NoSuchElementException;
 
@@ -35,6 +37,7 @@ public class TeacherController {
     @Autowired private TeacherService teacherService;
     @Autowired private TeacherBulkImportService teacherBulkImportService;
     @Autowired private UserDetailsServiceImpl userDetailsService;
+    @Autowired private AuthService authService;
 
     @PostMapping
     public ResponseEntity<?> registerTeacher(@RequestBody Teacher newTeacher, HttpServletRequest request) {
@@ -164,6 +167,36 @@ public class TeacherController {
         } catch (Exception e) {
             log.error("Unexpected error during teacher update for ID {}.", teacherId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
+    @PostMapping("/{teacherId}/photo")
+    public ResponseEntity<?> uploadTeacherPhoto(@PathVariable String teacherId,
+                                                @RequestParam("file") MultipartFile file) {
+        String currentUserId = authService.getUserId();
+        String currentRole   = authService.getRole();
+
+        if (Role.TEACHER.equals(currentRole) && !teacherId.equals(currentUserId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Teachers can only upload their own photo.");
+        }
+
+        log.info("Photo upload for teacher {} by {} ({})", teacherId, currentUserId, currentRole);
+
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().body("Uploaded file is empty.");
+        }
+
+        try {
+            String photoUrl = teacherService.uploadPhoto(teacherId, file);
+            return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("Photo upload failed for teacher {}", teacherId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to upload photo.");
         }
     }
 }

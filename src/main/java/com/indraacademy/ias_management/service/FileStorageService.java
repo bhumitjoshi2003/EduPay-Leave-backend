@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.config.FileStorageProperties;
+import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
@@ -17,7 +18,6 @@ import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -47,41 +47,43 @@ public class FileStorageService {
         }
     }
 
+    private static final long MAX_FILE_SIZE = 10L * 1024 * 1024; // 10 MB
+
     public String storeFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             log.warn("Attempted to store a null or empty file.");
             throw new IllegalArgumentException("Cannot store a null or empty file.");
         }
 
-        String originalFilename = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
-        log.info("Attempting to store file: {}", originalFilename);
-
-        String fileExtension = "";
-        int dotIndex = originalFilename.lastIndexOf('.');
-        if (dotIndex > 0 && dotIndex < originalFilename.length() - 1) {
-            fileExtension = originalFilename.substring(dotIndex);
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("Only image files are allowed.");
+        }
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
         }
 
-        String fileName = UUID.randomUUID().toString() + fileExtension;
+        String originalFilename = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
+        log.info("Attempting to store event image: {}", originalFilename);
+
+        // Always output as .jpg
+        String fileName = UUID.randomUUID().toString() + ".jpg";
 
         try {
-            if (fileName.contains("..")) {
-                log.error("Security risk detected: Filename contains invalid path sequence: {}", fileName);
-                throw new IOException("Filename contains invalid path sequence " + fileName);
-            }
-
             Path targetLocation = this.fileStorageLocation.resolve(fileName);
-            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+            Thumbnails.of(file.getInputStream())
+                    .size(1200, 800)
+                    .keepAspectRatio(true)
+                    .outputFormat("jpg")
+                    .outputQuality(0.85)
+                    .toFile(targetLocation.toFile());
 
             String relativePath = "/uploads/events/images/" + fileName;
-            log.info("File stored successfully. Unique name: {}, path: {}", fileName, relativePath);
+            log.info("Event image stored and resized. Name: {}, path: {}", fileName, relativePath);
             return relativePath;
         } catch (IOException ex) {
-            log.error("Could not store file {}. Target location: {}", originalFilename, this.fileStorageLocation.resolve(fileName), ex);
+            log.error("Could not store event image: {}", originalFilename, ex);
             throw new RuntimeException("Could not store file " + originalFilename + ". Please try again!", ex);
-        } catch (Exception ex) {
-            log.error("Unexpected error during file storage for: {}", originalFilename, ex);
-            throw new RuntimeException("Unexpected error during file storage.", ex);
         }
     }
 

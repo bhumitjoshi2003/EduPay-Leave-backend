@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
+import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
@@ -22,7 +23,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
 import java.time.Year;
 import java.time.format.DateTimeFormatter;
@@ -262,30 +262,40 @@ public class StudentService {
         }
     }
 
+    private static final long MAX_PHOTO_SIZE = 10L * 1024 * 1024; // 10 MB
+
     @Transactional
     public String uploadPhoto(String studentId, MultipartFile file) {
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("Only image files are allowed.");
+        }
+        if (file.getSize() > MAX_PHOTO_SIZE) {
+            throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
+        }
+
         Student student = studentRepository.findByStudentId(studentId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
-
-        String originalFilename = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
-        String ext = "";
-        int dotIndex = originalFilename.lastIndexOf('.');
-        if (dotIndex > 0) ext = originalFilename.substring(dotIndex).toLowerCase();
 
         try {
             Path storageDir = Paths.get(photoDirectory).toAbsolutePath().normalize();
             Files.createDirectories(storageDir);
 
-            // One photo per student — overwrite any previous upload
-            String fileName = studentId + ext;
+            // One photo per student — always saved as <studentId>.jpg
+            String fileName = studentId + ".jpg";
             Path targetLocation = storageDir.resolve(fileName);
-            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+            Thumbnails.of(file.getInputStream())
+                    .size(400, 400)
+                    .keepAspectRatio(true)
+                    .outputFormat("jpg")
+                    .outputQuality(0.80)
+                    .toFile(targetLocation.toFile());
 
             String relativeUrl = "/uploads/student-photos/" + fileName;
             student.setPhotoUrl(relativeUrl);
             studentRepository.save(student);
 
-            log.info("Photo uploaded for student {}: {}", studentId, relativeUrl);
+            log.info("Photo uploaded and resized for student {}: {}", studentId, relativeUrl);
             return relativeUrl;
         } catch (IOException e) {
             log.error("Failed to store photo for student {}", studentId, e);

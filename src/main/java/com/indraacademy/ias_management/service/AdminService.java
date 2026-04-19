@@ -6,13 +6,22 @@ import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
+import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +31,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class AdminService {
 
     private static final Logger log = LoggerFactory.getLogger(AdminService.class);
+    private static final long MAX_PHOTO_SIZE = 10L * 1024 * 1024;
+
+    @Value("${admin.photo.directory:./uploads/admin-photos}")
+    private String photoDirectory;
 
     @Autowired private AdminRepository adminRepository;
     @Autowired private AuditService auditService;
@@ -196,6 +209,44 @@ public class AdminService {
             throw new RuntimeException("Could not delete admin due to data access issue", e);
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    @Transactional
+    public String uploadPhoto(String adminId, MultipartFile file) {
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("Only image files are allowed.");
+        }
+        if (file.getSize() > MAX_PHOTO_SIZE) {
+            throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
+        }
+
+        Admin admin = adminRepository.findById(adminId)
+                .orElseThrow(() -> new NoSuchElementException("Admin not found: " + adminId));
+
+        try {
+            Path storageDir = Paths.get(photoDirectory).toAbsolutePath().normalize();
+            Files.createDirectories(storageDir);
+
+            String fileName = adminId + ".jpg";
+            Path targetLocation = storageDir.resolve(fileName);
+            Thumbnails.of(file.getInputStream())
+                    .size(400, 400)
+                    .keepAspectRatio(true)
+                    .outputFormat("jpg")
+                    .outputQuality(0.80)
+                    .toFile(targetLocation.toFile());
+
+            String relativeUrl = "/uploads/admin-photos/" + fileName;
+            admin.setPhotoUrl(relativeUrl);
+            adminRepository.save(admin);
+
+            log.info("Photo uploaded and resized for admin {}: {}", adminId, relativeUrl);
+            return relativeUrl;
+        } catch (IOException e) {
+            log.error("Failed to store photo for admin {}", adminId, e);
+            throw new RuntimeException("Could not store photo for admin " + adminId, e);
         }
     }
 }

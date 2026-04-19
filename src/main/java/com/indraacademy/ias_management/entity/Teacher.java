@@ -38,6 +38,9 @@ public class Teacher {
     @Column(name = "joining_date")
     private LocalDate joiningDate;
 
+    @Column(name = "photo_url")
+    private String photoUrl;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -120,6 +123,10 @@ public class Teacher {
     public void setJoiningDate(LocalDate joiningDate) {
         this.joiningDate = joiningDate;
     }
+
+    public String getPhotoUrl() { return photoUrl; }
+
+    public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;

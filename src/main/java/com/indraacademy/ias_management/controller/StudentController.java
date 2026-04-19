@@ -190,6 +190,8 @@ public class StudentController {
         try {
             String photoUrl = studentService.uploadPhoto(studentId, file);
             return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (NoSuchElementException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (RuntimeException e) {

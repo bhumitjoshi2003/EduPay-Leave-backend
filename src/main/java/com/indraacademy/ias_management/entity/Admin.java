@@ -32,6 +32,9 @@ public class Admin {
     @Column(name = "gender")
     private String gender;
 
+    @Column(name = "photo_url")
+    private String photoUrl;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -91,6 +94,10 @@ public class Admin {
     public void setGender(String gender) {
         this.gender = gender;
     }
+
+    public String getPhotoUrl() { return photoUrl; }
+
+    public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;

@@ -16,6 +16,12 @@ public class WebConfig implements WebMvcConfigurer {
     @Value("${student.photo.directory:./uploads/student-photos}")
     private String studentPhotoDirectory;
 
+    @Value("${teacher.photo.directory:./uploads/teacher-photos}")
+    private String teacherPhotoDirectory;
+
+    @Value("${admin.photo.directory:./uploads/admin-photos}")
+    private String adminPhotoDirectory;
+
     @Autowired
     public WebConfig(FileStorageProperties fileStorageProperties) {
         this.fileStorageProperties = fileStorageProperties;
@@ -27,8 +33,16 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addResourceHandler("/api/uploads/events/images/**")
                 .addResourceLocations("file:" + eventsPath + "/");
 
-        String photosPath = Paths.get(studentPhotoDirectory).toAbsolutePath().normalize().toString();
+        String studentPhotosPath = Paths.get(studentPhotoDirectory).toAbsolutePath().normalize().toString();
         registry.addResourceHandler("/api/uploads/student-photos/**")
-                .addResourceLocations("file:" + photosPath + "/");
+                .addResourceLocations("file:" + studentPhotosPath + "/");
+
+        String teacherPhotosPath = Paths.get(teacherPhotoDirectory).toAbsolutePath().normalize().toString();
+        registry.addResourceHandler("/api/uploads/teacher-photos/**")
+                .addResourceLocations("file:" + teacherPhotosPath + "/");
+
+        String adminPhotosPath = Paths.get(adminPhotoDirectory).toAbsolutePath().normalize().toString();
+        registry.addResourceHandler("/api/uploads/admin-photos/**")
+                .addResourceLocations("file:" + adminPhotosPath + "/");
     }
 }
