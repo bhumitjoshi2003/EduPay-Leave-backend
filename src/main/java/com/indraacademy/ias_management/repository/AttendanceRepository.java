@@ -66,6 +66,9 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     /** Count absence records for a student in a date range. */
     long countByStudentIdAndDateBetween(String studentId, LocalDate startDate, LocalDate endDate);
 
+    /** Fetch absence records for a student in a date range. */
+    List<Attendance> findByStudentIdAndDateBetween(String studentId, LocalDate startDate, LocalDate endDate);
+
     /** Fetch all absence records for a class in a date range (used for bulk class-summary calculation). */
     List<Attendance> findByClassNameAndDateBetween(String className, LocalDate startDate, LocalDate endDate);
 }

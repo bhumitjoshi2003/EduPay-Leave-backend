@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -122,6 +123,46 @@ public class AttendanceController {
     }
 
     // ─── Summary endpoints ────────────────────────────────────────────────────
+
+    /**
+     * GET /api/attendance/summary/student/{studentId}/daily?month=4&year=2026
+     */
+    @GetMapping("/summary/student/{studentId}/daily")
+    public ResponseEntity<?> getDailyAttendance(
+            @PathVariable String studentId,
+            @RequestParam int month,
+            @RequestParam int year) {
+
+        String currentUserId = authService.getUserId();
+        String currentRole   = authService.getRole();
+
+        if (Role.STUDENT.equals(currentRole) && !studentId.equals(currentUserId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Students can only view their own attendance.");
+        }
+        if (Role.TEACHER.equals(currentRole)) {
+            String teacherClass = teacherRepository.findById(currentUserId)
+                    .map(Teacher::getClassTeacher).orElse(null);
+            String studentClass = studentRepository.findByStudentId(studentId)
+                    .map(s -> s.getClassName()).orElse(null);
+            if (teacherClass == null || !teacherClass.equals(studentClass)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only view attendance for students in their assigned class.");
+            }
+        }
+
+        log.info("Daily attendance request — student: {}, month: {}, year: {}", studentId, month, year);
+        try {
+            DailyAttendanceDTO result = attendanceService.getDailyAttendance(studentId, month, year);
+            return ResponseEntity.ok(result);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Error fetching daily attendance for student {}", studentId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to retrieve daily attendance.");
+        }
+    }
 
     /**
      * GET /api/attendance/summary/student/{studentId}

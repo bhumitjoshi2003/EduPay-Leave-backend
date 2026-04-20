@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
@@ -487,6 +488,35 @@ public class AttendanceService {
         String monthName = Month.of(monthNum).getDisplayName(TextStyle.FULL, Locale.ENGLISH);
 
         return new AttendanceSummaryDTO.MonthlyBreakdown(monthName, year, workingDays, present, absences, pct(present, workingDays));
+    }
+
+    public DailyAttendanceDTO getDailyAttendance(String studentId, int month, int year) {
+        Student student = studentRepository.findByStudentId(studentId)
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+
+        LocalDate start = LocalDate.of(year, month, 1);
+        LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
+
+        // School days = distinct dates any student in this class was marked absent
+        List<String> schoolDays = attendanceRepository
+                .findByClassNameAndDateBetween(student.getClassName(), start, end)
+                .stream()
+                .map(a -> a.getDate().toString())
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+
+        // Absent days = dates this student was marked absent
+        List<String> absentDays = attendanceRepository
+                .findByStudentIdAndDateBetween(studentId, start, end)
+                .stream()
+                .map(a -> a.getDate().toString())
+                .sorted()
+                .collect(Collectors.toList());
+
+        log.info("Daily attendance for student {} in {}/{}: {} school days, {} absent",
+                studentId, month, year, schoolDays.size(), absentDays.size());
+        return new DailyAttendanceDTO(schoolDays, absentDays);
     }
 
     /** Round to 1 decimal place; returns 0.0 if workingDays is 0. */
