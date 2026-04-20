@@ -1,5 +1,7 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
@@ -16,11 +18,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
 import java.time.LocalDate;
+import java.time.Month;
+import java.time.format.TextStyle;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class AttendanceService {
@@ -342,5 +351,147 @@ public class AttendanceService {
             log.error("Error fetching attendance for student: {} in class: {}", studentId, className, e);
             throw new RuntimeException("Could not retrieve attendance records");
         }
+    }
+
+    // ─── Summary endpoints ────────────────────────────────────────────────────
+
+    public AttendanceSummaryDTO getStudentSummary(String studentId, String type,
+                                                   Integer month, Integer year,
+                                                   String session) {
+        Student student = studentRepository.findByStudentId(studentId)
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+
+        String className = student.getClassName();
+
+        if ("month".equalsIgnoreCase(type)) {
+            if (month == null || year == null) {
+                throw new IllegalArgumentException("month and year are required when type=month");
+            }
+            LocalDate start = LocalDate.of(year, month, 1);
+            LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
+
+            long workingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
+            long absences    = attendanceRepository.countByStudentIdAndDateBetween(studentId, start, end);
+            long present     = Math.max(0, workingDays - absences);
+
+            AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
+            dto.setStudentId(studentId);
+            dto.setStudentName(student.getName());
+            dto.setClassName(className);
+            dto.setTotalWorkingDays(workingDays);
+            dto.setDaysPresent(present);
+            dto.setDaysAbsent(absences);
+            dto.setAttendancePercentage(pct(present, workingDays));
+            dto.setMonthlyBreakdown(null);
+            return dto;
+
+        } else if ("year".equalsIgnoreCase(type)) {
+            if (session == null || !session.matches("\\d{4}-\\d{4}")) {
+                throw new IllegalArgumentException("session is required in format YYYY-YYYY when type=year");
+            }
+            int startYear = Integer.parseInt(session.substring(0, 4));
+            int endYear   = Integer.parseInt(session.substring(5));
+            LocalDate start = LocalDate.of(startYear, 4, 1);
+            LocalDate end   = LocalDate.of(endYear, 3, 31);
+
+            long totalWorkingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
+            long totalAbsences    = attendanceRepository.countByStudentIdAndDateBetween(studentId, start, end);
+            long totalPresent     = Math.max(0, totalWorkingDays - totalAbsences);
+
+            // Monthly breakdown: Apr(startYear)…Dec(startYear), Jan(endYear)…Mar(endYear)
+            List<AttendanceSummaryDTO.MonthlyBreakdown> breakdown = new ArrayList<>();
+            for (int m = 4; m <= 12; m++) {
+                breakdown.add(buildMonthBreakdown(studentId, className, startYear, m));
+            }
+            for (int m = 1; m <= 3; m++) {
+                breakdown.add(buildMonthBreakdown(studentId, className, endYear, m));
+            }
+
+            AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
+            dto.setStudentId(studentId);
+            dto.setStudentName(student.getName());
+            dto.setClassName(className);
+            dto.setTotalWorkingDays(totalWorkingDays);
+            dto.setDaysPresent(totalPresent);
+            dto.setDaysAbsent(totalAbsences);
+            dto.setAttendancePercentage(pct(totalPresent, totalWorkingDays));
+            dto.setMonthlyBreakdown(breakdown);
+            return dto;
+
+        } else {
+            throw new IllegalArgumentException("type must be 'month' or 'year'");
+        }
+    }
+
+    public List<ClassAttendanceSummaryDTO> getClassSummary(String className, String type,
+                                                            Integer month, Integer year,
+                                                            String session) {
+        List<Student> students = studentRepository.findByClassName(className);
+
+        LocalDate start;
+        LocalDate end;
+
+        if ("month".equalsIgnoreCase(type)) {
+            if (month == null || year == null) {
+                throw new IllegalArgumentException("month and year are required when type=month");
+            }
+            start = LocalDate.of(year, month, 1);
+            end   = start.withDayOfMonth(start.lengthOfMonth());
+        } else if ("year".equalsIgnoreCase(type)) {
+            if (session == null || !session.matches("\\d{4}-\\d{4}")) {
+                throw new IllegalArgumentException("session is required in format YYYY-YYYY when type=year");
+            }
+            int startYear = Integer.parseInt(session.substring(0, 4));
+            int endYear   = Integer.parseInt(session.substring(5));
+            start = LocalDate.of(startYear, 4, 1);
+            end   = LocalDate.of(endYear, 3, 31);
+        } else {
+            throw new IllegalArgumentException("type must be 'month' or 'year'");
+        }
+
+        // Fetch all absences for the class in one query, group by studentId
+        List<Attendance> allAbsences = attendanceRepository.findByClassNameAndDateBetween(className, start, end);
+        Map<String, Long> absencesByStudent = allAbsences.stream()
+                .collect(Collectors.groupingBy(Attendance::getStudentId, Collectors.counting()));
+
+        long workingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
+
+        List<ClassAttendanceSummaryDTO> result = students.stream()
+                .map(s -> {
+                    long absences = absencesByStudent.getOrDefault(s.getStudentId(), 0L);
+                    long present  = Math.max(0, workingDays - absences);
+                    return new ClassAttendanceSummaryDTO(
+                            s.getStudentId(),
+                            s.getName(),
+                            workingDays,
+                            present,
+                            absences,
+                            pct(present, workingDays)
+                    );
+                })
+                .sorted(Comparator.comparingDouble(ClassAttendanceSummaryDTO::getAttendancePercentage))
+                .collect(Collectors.toList());
+
+        log.info("Class summary for {} ({} {}): {} students", className, type, session != null ? session : month + "/" + year, result.size());
+        return result;
+    }
+
+    private AttendanceSummaryDTO.MonthlyBreakdown buildMonthBreakdown(String studentId, String className,
+                                                                       int year, int monthNum) {
+        LocalDate start = LocalDate.of(year, monthNum, 1);
+        LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
+
+        long workingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
+        long absences    = attendanceRepository.countByStudentIdAndDateBetween(studentId, start, end);
+        long present     = Math.max(0, workingDays - absences);
+        String monthName = Month.of(monthNum).getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+
+        return new AttendanceSummaryDTO.MonthlyBreakdown(monthName, year, workingDays, present, absences, pct(present, workingDays));
+    }
+
+    /** Round to 1 decimal place; returns 0.0 if workingDays is 0. */
+    private double pct(long present, long workingDays) {
+        if (workingDays == 0) return 0.0;
+        return Math.round((double) present / workingDays * 1000.0) / 10.0;
     }
 }
