@@ -45,11 +45,12 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // Bypass auth for public endpoints
+        // Bypass auth for public endpoints and static uploads (permitAll in SecurityConfig)
         if (path.startsWith("/api/auth/login")
                 || path.startsWith("/api/auth/refresh-token")
                 || path.startsWith("/api/auth/request-password-reset")
-                || path.startsWith("/api/auth/reset-password")) {
+                || path.startsWith("/api/auth/reset-password")
+                || path.startsWith("/api/uploads/")) {
 
             filterChain.doFilter(request, response);
             return;
