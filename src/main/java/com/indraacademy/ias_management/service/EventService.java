@@ -147,7 +147,7 @@ public class EventService {
 
             Event updatedEvent = eventRepository.save(event);
 
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_EVENT",

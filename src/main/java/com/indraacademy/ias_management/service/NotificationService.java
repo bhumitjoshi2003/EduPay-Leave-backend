@@ -298,7 +298,7 @@ public class NotificationService {
 
             Notification savedNotification = notificationRepository.save(notification);
 
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_NOTIFICATION",

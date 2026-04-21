@@ -146,7 +146,7 @@ public class AdminService {
 
             Admin updatedAdmin = adminRepository.save(existingAdmin);
 
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_ADMIN",

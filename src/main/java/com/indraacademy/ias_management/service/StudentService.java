@@ -226,7 +226,7 @@ public class StudentService {
 
             Student savedStudent = studentRepository.save(updatedStudent);
 
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_STUDENT",

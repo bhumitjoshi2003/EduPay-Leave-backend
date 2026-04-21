@@ -43,4 +43,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Page<Payment> findByStudentId(String studentId, Pageable pageable);
 
     Payment findByPaymentId(String paymentId);
+
+    @Query("SELECT MAX(p.paymentDate) FROM Payment p WHERE p.studentId = :studentId AND p.session = :session")
+    java.util.Optional<java.time.LocalDateTime> findLatestPaymentDateByStudentIdAndSession(
+            @Param("studentId") String studentId,
+            @Param("session") String session);
 }

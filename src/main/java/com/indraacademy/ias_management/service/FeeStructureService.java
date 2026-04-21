@@ -124,7 +124,7 @@ public class FeeStructureService {
                 savedFees.add(feeStructureRepository.save(newFee));
             }
 
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_FEE_STRUCTURE",

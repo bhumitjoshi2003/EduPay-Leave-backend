@@ -132,7 +132,7 @@ public class MarkService {
                     mark.setMarksObtained(req.getMarksObtained());
                     mark.setEnteredBy(callerUserId);
                     studentMarkRepository.save(mark);
-                    auditService.log(callerUserId, callerRole, "UPDATE_STUDENT_MARK",
+                    auditService.logUpdate(callerUserId, callerRole, "UPDATE_STUDENT_MARK",
                             "STUDENT_MARK", mark.getId().toString(), oldJson, toJson(mark), ip);
                     updated++;
                 } else {

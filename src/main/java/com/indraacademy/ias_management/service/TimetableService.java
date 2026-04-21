@@ -95,7 +95,7 @@ public class TimetableService {
         TimetableEntry saved = timetableRepository.save(existing);
         log.info("Timetable entry updated: id={}", saved.getId());
 
-        auditService.log(
+        auditService.logUpdate(
                 securityUtil.getUsername(),
                 securityUtil.getRole(),
                 "UPDATE_TIMETABLE_ENTRY",

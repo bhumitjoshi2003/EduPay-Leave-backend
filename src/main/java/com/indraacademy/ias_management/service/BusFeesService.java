@@ -121,7 +121,7 @@ public class BusFeesService {
             }
 
             // Audit log
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_BUS_FEES",

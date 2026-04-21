@@ -82,7 +82,7 @@ public class StudentFeesService {
 
             StudentFees savedFees = studentFeesRepository.save(studentFees);
 
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_STUDENT_FEES_MANUAL",

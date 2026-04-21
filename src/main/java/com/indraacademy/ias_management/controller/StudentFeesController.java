@@ -1,11 +1,13 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.dto.OverdueStudentDto;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.FeeReminderService;
 import com.indraacademy.ias_management.service.StudentFeesService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +36,7 @@ public class StudentFeesController {
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private AttendanceService attendanceService;
     @Autowired private AuthService authService;
+    @Autowired private FeeReminderService feeReminderService;
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "')")
     @GetMapping("/{studentId}/{year}")
@@ -191,6 +194,88 @@ public class StudentFeesController {
         } catch (Exception e) {
             log.error("Error fetching distinct years for student: {}.", studentId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    // ─── Overdue & Reminders ──────────────────────────────────────────────────
+
+    /**
+     * GET /api/student-fees/overdue?session=2025-2026&className=optional
+     * Returns all active students with unpaid, past-due fee months for the given session.
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @GetMapping("/overdue")
+    public ResponseEntity<?> getOverdueStudents(
+            @RequestParam String session,
+            @RequestParam(required = false) String className) {
+        log.info("Overdue fees request: session={}, className={}", session, className);
+        try {
+            List<OverdueStudentDto> result = feeReminderService.getOverdueStudents(session, className);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Error fetching overdue students for session {}", session, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to fetch overdue fee data.");
+        }
+    }
+
+    /**
+     * POST /api/student-fees/reminders/send
+     * Body: { studentId, session }
+     * Sends a fee reminder email to a single student and logs the action.
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PostMapping("/reminders/send")
+    public ResponseEntity<?> sendReminder(@RequestBody Map<String, String> body, HttpServletRequest request) {
+        String studentId = body.get("studentId");
+        String session   = body.get("session");
+        log.info("Manual reminder request: studentId={}, session={}", studentId, session);
+
+        if (studentId == null || session == null) {
+            return ResponseEntity.badRequest().body("studentId and session are required.");
+        }
+        try {
+            boolean sent = feeReminderService.sendReminder(studentId, session, request);
+            if (sent) {
+                return ResponseEntity.ok(Map.of("message", "Reminder sent successfully."));
+            } else {
+                return ResponseEntity.ok(Map.of("message", "Student has no email configured; reminder not sent."));
+            }
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to send reminder for student {}", studentId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to send reminder.");
+        }
+    }
+
+    /**
+     * POST /api/student-fees/reminders/send-bulk
+     * Body: { studentIds: [...], session }
+     * Sends reminders to all listed students. Returns { sent: N }.
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PostMapping("/reminders/send-bulk")
+    public ResponseEntity<?> sendBulkReminders(@RequestBody Map<String, Object> body, HttpServletRequest request) {
+        @SuppressWarnings("unchecked")
+        List<String> studentIds = (List<String>) body.get("studentIds");
+        String session = (String) body.get("session");
+        log.info("Bulk reminder request: {} students, session={}", studentIds != null ? studentIds.size() : 0, session);
+
+        if (studentIds == null || studentIds.isEmpty() || session == null) {
+            return ResponseEntity.badRequest().body("studentIds (non-empty list) and session are required.");
+        }
+        try {
+            int sent = feeReminderService.sendBulkReminders(studentIds, session, request);
+            return ResponseEntity.ok(Map.of("sent", sent));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Bulk reminder failed for session {}", session, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Bulk reminder failed.");
         }
     }
 }

@@ -89,7 +89,7 @@ public class TeacherService {
 
             Teacher savedTeacher = teacherRepository.save(teacher);
 
-            auditService.log(
+            auditService.logUpdate(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
                     "UPDATE_TEACHER",
