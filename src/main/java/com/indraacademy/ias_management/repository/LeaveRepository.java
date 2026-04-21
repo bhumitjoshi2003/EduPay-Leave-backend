@@ -35,4 +35,6 @@ public interface LeaveRepository extends JpaRepository<Leave, String> {
     List<String> findByLeaveDateAndClassName(@Param("date") String date, @Param("className") String className);
 
     Leave findByStudentIdAndLeaveDate(String studentId, String leaveDate);
+
+    long countByAppliedDateBetween(java.time.LocalDateTime start, java.time.LocalDateTime end);
 }

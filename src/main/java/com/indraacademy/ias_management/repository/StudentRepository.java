@@ -47,4 +47,9 @@ public interface StudentRepository extends JpaRepository<Student, String> {
     void updateStatusActive(@Param("today") LocalDate today);
 
     Optional<Student> findByStudentId(String studentId);
+
+    long countByStatus(StudentStatus status);
+
+    @Query("SELECT DISTINCT s.className FROM Student s WHERE s.status = 'ACTIVE' ORDER BY s.className")
+    List<String> findDistinctActiveClassNames();
 }

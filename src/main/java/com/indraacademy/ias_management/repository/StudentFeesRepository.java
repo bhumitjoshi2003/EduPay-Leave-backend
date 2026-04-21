@@ -26,4 +26,8 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
 
     @Query("SELECT sf FROM StudentFees sf WHERE sf.year = :session AND sf.paid = false AND sf.className = :className")
     List<StudentFees> findAllUnpaidBySessionAndClassName(@Param("session") String session, @Param("className") String className);
+
+    /** Count distinct students who have at least one unpaid fee in months 1..currentAcademicMonth for the given session. */
+    @Query("SELECT COUNT(DISTINCT sf.studentId) FROM StudentFees sf WHERE sf.year = :session AND sf.paid = false AND sf.month <= :currentAcademicMonth")
+    long countDistinctOverdueStudents(@Param("session") String session, @Param("currentAcademicMonth") int currentAcademicMonth);
 }

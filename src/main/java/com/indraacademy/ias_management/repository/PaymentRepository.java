@@ -8,6 +8,8 @@ import org.springframework.stereotype.Repository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
@@ -48,4 +50,11 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     java.util.Optional<java.time.LocalDateTime> findLatestPaymentDateByStudentIdAndSession(
             @Param("studentId") String studentId,
             @Param("session") String session);
+
+    /** Sum of amountPaid for a given calendar month and year (excludes platform fee). */
+    @Query("SELECT COALESCE(SUM(p.amountPaid - p.platformFee), 0) FROM Payment p WHERE EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
+    long sumAmountCollectedByMonthAndYear(@Param("month") int month, @Param("year") int year);
+
+    /** All payments on or after a given date — used for fee-trend aggregation. */
+    List<Payment> findByPaymentDateAfter(LocalDateTime since);
 }
