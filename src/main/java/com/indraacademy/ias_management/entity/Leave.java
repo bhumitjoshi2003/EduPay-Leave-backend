@@ -34,6 +34,10 @@ public class Leave {
     @Column(nullable = false, updatable = false)
     private LocalDateTime appliedDate;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, columnDefinition = "VARCHAR(20) DEFAULT 'PENDING'")
+    private LeaveStatus status = LeaveStatus.PENDING;
+
     public Leave(){}
 
     public Leave(String studentId, String studentName, String leaveDate, String reason, String className) {
@@ -89,4 +93,8 @@ public class Leave {
     public String getStudentName() { return studentName; }
 
     public void setStudentName(String studentName) { this.studentName = studentName; }
+
+    public LeaveStatus getStatus() { return status; }
+
+    public void setStatus(LeaveStatus status) { this.status = status; }
 }

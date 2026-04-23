@@ -11,7 +11,7 @@ import org.springframework.data.domain.Pageable;
 import java.util.List;
 
 @Repository
-public interface LeaveRepository extends JpaRepository<Leave, String> {
+public interface LeaveRepository extends JpaRepository<Leave, Long> {
 
     void deleteByStudentIdAndLeaveDate(String studentId, String leaveDate);
 

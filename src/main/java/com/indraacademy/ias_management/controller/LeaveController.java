@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Leave;
+import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.LeaveService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,8 +17,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/leaves")
@@ -120,9 +122,36 @@ public class LeaveController {
         }
     }
 
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
+    @PatchMapping("/{leaveId}/status")
+    public ResponseEntity<?> updateLeaveStatus(
+            @PathVariable Long leaveId,
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+        log.info("Request to update status of leave ID: {}", leaveId);
+        String statusValue = body.get("status");
+        if (statusValue == null) {
+            return ResponseEntity.badRequest().body("Missing 'status' field.");
+        }
+        LeaveStatus status;
+        try {
+            status = LeaveStatus.valueOf(statusValue.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Invalid status value: " + statusValue);
+        }
+        try {
+            Leave updated = leaveService.updateLeaveStatus(leaveId, status, request);
+            return ResponseEntity.ok(updated);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{leaveId}")
-    public ResponseEntity<String> deleteLeaveById(@PathVariable String leaveId, HttpServletRequest request) {
+    public ResponseEntity<String> deleteLeaveById(@PathVariable Long leaveId, HttpServletRequest request) {
         log.warn("Request to delete leave by ID: {}", leaveId);
         try {
             leaveService.deleteLeaveById(leaveId, request);
