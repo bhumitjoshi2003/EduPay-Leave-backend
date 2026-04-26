@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.dto.ClassStatsDto;
 import com.indraacademy.ias_management.dto.DashboardStatsDto;
 import com.indraacademy.ias_management.dto.FeeTrendDto;
 import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.*;
 import org.slf4j.Logger;
@@ -62,10 +63,8 @@ public class DashboardService {
             }
         }
 
-        // Pending leaves: leave applications submitted this calendar month
-        LocalDateTime monthStart = today.withDayOfMonth(1).atStartOfDay();
-        LocalDateTime monthEnd   = today.plusMonths(1).withDayOfMonth(1).atStartOfDay();
-        long pendingLeaves = leaveRepository.countByAppliedDateBetween(monthStart, monthEnd);
+        // Pending leaves: leave applications with PENDING status
+        long pendingLeaves = leaveRepository.countByStatus(LeaveStatus.PENDING);
 
         DashboardStatsDto dto = new DashboardStatsDto();
         dto.setTotalStudents(totalStudents);

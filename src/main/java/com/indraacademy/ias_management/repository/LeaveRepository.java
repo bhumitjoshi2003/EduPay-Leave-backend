@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.repository;
 
 import com.indraacademy.ias_management.entity.Leave;
+import com.indraacademy.ias_management.entity.LeaveStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -37,4 +38,8 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
     Leave findByStudentIdAndLeaveDate(String studentId, String leaveDate);
 
     long countByAppliedDateBetween(java.time.LocalDateTime start, java.time.LocalDateTime end);
+
+    long countByStatusAndAppliedDateBetween(LeaveStatus status, java.time.LocalDateTime start, java.time.LocalDateTime end);
+
+    long countByStatus(LeaveStatus status);
 }
