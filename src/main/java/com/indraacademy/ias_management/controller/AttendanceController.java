@@ -222,7 +222,7 @@ public class AttendanceController {
     @GetMapping("/summary/class/{className}")
     public ResponseEntity<?> getClassAttendanceSummary(
             @PathVariable String className,
-            @RequestParam String type,
+            @RequestParam(defaultValue = "month") String type,
             @RequestParam(required = false) Integer month,
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) String session) {
