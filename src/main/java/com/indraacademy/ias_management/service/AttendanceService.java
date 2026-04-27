@@ -371,7 +371,14 @@ public class AttendanceService {
             LocalDate start = LocalDate.of(year, month, 1);
             LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
 
-            long workingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
+            // Use the student's joining date as the lower bound so a mid-month joiner
+            // is not penalised for working days that existed before they enrolled.
+            LocalDate joiningDate    = student.getJoiningDate();
+            LocalDate effectiveStart = (joiningDate != null && joiningDate.isAfter(start))
+                    ? joiningDate : start;
+
+            // NOTE: DO NOT filter 'X' from countDistinctWorkingDays — see getClassSummary.
+            long workingDays = attendanceRepository.countDistinctWorkingDays(className, effectiveStart, end);
             long absences    = attendanceRepository.countByStudentIdAndDateBetween(studentId, start, end);
             long present     = Math.max(0, workingDays - absences);
 
@@ -450,11 +457,18 @@ public class AttendanceService {
             throw new IllegalArgumentException("type must be 'month' or 'year'");
         }
 
-        // Fetch all absences for the class in one query, group by studentId
+        // Fetch all absences for the class in one query, group by studentId.
+        // 'X' rows (studentId = "X") are excluded here — they are sentinel records used
+        // to mark all-present days and must never appear in a student's absence count.
         List<Attendance> allAbsences = attendanceRepository.findByClassNameAndDateBetween(className, start, end);
         Map<String, Long> absencesByStudent = allAbsences.stream()
+                .filter(a -> !"X".equals(a.getStudentId()))
                 .collect(Collectors.groupingBy(Attendance::getStudentId, Collectors.counting()));
 
+        // NOTE: 'X' sentinel rows (studentId = "X") are inserted by the frontend whenever
+        // attendance is submitted, including all-present days. These rows are essential —
+        // they make all-present days visible to this COUNT(DISTINCT date) query.
+        // DO NOT filter out 'X' from countDistinctWorkingDays.
         long workingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
 
         List<ClassAttendanceSummaryDTO> result = students.stream()
@@ -497,7 +511,11 @@ public class AttendanceService {
         LocalDate start = LocalDate.of(year, month, 1);
         LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
 
-        // School days = distinct dates any student in this class was marked absent
+        // School days = distinct dates on which attendance was submitted for this class.
+        // 'X' rows (studentId = "X") are inserted by the frontend on all-present days,
+        // so they intentionally make those days visible here as "school was open".
+        // Do NOT filter out 'X' from this query — without it, all-present days would
+        // be indistinguishable from holidays.
         List<String> schoolDays = attendanceRepository
                 .findByClassNameAndDateBetween(student.getClassName(), start, end)
                 .stream()
