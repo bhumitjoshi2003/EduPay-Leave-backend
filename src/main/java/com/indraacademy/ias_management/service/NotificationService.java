@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.UserNotificationDTO;
 import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
@@ -41,6 +42,7 @@ public class NotificationService {
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private FcmService fcmService;
 
     @Transactional
     public Notification createBroadNotification(Notification notification,
@@ -66,6 +68,10 @@ public class NotificationService {
                     objectMapper.writeValueAsString(savedNotification),
                     request.getRemoteAddr()
             );
+
+            // Send FCM push to all targeted users
+            sendFcmForAudience(savedNotification.getAudience(),
+                    savedNotification.getTitle(), savedNotification.getMessage());
 
             return savedNotification;
 
@@ -106,6 +112,10 @@ public class NotificationService {
 
             UserNotification savedUserNotification = userNotificationRepository.save(userNotification);
             log.info("Individual notification created successfully for user: {}. Notification ID: {}", userId, savedNotification.getId());
+
+            // Send FCM push to the individual user
+            fcmService.sendToUser(userId, title, message);
+
             return savedUserNotification;
         } catch (DataAccessException e) {
             log.error("Data access error during individual notification creation for user: {}", userId, e);
@@ -370,6 +380,65 @@ public class NotificationService {
         } catch (DataAccessException e) {
             log.error("Data access error fetching all notifications.", e);
             throw new RuntimeException("Could not retrieve all notifications due to data access issue", e);
+        }
+    }
+
+    // ─── FCM audience resolution ──────────────────────────────────────────────
+
+    /**
+     * Resolves the audience string to a list of userIds and dispatches FCM pushes.
+     * Audience values mirror the frontend convention:
+     *   "ALL"                   → every active student + every teacher
+     *   "STUDENTS"              → every active student
+     *   "TEACHERS"              → every teacher
+     *   "CLASS:X"               → active students in class X
+     *   "CLASS_WITH_TEACHER:X"  → active students in class X + class teacher of X
+     *   <any other value>       → treated as a single userId
+     */
+    private void sendFcmForAudience(String audience, String title, String body) {
+        if (audience == null || audience.isBlank()) return;
+
+        try {
+            if ("ALL".equalsIgnoreCase(audience)) {
+                List<String> studentIds = studentRepository.findByStatus(StudentStatus.ACTIVE)
+                        .stream().map(Student::getStudentId).collect(Collectors.toList());
+                List<String> teacherIds = teacherRepository.findAll()
+                        .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
+                fcmService.sendToUsers(studentIds, title, body);
+                fcmService.sendToUsers(teacherIds, title, body);
+
+            } else if ("STUDENTS".equalsIgnoreCase(audience)) {
+                List<String> ids = studentRepository.findByStatus(StudentStatus.ACTIVE)
+                        .stream().map(Student::getStudentId).collect(Collectors.toList());
+                fcmService.sendToUsers(ids, title, body);
+
+            } else if ("TEACHERS".equalsIgnoreCase(audience)) {
+                List<String> ids = teacherRepository.findAll()
+                        .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
+                fcmService.sendToUsers(ids, title, body);
+
+            } else if (audience.toUpperCase().startsWith("CLASS:")) {
+                String className = audience.substring("CLASS:".length());
+                List<String> ids = studentRepository
+                        .findByClassNameAndStatus(className, StudentStatus.ACTIVE)
+                        .stream().map(Student::getStudentId).collect(Collectors.toList());
+                fcmService.sendToUsers(ids, title, body);
+
+            } else if (audience.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
+                String className = audience.substring("CLASS_WITH_TEACHER:".length());
+                List<String> studentIds = studentRepository
+                        .findByClassNameAndStatus(className, StudentStatus.ACTIVE)
+                        .stream().map(Student::getStudentId).collect(Collectors.toList());
+                fcmService.sendToUsers(studentIds, title, body);
+                teacherRepository.findByClassTeacher(className)
+                        .ifPresent(t -> fcmService.sendToUser(t.getTeacherId(), title, body));
+
+            } else {
+                // Treat as a specific userId
+                fcmService.sendToUser(audience, title, body);
+            }
+        } catch (Exception e) {
+            log.warn("FCM audience dispatch failed for audience '{}': {}", audience, e.getMessage());
         }
     }
 

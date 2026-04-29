@@ -21,7 +21,12 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
+          script: |  
+            mkdir -p ~/firebase-configs
+            cat <<EOF > ~/firebase-configs/service-account.json
+            ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+            EOF
+            
             cd ~/EduPay-Leave-backend
             git pull origin main
 
@@ -53,4 +58,6 @@ jobs:
               -e RAZORPAY_KEY_ID='${{ secrets.RAZORPAY_KEY_ID }}' \
               -e RAZORPAY_KEY_SECRET='${{ secrets.RAZORPAY_KEY_SECRET }}' \
               -v /${{ secrets.VPS_USER }}/ias-uploads:/app/uploads \
+              -v ~/firebase-configs/service-account.json:/app/firebase-service-account.json \
+              -e FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json \
               ias-backend
