@@ -40,19 +40,21 @@ public class DeviceTokenController {
         Optional<DeviceToken> existing = deviceTokenRepository.findByToken(token);
         if (existing.isPresent()) {
             DeviceToken dt = existing.get();
-            if (!userId.equals(dt.getUserId())) {
-                // Re-assign to current user (device may have changed accounts)
-                dt.setUserId(userId);
-                dt.setCreatedAt(LocalDateTime.now());
-                deviceTokenRepository.save(dt);
-                log.info("Re-assigned existing FCM token to user {}", userId);
+            if (userId.equals(dt.getUserId())) {
+                // Same user, same token — nothing to do
+                return ResponseEntity.ok(Map.of("message", "Token registered."));
             }
-            return ResponseEntity.ok(Map.of("message", "Token registered."));
+            // Different user on the same device — delete the old row so the
+            // previous user's account is no longer reachable via this device,
+            // then fall through to insert a fresh row for the new user.
+            deviceTokenRepository.deleteByToken(token);
+            log.info("Deleted stale FCM token that belonged to user {} before re-registering for user {}",
+                    dt.getUserId(), userId);
         }
 
         DeviceToken newToken = new DeviceToken(userId, token, LocalDateTime.now());
         deviceTokenRepository.save(newToken);
-        log.info("Registered new FCM token for user {}", userId);
+        log.info("Registered FCM token for user {}", userId);
         return ResponseEntity.ok(Map.of("message", "Token registered."));
     }
 
