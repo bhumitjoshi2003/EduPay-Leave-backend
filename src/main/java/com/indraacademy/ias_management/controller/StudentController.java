@@ -3,6 +3,9 @@ package com.indraacademy.ias_management.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.BulkImportResultDTO;
+import com.indraacademy.ias_management.dto.PromotionDecisionRequest;
+import com.indraacademy.ias_management.dto.PromotionPreviewDTO;
+import com.indraacademy.ias_management.dto.PromotionResultDTO;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
@@ -10,6 +13,7 @@ import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentBulkImportService;
+import com.indraacademy.ias_management.service.StudentPromotionService;
 import com.indraacademy.ias_management.service.StudentService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +45,7 @@ public class StudentController {
 
     @Autowired private StudentService studentService;
     @Autowired private StudentBulkImportService studentBulkImportService;
+    @Autowired private StudentPromotionService studentPromotionService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private StudentRepository studentRepository;
     @Autowired private UserRepository userRepository;
@@ -198,6 +203,25 @@ public class StudentController {
             log.error("Photo upload failed for student {}", studentId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to upload photo.");
         }
+    }
+
+    // ─── Promotion endpoints ──────────────────────────────────────────────────
+
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @GetMapping("/promotion/preview")
+    public ResponseEntity<List<PromotionPreviewDTO>> getPromotionPreview() {
+        log.info("Request for student promotion preview");
+        return ResponseEntity.ok(studentPromotionService.getPromotionPreview());
+    }
+
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PostMapping("/promotion/execute")
+    public ResponseEntity<PromotionResultDTO> executePromotion(
+            @RequestBody PromotionDecisionRequest request,
+            HttpServletRequest httpRequest) {
+        int count = request.getDecisions() != null ? request.getDecisions().size() : 0;
+        log.warn("Request to execute promotion for {} student decisions", count);
+        return ResponseEntity.ok(studentPromotionService.executePromotion(request, httpRequest));
     }
 
     @GetMapping("/bulk/template")
