@@ -34,6 +34,7 @@ public class DashboardService {
 
     // ─── /api/dashboard/stats ─────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public DashboardStatsDto getStats() {
         LocalDate today = LocalDate.now();
 
@@ -82,6 +83,7 @@ public class DashboardService {
 
     // ─── /api/dashboard/fee-trend ─────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<FeeTrendDto> getFeeTrend() {
         // Fetch all payments in the last 6 calendar months
         LocalDate today = LocalDate.now();
@@ -110,6 +112,7 @@ public class DashboardService {
 
     // ─── /api/dashboard/class-stats ───────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<ClassStatsDto> getClassStats() {
         LocalDate today = LocalDate.now();
         int calYear  = today.getYear();

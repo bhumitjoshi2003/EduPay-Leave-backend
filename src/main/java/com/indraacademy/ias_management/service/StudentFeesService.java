@@ -47,6 +47,7 @@ public class StudentFeesService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<StudentFees> getStudentFees(String studentId, String year) {
         if (studentId == null || studentId.trim().isEmpty() || year == null || year.trim().isEmpty()) {
             log.warn("Attempted to get student fees with null/empty student ID or year.");
@@ -234,6 +235,7 @@ public class StudentFeesService {
         return (month >= 4) ? (month - 3) : (month + 9);
     }
 
+    @Transactional(readOnly = true)
     public Optional<StudentFees> getStudentFee(String studentId, String year, Integer month) {
         if (studentId == null || studentId.trim().isEmpty() || year == null || year.trim().isEmpty() || month == null || month < 1 || month > 12) {
             log.warn("Attempted to get student fee with null/empty/invalid parameters. ID: {}, Year: {}, Month: {}", studentId, year, month);
@@ -262,6 +264,7 @@ public class StudentFeesService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<String> getDistinctYearsByStudentId(String studentId) {
         if (studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to get distinct years with null/empty student ID.");

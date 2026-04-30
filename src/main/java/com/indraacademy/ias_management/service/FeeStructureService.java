@@ -29,6 +29,7 @@ public class FeeStructureService {
     @Autowired
     private FeeStructureRepository feeStructureRepository;
 
+    @Transactional(readOnly = true)
     public List<FeeStructure> getAllRecords() {
         log.info("Attempting to fetch all fee structure records.");
         try {
@@ -41,6 +42,7 @@ public class FeeStructureService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<FeeStructure> getFeeStructuresByAcademicYear(String academicYear) {
         if (academicYear == null || academicYear.trim().isEmpty()) {
             log.warn("Attempted to fetch fee structures with null or empty academic year.");
@@ -57,6 +59,7 @@ public class FeeStructureService {
         }
     }
 
+    @Transactional(readOnly = true)
     public FeeStructure getFeeStructuresByAcademicYearAndClassName(String academicYear, String className) {
         if (academicYear == null || academicYear.trim().isEmpty() || className == null || className.trim().isEmpty()) {
             log.warn("Attempted to fetch fee structure with null/empty academic year or class name.");

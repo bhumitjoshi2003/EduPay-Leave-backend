@@ -9,7 +9,10 @@ import java.time.LocalDate;
 
 @Entity
 @Data
-@Table(name = "attendance")
+@Table(name = "attendance", indexes = {
+    @Index(name = "idx_attendance_class_date",   columnList = "class_name, date"),
+    @Index(name = "idx_attendance_student_date", columnList = "student_id, date")
+})
 public class Attendance {
 
     @Id

@@ -46,6 +46,7 @@ public class TeacherService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Transactional(readOnly = true)
     public Optional<Teacher> getTeacher(String teacherId) {
         if (teacherId == null || teacherId.trim().isEmpty()) {
             log.warn("Attempted to get teacher with null/empty ID.");
@@ -60,6 +61,7 @@ public class TeacherService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<Teacher> getAllTeachers() {
         log.info("Fetching all teachers.");
         try {

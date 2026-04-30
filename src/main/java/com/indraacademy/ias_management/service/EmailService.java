@@ -59,6 +59,7 @@ public class EmailService {
         }
     }
 
+    @Async
     public void sendBulkEmail(List<String> toEmails, String subject, String body) {
         if (toEmails == null || toEmails.isEmpty() || subject == null || body == null) {
             log.warn("Attempted to send bulk email with missing required fields. Aborting.");
@@ -94,6 +95,7 @@ public class EmailService {
         }
     }
 
+    @Async
     public void sendBulkEmailToClass(String subject, String body, String selectedClass) {
         if (subject == null || body == null || selectedClass == null || selectedClass.trim().isEmpty()) {
             log.warn("Attempted to send bulk email to class with missing required fields. Class: {}. Aborting.", selectedClass);
@@ -130,6 +132,7 @@ public class EmailService {
         sendBulkEmail(toEmails, subject, body);
     }
 
+    @Async
     public void sendBulkEmailToTeachers(String subject, String body) {
         if (subject == null || body == null) {
             log.warn("Attempted to send bulk email to teachers with missing fields. Aborting.");
@@ -153,6 +156,7 @@ public class EmailService {
         }
     }
 
+    @Async
     public void sendBulkEmailToClassWithTeacher(String subject, String body, String className) {
         if (subject == null || body == null || className == null) {
             log.warn("Attempted to send class+teacher email with missing fields. Aborting.");

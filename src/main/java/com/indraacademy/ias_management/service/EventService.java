@@ -68,6 +68,7 @@ public class EventService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Optional<Event> getEventById(Long id) {
         if (id == null) {
             log.warn("Attempted to get event with null ID.");
@@ -87,6 +88,7 @@ public class EventService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<Event> getEventsForMonthAndYear(int year, int month) {
         if (month < 1 || month > 12) {
             log.error("Invalid month value: {}", month);

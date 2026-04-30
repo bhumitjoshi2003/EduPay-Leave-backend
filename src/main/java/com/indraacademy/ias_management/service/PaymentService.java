@@ -31,6 +31,7 @@ public class PaymentService {
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private ModelMapper modelMapper; // Retained, though not used in DTO mapping below
 
+    @Transactional(readOnly = true)
     public PaymentResponseDTO getPaymentHistoryDetails(String paymentId) {
         if (paymentId == null || paymentId.trim().isEmpty()) {
             log.warn("Attempted to get payment details with null/empty ID.");
@@ -101,6 +102,7 @@ public class PaymentService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Page<Payment> getPaymentHistoryByStudentId(String studentId, Pageable pageable){
         if (studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to get payment history with null/empty student ID.");

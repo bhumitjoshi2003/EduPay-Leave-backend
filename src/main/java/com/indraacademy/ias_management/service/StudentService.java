@@ -121,6 +121,7 @@ public class StudentService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Optional<Student> getStudent(String studentId) {
         if (studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to get student with null/empty ID.");
@@ -135,14 +136,17 @@ public class StudentService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<Student> getActiveStudentsByClass(String className) {
         return studentRepository.findByClassNameAndStatus(className, StudentStatus.ACTIVE);
     }
 
+    @Transactional(readOnly = true)
     public List<Student> getUpcomingStudentsByClass(String className) {
         return studentRepository.findByClassNameAndStatus(className, StudentStatus.UPCOMING);
     }
 
+    @Transactional(readOnly = true)
     public List<Student> getInactiveStudentsByClass(String className) {
         return studentRepository.findByClassNameAndStatus(className, StudentStatus.INACTIVE);
     }

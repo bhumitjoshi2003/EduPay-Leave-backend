@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 
 @Data
 @Entity
+@Table(indexes = @Index(name = "idx_audit_log_timestamp", columnList = "timestamp"))
 public class AuditLog {
 
     @Id

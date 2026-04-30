@@ -51,6 +51,7 @@ public class MarkService {
      * For classes 1–10: all active students in the class.
      * For classes 11–12: only students whose stream includes that subject.
      */
+    @Transactional(readOnly = true)
     public List<StudentSubjectMarkDTO> getStudentsForSubjectEntry(Long examSubjectEntryId) {
         ExamSubjectEntry entry = examSubjectEntryRepository.findById(examSubjectEntryId)
                 .orElseThrow(() -> new NoSuchElementException(
@@ -82,6 +83,7 @@ public class MarkService {
      * Returns all subject entries in an exam with the given student's current marks.
      * For class 11/12, filters to only the student's subjects (stream + optional).
      */
+    @Transactional(readOnly = true)
     public List<StudentExamSubjectDTO> getStudentMarksForExam(String studentId, Long examConfigId) {
         Student student = studentService.getStudent(studentId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
@@ -166,6 +168,7 @@ public class MarkService {
     /**
      * Full exam results for a student across all exams in a session (or all sessions if omitted).
      */
+    @Transactional(readOnly = true)
     public List<ExamResultDTO> getStudentResults(String studentId, String session) {
         Student student = studentService.getStudent(studentId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
@@ -241,6 +244,7 @@ public class MarkService {
 
     // ─── Class-wide results (teacher/admin) ───────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<ClassStudentResultDTO> getClassResults(String className, Long examConfigId) {
         List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigId(examConfigId);
         List<Student> students = studentService.getActiveStudentsByClass(className);

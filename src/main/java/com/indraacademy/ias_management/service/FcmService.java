@@ -11,6 +11,7 @@ import com.indraacademy.ias_management.repository.DeviceTokenRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +28,7 @@ public class FcmService {
      * Sends a push notification to all registered devices for the given userId.
      * Stale (UNREGISTERED) tokens are removed automatically.
      */
+    @Async
     @Transactional
     public void sendToUser(String userId, String title, String body) {
         if (!isFirebaseAvailable()) {
@@ -46,14 +48,21 @@ public class FcmService {
 
     /**
      * Sends a push notification to every device token in the provided list of userIds.
+     * This method is @Async so it runs on a background thread. The inner sendToUser()
+     * calls are direct (not through the proxy), which is fine — we are already off the
+     * request thread, so there is no blocking concern.
      */
+    @Async
     @Transactional
     public void sendToUsers(List<String> userIds, String title, String body) {
         if (!isFirebaseAvailable() || userIds == null || userIds.isEmpty()) {
             return;
         }
         for (String userId : userIds) {
-            sendToUser(userId, title, body);
+            List<DeviceToken> tokens = deviceTokenRepository.findByUserId(userId);
+            for (DeviceToken deviceToken : tokens) {
+                sendToToken(deviceToken.getToken(), title, body);
+            }
         }
     }
 

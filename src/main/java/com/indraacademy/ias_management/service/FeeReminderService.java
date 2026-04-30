@@ -95,6 +95,7 @@ public class FeeReminderService {
      * Returns overdue (unpaid, past-due-date) fee summaries per active student.
      * A month is overdue when its 1st calendar day is strictly before today.
      */
+    @Transactional(readOnly = true)
     public List<OverdueStudentDto> getOverdueStudents(String session, String className) {
         LocalDate today = LocalDate.now();
 

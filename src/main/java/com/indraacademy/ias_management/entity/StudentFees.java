@@ -5,7 +5,9 @@ import lombok.*;
 import java.math.BigDecimal;
 
 @Entity
-@Table(name = "student_fees")
+@Table(name = "student_fees", indexes = {
+    @Index(name = "idx_student_fees_student_year_month", columnList = "student_id, year, month")
+})
 @Data
 public class StudentFees {
     @Id

@@ -7,7 +7,10 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "leaves")
+@Table(name = "leaves", indexes = {
+    @Index(name = "idx_leaves_student_id", columnList = "student_id"),
+    @Index(name = "idx_leaves_status",     columnList = "status")
+})
 @Data
 public class Leave {
     @Id
@@ -35,7 +38,7 @@ public class Leave {
     private LocalDateTime appliedDate;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, columnDefinition = "VARCHAR(20) DEFAULT 'PENDING'")
+    @Column(nullable = false, columnDefinition = "VARCHAR(20)")
     private LeaveStatus status = LeaveStatus.PENDING;
 
     public Leave(){}

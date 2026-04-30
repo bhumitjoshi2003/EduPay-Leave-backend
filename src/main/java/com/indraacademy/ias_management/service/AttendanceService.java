@@ -87,6 +87,7 @@ public class AttendanceService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<Attendance> getAttendanceByDateAndClass(LocalDate absentDate, String className) {
         if (absentDate == null || className == null || className.trim().isEmpty()) {
             log.warn("Attempted to fetch attendance with null date or empty class name.");
@@ -103,6 +104,7 @@ public class AttendanceService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Map<String, Long> getAttendanceCounts(String studentId, int year, int month) {
         Map<String, Long> counts = new HashMap<>();
         counts.put("studentAbsent", 0L);
@@ -201,6 +203,7 @@ public class AttendanceService {
     }
 
 
+    @Transactional(readOnly = true)
     public LocalDate getStudentJoinDate(String studentId) {
         if (studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to get student join date with null or empty ID.");
@@ -220,6 +223,7 @@ public class AttendanceService {
         }
     }
 
+    @Transactional(readOnly = true)
     public long getTotalUnappliedLeaveCount(String studentId, String session) {
         if (studentId == null || studentId.trim().isEmpty() || session == null || session.trim().isEmpty()) {
             log.warn("Attempted to get unapplied leave count with null/empty student ID or session.");
@@ -341,6 +345,7 @@ public class AttendanceService {
     }
 
 
+    @Transactional(readOnly = true)
     public List<Attendance> getAttendanceByStudentClassMonthAndYear(String studentId, String className, int year, int month) {
         log.info("Fetching monthly attendance for Student: {} in Class: {} for {}-{}", studentId, className, year, month);
         try {
@@ -356,6 +361,7 @@ public class AttendanceService {
 
     // ─── Summary endpoints ────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public AttendanceSummaryDTO getStudentSummary(String studentId, String type,
                                                    Integer month, Integer year,
                                                    String session) {
@@ -431,6 +437,7 @@ public class AttendanceService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<ClassAttendanceSummaryDTO> getClassSummary(String className, String type,
                                                             Integer month, Integer year,
                                                             String session) {
@@ -504,6 +511,7 @@ public class AttendanceService {
         return new AttendanceSummaryDTO.MonthlyBreakdown(monthName, year, workingDays, present, absences, pct(present, workingDays));
     }
 
+    @Transactional(readOnly = true)
     public DailyAttendanceDTO getDailyAttendance(String studentId, int month, int year) {
         Student student = studentRepository.findByStudentId(studentId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));

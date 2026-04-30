@@ -43,6 +43,7 @@ public class AdminService {
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
 
+    @Transactional(readOnly = true)
     public List<Admin> getAllAdmins() {
         log.info("Attempting to fetch all admins");
         try {
@@ -55,6 +56,7 @@ public class AdminService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Optional<Admin> getAdminById(String adminId) {
         if (adminId == null || adminId.trim().isEmpty()) {
             log.warn("Attempted to fetch admin with null or empty ID");

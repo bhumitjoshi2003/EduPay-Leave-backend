@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -27,10 +28,12 @@ public class TimetableService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
 
+    @Transactional(readOnly = true)
     public List<TimetableEntry> getByClass(String className) {
         return timetableRepository.findByClassNameOrderByDayAscPeriodNumberAsc(className);
     }
 
+    @Transactional(readOnly = true)
     public List<TimetableEntry> getByTeacher(String teacherId) {
         return timetableRepository.findByTeacherIdOrderByDayAscPeriodNumberAsc(teacherId);
     }

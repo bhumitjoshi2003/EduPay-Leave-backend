@@ -231,7 +231,7 @@ public class NotificationService {
                 .collect(Collectors.toList());
     }
 
-    @Transactional
+    @Transactional(readOnly = true)
     public long getUnreadNotificationCount(String userId, String userRole) {
         if (userId == null) {
             log.warn("Attempted to get unread count with null user ID.");
@@ -270,6 +270,7 @@ public class NotificationService {
 
     // --- Admin-specific methods (CRUD for broad notifications) ---
 
+    @Transactional(readOnly = true)
     public Optional<Notification> getNotificationById(Long id) {
         if (id == null) {
             log.warn("Attempted to get notification with null ID.");
@@ -361,6 +362,7 @@ public class NotificationService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<Notification> getAllBroadNotifications() {
         log.info("Fetching all broad notifications.");
         try {
@@ -373,6 +375,7 @@ public class NotificationService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<Notification> getAllNotifications() {
         log.info("Fetching all notifications with a creator.");
         try {

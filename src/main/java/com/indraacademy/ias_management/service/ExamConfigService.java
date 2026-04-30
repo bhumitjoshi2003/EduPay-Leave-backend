@@ -34,6 +34,7 @@ public class ExamConfigService {
 
     // ─── ExamConfig ───────────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<ExamConfig> getExams(String session, String className) {
         if (session != null && !session.isBlank() && className != null && !className.isBlank()) {
             return examConfigRepository.findBySessionAndClassName(session, className);
@@ -77,6 +78,7 @@ public class ExamConfigService {
 
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<ExamSubjectEntry> getExamSubjects(Long examId) {
         if (!examConfigRepository.existsById(examId)) {
             throw new NoSuchElementException("ExamConfig not found: " + examId);

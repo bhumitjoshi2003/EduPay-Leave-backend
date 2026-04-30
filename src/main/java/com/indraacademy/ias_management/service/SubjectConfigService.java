@@ -27,6 +27,7 @@ public class SubjectConfigService {
 
     // ─── ClassSubject ─────────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<ClassSubject> getClassSubjects(String className) {
         log.info("Fetching subjects for class {}", className);
         return classSubjectRepository.findByClassName(className);
@@ -59,6 +60,7 @@ public class SubjectConfigService {
 
     // ─── AcademicStream ───────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<StreamResponseDTO> getAllStreams() {
         log.info("Fetching all streams with core subjects");
         return academicStreamRepository.findAll().stream()
@@ -129,6 +131,7 @@ public class SubjectConfigService {
 
     // ─── OptionalSubjectGroup ─────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<OptionalGroupResponseDTO> getAllOptionalGroups() {
         log.info("Fetching all optional subject groups");
         return optionalSubjectGroupRepository.findAll().stream()

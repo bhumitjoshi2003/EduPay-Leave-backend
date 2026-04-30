@@ -187,6 +187,7 @@ public class LeaveService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Optional<Leave> getLeaveById(Long leaveId) {
         if (leaveId == null) {
             log.warn("Attempted to get leave with null ID.");
@@ -254,6 +255,7 @@ public class LeaveService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Page<Leave> getLeavesFiltered(String className, String studentId, String date, Pageable pageable) {
         log.info("Filtering leaves. Class: {}, Student ID: {}, Date: {}", className, studentId, date);
         try {
@@ -280,6 +282,7 @@ public class LeaveService {
         }
     }
 
+    @Transactional(readOnly = true)
     public Page<Leave> getLeavesByStudentId(String studentId, Pageable pageable) {
         if (studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to get leaves with null/empty student ID.");
@@ -294,6 +297,7 @@ public class LeaveService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<String> getLeavesByDateAndClass(String date, String className) {
         if (date == null || date.trim().isEmpty() || className == null || className.trim().isEmpty()) {
             log.warn("Attempted to get leaves by date/class with null/empty parameters. Date: {}, Class: {}", date, className);

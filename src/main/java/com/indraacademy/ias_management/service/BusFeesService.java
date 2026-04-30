@@ -28,6 +28,7 @@ public class BusFeesService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
 
+    @Transactional(readOnly = true)
     public List<BusFees> getAllRecords() {
         log.info("Attempting to fetch all bus fees records.");
         try {
@@ -40,6 +41,7 @@ public class BusFeesService {
         }
     }
 
+    @Transactional(readOnly = true)
     public BigDecimal getBusFeesOfDistance(Double distance, String academicYear) {
         if (distance == null || academicYear == null || academicYear.trim().isEmpty()) {
             log.warn("Attempted to get bus fees with null distance or empty academic year.");
@@ -61,6 +63,7 @@ public class BusFeesService {
         }
     }
 
+    @Transactional(readOnly = true)
     public List<BusFees> getBusFeesByAcademicYear(String academicYear) {
         if (academicYear == null || academicYear.trim().isEmpty()) {
             log.warn("Attempted to get bus fees with null or empty academic year.");

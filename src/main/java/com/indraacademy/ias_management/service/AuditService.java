@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.entity.AuditLog;
 import com.indraacademy.ias_management.repository.AuditRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -23,6 +24,7 @@ public class AuditService {
     private ObjectMapper objectMapper;
 
     /** Full-entity log — use for CREATE and DELETE actions. */
+    @Async
     public void log(
             String username,
             String role,
@@ -49,6 +51,9 @@ public class AuditService {
 
     /**
      * Diff-aware log — use for UPDATE actions.
+     * Must be @Async itself because logUpdate() calls log() on the same instance —
+     * a direct this.log() call bypasses the Spring proxy, so @Async on log() alone
+     * would be ignored for this code path.
      *
      * Compares {@code oldJson} and {@code newJson} field-by-field.
      * If nothing changed, the audit entry is skipped entirely.
@@ -57,6 +62,7 @@ public class AuditService {
      * If either JSON string cannot be parsed (e.g., it is a plain-text description
      * rather than a proper JSON object), falls back to the full-entity log behavior.
      */
+    @Async
     public void logUpdate(
             String username,
             String role,

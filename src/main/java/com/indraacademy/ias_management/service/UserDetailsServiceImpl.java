@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -27,6 +28,7 @@ public class UserDetailsServiceImpl implements UserDetailsService {
     private UserRepository userRepository;
 
     @Override
+    @Transactional(readOnly = true)
     public UserDetails loadUserByUsername(String userId) throws UsernameNotFoundException {
         if (userId == null || userId.trim().isEmpty()) {
             log.warn("Attempted to load user with null/empty userId.");
@@ -48,6 +50,7 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         return new org.springframework.security.core.userdetails.User(user.getUserId(), user.getPassword(), authorities);
     }
 
+    @Transactional(readOnly = true)
     public Optional<User> findUserByUserId(String userId) {
         if (userId == null || userId.trim().isEmpty()) {
             return Optional.empty();
@@ -60,6 +63,7 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         }
     }
 
+    @Transactional(readOnly = true)
     public String findUserRole(String userId) {
         if (userId == null || userId.trim().isEmpty()) {
             log.warn("Attempted to find user role with null/empty userId.");

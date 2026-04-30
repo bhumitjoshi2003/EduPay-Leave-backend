@@ -40,6 +40,7 @@ public class StudentPromotionService {
 
     // ─── Preview ─────────────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<PromotionPreviewDTO> getPromotionPreview() {
         List<Student> activeStudents = studentRepository.findByStatus(StudentStatus.ACTIVE);
 

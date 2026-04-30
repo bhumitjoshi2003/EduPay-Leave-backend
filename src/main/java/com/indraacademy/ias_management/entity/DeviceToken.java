@@ -5,7 +5,8 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "device_tokens",
-        uniqueConstraints = @UniqueConstraint(columnNames = "token"))
+        uniqueConstraints = @UniqueConstraint(columnNames = "token"),
+        indexes = @Index(name = "idx_device_tokens_user_id", columnList = "user_id"))
 public class DeviceToken {
 
     @Id

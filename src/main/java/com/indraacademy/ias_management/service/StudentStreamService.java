@@ -24,6 +24,7 @@ public class StudentStreamService {
     @Autowired private OptionalSubjectRepository optionalSubjectRepository;
     @Autowired private StudentService studentService;
 
+    @Transactional(readOnly = true)
     public Optional<StudentStreamSelection> getSelection(String studentId) {
         return selectionRepository.findByStudentId(studentId);
     }
@@ -74,6 +75,7 @@ public class StudentStreamService {
      * Returns all active students in a class with their stream selections.
      * Students without a selection still appear with null stream fields.
      */
+    @Transactional(readOnly = true)
     public List<StudentStreamDTO> getClassSelections(String className) {
         List<Student> students = studentService.getActiveStudentsByClass(className);
 
