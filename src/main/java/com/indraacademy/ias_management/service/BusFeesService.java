@@ -5,6 +5,8 @@ import com.indraacademy.ias_management.repository.BusFeesRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +30,7 @@ public class BusFeesService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
 
+    @Cacheable(value = "bus-fees", key = "'all'")
     @Transactional(readOnly = true)
     public List<BusFees> getAllRecords() {
         log.info("Attempting to fetch all bus fees records.");
@@ -41,6 +44,7 @@ public class BusFeesService {
         }
     }
 
+    @Cacheable(value = "bus-fees", key = "#academicYear + '-' + #distance")
     @Transactional(readOnly = true)
     public BigDecimal getBusFeesOfDistance(Double distance, String academicYear) {
         if (distance == null || academicYear == null || academicYear.trim().isEmpty()) {
@@ -63,6 +67,7 @@ public class BusFeesService {
         }
     }
 
+    @Cacheable(value = "bus-fees", key = "#academicYear")
     @Transactional(readOnly = true)
     public List<BusFees> getBusFeesByAcademicYear(String academicYear) {
         if (academicYear == null || academicYear.trim().isEmpty()) {
@@ -81,6 +86,7 @@ public class BusFeesService {
         }
     }
 
+    @CacheEvict(value = "bus-fees", allEntries = true)
     @Transactional
     public List<BusFees> updateBusFees(String academicYear,
                                        List<BusFees> updatedFees,

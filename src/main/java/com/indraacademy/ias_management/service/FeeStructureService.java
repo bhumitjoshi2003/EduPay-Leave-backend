@@ -5,6 +5,8 @@ import com.indraacademy.ias_management.repository.FeeStructureRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +31,7 @@ public class FeeStructureService {
     @Autowired
     private FeeStructureRepository feeStructureRepository;
 
+    @Cacheable(value = "fee-structures", key = "'all'")
     @Transactional(readOnly = true)
     public List<FeeStructure> getAllRecords() {
         log.info("Attempting to fetch all fee structure records.");
@@ -42,6 +45,7 @@ public class FeeStructureService {
         }
     }
 
+    @Cacheable(value = "fee-structures", key = "#academicYear")
     @Transactional(readOnly = true)
     public List<FeeStructure> getFeeStructuresByAcademicYear(String academicYear) {
         if (academicYear == null || academicYear.trim().isEmpty()) {
@@ -59,6 +63,7 @@ public class FeeStructureService {
         }
     }
 
+    @Cacheable(value = "fee-structures", key = "#academicYear + '-' + #className")
     @Transactional(readOnly = true)
     public FeeStructure getFeeStructuresByAcademicYearAndClassName(String academicYear, String className) {
         if (academicYear == null || academicYear.trim().isEmpty() || className == null || className.trim().isEmpty()) {
@@ -80,6 +85,7 @@ public class FeeStructureService {
         }
     }
 
+    @CacheEvict(value = "fee-structures", allEntries = true)
     @Transactional
     public List<FeeStructure> updateFeeStructures(String academicYear,
                                                   List<FeeStructure> updatedFees,
@@ -147,6 +153,7 @@ public class FeeStructureService {
         }
     }
 
+    @CacheEvict(value = "fee-structures", allEntries = true)
     @Transactional
     public List<FeeStructure> createNewSession(String academicYear,
                                                List<FeeStructure> newFees,

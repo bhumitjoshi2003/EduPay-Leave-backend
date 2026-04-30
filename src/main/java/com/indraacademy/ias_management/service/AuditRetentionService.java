@@ -4,7 +4,7 @@ import com.indraacademy.ias_management.entity.AuditLog;
 import com.indraacademy.ias_management.entity.AuditLogArchive;
 import com.indraacademy.ias_management.repository.AuditArchiveRepository;
 import com.indraacademy.ias_management.repository.AuditRepository;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;

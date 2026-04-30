@@ -8,6 +8,8 @@ import com.indraacademy.ias_management.repository.ExamSubjectEntryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,6 +36,7 @@ public class ExamConfigService {
 
     // ─── ExamConfig ───────────────────────────────────────────────────────────
 
+    @Cacheable(value = "exam-config", key = "#session + '-' + #className")
     @Transactional(readOnly = true)
     public List<ExamConfig> getExams(String session, String className) {
         if (session != null && !session.isBlank() && className != null && !className.isBlank()) {
@@ -46,6 +49,7 @@ public class ExamConfigService {
         return examConfigRepository.findAll();
     }
 
+    @CacheEvict(value = "exam-config", allEntries = true)
     public ExamConfig addExam(String session, String className, String examName) {
         if (session == null || session.isBlank()
                 || className == null || className.isBlank()
@@ -66,6 +70,7 @@ public class ExamConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "exam-config", allEntries = true)
     @Transactional
     public void deleteExam(Long id) {
         if (!examConfigRepository.existsById(id)) {
@@ -78,6 +83,7 @@ public class ExamConfigService {
 
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
 
+    @Cacheable(value = "exam-config", key = "'subjects-' + #examId")
     @Transactional(readOnly = true)
     public List<ExamSubjectEntry> getExamSubjects(Long examId) {
         if (!examConfigRepository.existsById(examId)) {
@@ -86,6 +92,7 @@ public class ExamConfigService {
         return examSubjectEntryRepository.findByExamConfigId(examId);
     }
 
+    @CacheEvict(value = "exam-config", allEntries = true)
     public ExamSubjectEntry addExamSubject(Long examId, String subjectName,
                                            Integer maxMarks, LocalDate examDate) {
         ExamConfig exam = examConfigRepository.findById(examId)
@@ -121,6 +128,7 @@ public class ExamConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "exam-config", allEntries = true)
     public ExamSubjectEntry updateExamSubject(Long entryId, Integer maxMarks, LocalDate examDate) {
         ExamSubjectEntry entry = examSubjectEntryRepository.findById(entryId)
                 .orElseThrow(() -> new NoSuchElementException("ExamSubjectEntry not found: " + entryId));
@@ -137,6 +145,7 @@ public class ExamConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "exam-config", allEntries = true)
     @Transactional
     public void deleteExamSubject(Long entryId) {
         if (!examSubjectEntryRepository.existsById(entryId)) {

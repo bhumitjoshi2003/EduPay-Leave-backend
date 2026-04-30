@@ -1,7 +1,7 @@
 package com.indraacademy.ias_management.scheduler;
 
 import com.indraacademy.ias_management.repository.StudentRepository;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;

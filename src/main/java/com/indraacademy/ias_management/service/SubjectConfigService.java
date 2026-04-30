@@ -7,6 +7,8 @@ import com.indraacademy.ias_management.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,12 +29,14 @@ public class SubjectConfigService {
 
     // ─── ClassSubject ─────────────────────────────────────────────────────────
 
+    @Cacheable(value = "subject-config", key = "'class-' + #className")
     @Transactional(readOnly = true)
     public List<ClassSubject> getClassSubjects(String className) {
         log.info("Fetching subjects for class {}", className);
         return classSubjectRepository.findByClassName(className);
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     public ClassSubject addClassSubject(String className, String subjectName) {
         if (className == null || className.isBlank() || subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("className and subjectName are required.");
@@ -49,6 +53,7 @@ public class SubjectConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteClassSubject(Long id) {
         if (!classSubjectRepository.existsById(id)) {
@@ -60,6 +65,7 @@ public class SubjectConfigService {
 
     // ─── AcademicStream ───────────────────────────────────────────────────────
 
+    @Cacheable(value = "subject-config", key = "'all-streams'")
     @Transactional(readOnly = true)
     public List<StreamResponseDTO> getAllStreams() {
         log.info("Fetching all streams with core subjects");
@@ -75,6 +81,7 @@ public class SubjectConfigService {
                 .collect(Collectors.toList());
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     public AcademicStream addStream(String streamName) {
         if (streamName == null || streamName.isBlank()) {
             throw new IllegalArgumentException("streamName is required.");
@@ -89,6 +96,7 @@ public class SubjectConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteStream(Long id) {
         if (!academicStreamRepository.existsById(id)) {
@@ -101,6 +109,7 @@ public class SubjectConfigService {
 
     // ─── StreamCoreSubject ────────────────────────────────────────────────────
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     public StreamCoreSubject addStreamCoreSubject(Long streamId, String subjectName) {
         if (!academicStreamRepository.existsById(streamId)) {
             throw new NoSuchElementException("Stream not found: " + streamId);
@@ -120,6 +129,7 @@ public class SubjectConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteStreamCoreSubject(Long id) {
         if (!streamCoreSubjectRepository.existsById(id)) {
@@ -131,6 +141,7 @@ public class SubjectConfigService {
 
     // ─── OptionalSubjectGroup ─────────────────────────────────────────────────
 
+    @Cacheable(value = "subject-config", key = "'all-optional-groups'")
     @Transactional(readOnly = true)
     public List<OptionalGroupResponseDTO> getAllOptionalGroups() {
         log.info("Fetching all optional subject groups");
@@ -146,6 +157,7 @@ public class SubjectConfigService {
                 .collect(Collectors.toList());
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     public OptionalSubjectGroup addOptionalGroup(String groupName) {
         if (groupName == null || groupName.isBlank()) {
             throw new IllegalArgumentException("groupName is required.");
@@ -157,6 +169,7 @@ public class SubjectConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteOptionalGroup(Long id) {
         if (!optionalSubjectGroupRepository.existsById(id)) {
@@ -169,6 +182,7 @@ public class SubjectConfigService {
 
     // ─── OptionalSubject ──────────────────────────────────────────────────────
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     public OptionalSubject addOptionalSubject(Long groupId, String subjectName) {
         if (!optionalSubjectGroupRepository.existsById(groupId)) {
             throw new NoSuchElementException("OptionalSubjectGroup not found: " + groupId);
@@ -184,6 +198,7 @@ public class SubjectConfigService {
         return saved;
     }
 
+    @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteOptionalSubject(Long id) {
         if (!optionalSubjectRepository.existsById(id)) {
