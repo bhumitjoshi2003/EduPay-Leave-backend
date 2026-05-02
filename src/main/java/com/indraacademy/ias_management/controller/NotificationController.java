@@ -9,12 +9,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
@@ -55,12 +56,12 @@ public class NotificationController {
     }
 
     @GetMapping("/user")
-    public ResponseEntity<List<UserNotificationDTO>> getUserNotifications() {
+    public ResponseEntity<Page<UserNotificationDTO>> getUserNotifications(Pageable pageable) {
         String userId = authService.getUserId();
         String userRole = authService.getRole();
         log.info("Fetching notifications for userId: {} with role: {}", userId, userRole);
         try {
-            List<UserNotificationDTO> userNotifications = notificationService.getNotificationsForUser(userId, userRole);
+            Page<UserNotificationDTO> userNotifications = notificationService.getNotificationsForUser(userId, userRole, pageable);
             return new ResponseEntity<>(userNotifications, HttpStatus.OK);
         } catch (Exception e) {
             log.error("Error fetching user notifications for {}: {}", userId, e.getMessage(), e);
@@ -69,10 +70,10 @@ public class NotificationController {
     }
 
     @GetMapping("/all")
-    public ResponseEntity<List<Notification>> getAllNotifications() {
+    public ResponseEntity<Page<Notification>> getAllNotifications(Pageable pageable) {
         log.info("Fetching all notifications.");
         try {
-            List<Notification> notifications = notificationService.getAllNotifications();
+            Page<Notification> notifications = notificationService.getAllNotifications(pageable);
             return new ResponseEntity<>(notifications, HttpStatus.OK);
         } catch (Exception e) {
             log.error("Error fetching all notifications.", e);

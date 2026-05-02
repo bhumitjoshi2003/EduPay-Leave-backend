@@ -22,6 +22,10 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+
 import java.time.LocalDateTime;
 import java.time.Period;
 import java.util.ArrayList;
@@ -125,10 +129,10 @@ public class NotificationService {
 
 
     @Transactional
-    public List<UserNotificationDTO> getNotificationsForUser(String userId, String userRole) {
+    public Page<UserNotificationDTO> getNotificationsForUser(String userId, String userRole, Pageable pageable) {
         if (userId == null || userRole == null) {
             log.warn("Attempted to fetch notifications with null user ID or role.");
-            return Collections.emptyList();
+            return Page.empty(pageable);
         }
         log.info("Fetching notifications for user: {} with role: {}", userId, userRole);
 
@@ -208,27 +212,26 @@ public class NotificationService {
         }
         log.debug("Created {} new UserNotification entries for user {}.", newNotificationsCount, userId);
 
-        // 4. Sort combined list newest-first
-        userNotifications.sort((n1, n2) -> n2.getCreatedAt().compareTo(n1.getCreatedAt()));
+        // 4. Paginated DB query — sync is complete so all applicable entries now exist
+        Page<UserNotification> page = userNotificationRepository
+                .findByUserIdOrderByCreatedAtDesc(userId, pageable);
 
         // 5. Convert to DTOs
-        return userNotifications.stream()
-                .map(userNotif -> {
-                    UserNotificationDTO dto = new UserNotificationDTO();
-                    dto.setId(userNotif.getId());
-                    dto.setUserId(userNotif.getUserId());
-                    dto.setIsRead(userNotif.getIsRead());
-                    dto.setCreatedAt(userNotif.getCreatedAt());
+        return page.map(userNotif -> {
+            UserNotificationDTO dto = new UserNotificationDTO();
+            dto.setId(userNotif.getId());
+            dto.setUserId(userNotif.getUserId());
+            dto.setIsRead(userNotif.getIsRead());
+            dto.setCreatedAt(userNotif.getCreatedAt());
 
-                    Notification notification = userNotif.getNotification();
-                    if (notification != null) {
-                        dto.setTitle(notification.getTitle());
-                        dto.setMessage(notification.getMessage());
-                        dto.setType(notification.getType());
-                    }
-                    return dto;
-                })
-                .collect(Collectors.toList());
+            Notification notification = userNotif.getNotification();
+            if (notification != null) {
+                dto.setTitle(notification.getTitle());
+                dto.setMessage(notification.getMessage());
+                dto.setType(notification.getType());
+            }
+            return dto;
+        });
     }
 
     @Transactional(readOnly = true)
@@ -376,10 +379,10 @@ public class NotificationService {
     }
 
     @Transactional(readOnly = true)
-    public List<Notification> getAllNotifications() {
+    public Page<Notification> getAllNotifications(Pageable pageable) {
         log.info("Fetching all notifications with a creator.");
         try {
-            return notificationRepository.findByCreatedByIsNotNull();
+            return notificationRepository.findByCreatedByIsNotNull(pageable);
         } catch (DataAccessException e) {
             log.error("Data access error fetching all notifications.", e);
             throw new RuntimeException("Could not retrieve all notifications due to data access issue", e);
