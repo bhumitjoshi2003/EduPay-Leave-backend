@@ -18,7 +18,6 @@ import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @RestController
@@ -36,18 +35,9 @@ public class LeaveController {
     public ResponseEntity<String> applyLeave(@RequestBody Leave leave, HttpServletRequest request) {
         String studentId = authService.getUserId();
         log.info("Request to apply leave for student ID: {}", studentId);
-
-        try {
-            leave.setStudentId(studentId);
-            leaveService.applyLeave(leave, request);
-            return ResponseEntity.ok("Leave applied successfully");
-        } catch (IllegalArgumentException e) {
-            log.error("Bad request applying leave for student {}: {}", studentId, e.getMessage());
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Unexpected error applying leave for student {}.", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to apply leave.");
-        }
+        leave.setStudentId(studentId);
+        leaveService.applyLeave(leave, request);
+        return ResponseEntity.ok("Leave applied successfully");
     }
 
     @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.ADMIN + "')")
@@ -62,17 +52,9 @@ public class LeaveController {
             finalStudentId = userId;
         }
 
-        try {
-            leaveService.deleteLeave(finalStudentId, leaveDate, request);
-            log.info("Leave deleted successfully for student {} on {}", finalStudentId, leaveDate);
-            return new ResponseEntity<>("Leave deleted successfully", HttpStatus.OK);
-        } catch (NoSuchElementException e) {
-            log.error("Leave not found for deletion (Student: {}, Date: {}).", finalStudentId, leaveDate);
-            return new ResponseEntity<>("Leave application not found", HttpStatus.NOT_FOUND);
-        } catch (IllegalArgumentException e) {
-            log.error("Bad request deleting leave for student {}: {}", finalStudentId, e.getMessage());
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        leaveService.deleteLeave(finalStudentId, leaveDate, request);
+        log.info("Leave deleted successfully for student {} on {}", finalStudentId, leaveDate);
+        return new ResponseEntity<>("Leave deleted successfully", HttpStatus.OK);
     }
 
     @GetMapping("/student")
@@ -83,14 +65,9 @@ public class LeaveController {
             Pageable pageable
     ) {
         log.info("Request to get filtered leaves. Class: {}, Student: {}, Date: {}", className, studentId, date);
-        try {
-            return ResponseEntity.ok(
-                    leaveService.getLeavesFiltered(className, studentId, date, pageable)
-            );
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid parameters for filtered leaves: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(
+                leaveService.getLeavesFiltered(className, studentId, date, pageable)
+        );
     }
 
     @GetMapping("/student/{studentId}")
@@ -102,24 +79,14 @@ public class LeaveController {
         String authenticatedStudentId = authService.getUserId();
         log.info("Request to get leaves for student ID: {} (authenticated as {})", studentId, authenticatedStudentId);
 
-        try {
-            return ResponseEntity.ok(leaveService.getLeavesByStudentId(authenticatedStudentId, pageable));
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid parameters for student leaves (ID: {}): {}", authenticatedStudentId, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(leaveService.getLeavesByStudentId(authenticatedStudentId, pageable));
     }
 
     @GetMapping("/date/{date}/class/{className}")
     public ResponseEntity<List<String>> getLeavesByDateAndClass(@PathVariable String date, @PathVariable String className) {
         log.info("Request to get leaves by Date: {} and Class: {}", date, className);
-        try {
-            List<String> leaves = leaveService.getLeavesByDateAndClass(date, className);
-            return new ResponseEntity<>(leaves, HttpStatus.OK);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid parameters for leaves by date/class: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        List<String> leaves = leaveService.getLeavesByDateAndClass(date, className);
+        return new ResponseEntity<>(leaves, HttpStatus.OK);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
@@ -139,27 +106,16 @@ public class LeaveController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body("Invalid status value: " + statusValue);
         }
-        try {
-            Leave updated = leaveService.updateLeaveStatus(leaveId, status, request);
-            return ResponseEntity.ok(updated);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        Leave updated = leaveService.updateLeaveStatus(leaveId, status, request);
+        return ResponseEntity.ok(updated);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{leaveId}")
     public ResponseEntity<String> deleteLeaveById(@PathVariable Long leaveId, HttpServletRequest request) {
         log.warn("Request to delete leave by ID: {}", leaveId);
-        try {
-            leaveService.deleteLeaveById(leaveId, request);
-            log.info("Leave application deleted successfully by ID: {}", leaveId);
-            return new ResponseEntity<>("Leave application deleted successfully", HttpStatus.OK);
-        } catch (NoSuchElementException e) {
-            log.error("Leave application not found for ID: {}.", leaveId);
-            return new ResponseEntity<>("Leave application not found", HttpStatus.NOT_FOUND);
-        }
+        leaveService.deleteLeaveById(leaveId, request);
+        log.info("Leave application deleted successfully by ID: {}", leaveId);
+        return new ResponseEntity<>("Leave application deleted successfully", HttpStatus.OK);
     }
 }

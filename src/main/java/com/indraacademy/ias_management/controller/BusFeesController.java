@@ -40,31 +40,18 @@ public class BusFeesController {
     @GetMapping("/{distance}/{academicYear}")
     public ResponseEntity<BigDecimal> getBusFees(@PathVariable Double distance, @PathVariable String academicYear) {
         log.info("Request to get bus fees for distance {} in year {}", distance, academicYear);
-        try {
-            BigDecimal fees = busFeesService.getBusFeesOfDistance(distance, academicYear);
-            if (fees == null) {
-                log.warn("Bus fees not found for distance {} and year {}", distance, academicYear);
-                return ResponseEntity.notFound().build();
-            }
-            return ResponseEntity.ok(fees);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid input for bus fees lookup: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
+        BigDecimal fees = busFeesService.getBusFeesOfDistance(distance, academicYear);
+        if (fees == null) {
+            log.warn("Bus fees not found for distance {} and year {}", distance, academicYear);
+            return ResponseEntity.notFound().build();
         }
+        return ResponseEntity.ok(fees);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{academicYear}")
     public ResponseEntity<List<BusFees>> updateFees(@PathVariable String academicYear, @RequestBody List<BusFees> updatedFees, HttpServletRequest request) {
         log.info("Request to update bus fees for academic year: {}", academicYear);
-        try {
-            return ResponseEntity.ok(busFeesService.updateBusFees(academicYear, updatedFees, request));
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid data provided for updating bus fees in year {}: {}", academicYear, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Error updating bus fees for year {}.", academicYear, e);
-            return ResponseEntity.internalServerError().build();
-        }
+        return ResponseEntity.ok(busFeesService.updateBusFees(academicYear, updatedFees, request));
     }
 }

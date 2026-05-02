@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 
 /**
  * Handles all subject/stream configuration endpoints.
@@ -49,23 +48,15 @@ public class SubjectConfigController {
         String className   = body.get("className");
         String subjectName = body.get("subjectName");
         log.info("POST /api/subjects/class: className={}, subjectName={}", className, subjectName);
-        try {
-            ClassSubject saved = subjectConfigService.addClassSubject(className, subjectName);
-            return new ResponseEntity<>(saved, HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        ClassSubject saved = subjectConfigService.addClassSubject(className, subjectName);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @DeleteMapping("/subjects/class/{id}")
     public ResponseEntity<?> deleteClassSubject(@PathVariable Long id) {
         log.info("DELETE /api/subjects/class/{}", id);
-        try {
-            subjectConfigService.deleteClassSubject(id);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        subjectConfigService.deleteClassSubject(id);
+        return ResponseEntity.noContent().build();
     }
 
     // ─── AcademicStream ───────────────────────────────────────────────────────
@@ -80,23 +71,15 @@ public class SubjectConfigController {
     public ResponseEntity<?> addStream(@RequestBody Map<String, String> body) {
         String streamName = body.get("streamName");
         log.info("POST /api/streams: streamName={}", streamName);
-        try {
-            AcademicStream saved = subjectConfigService.addStream(streamName);
-            return new ResponseEntity<>(saved, HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        AcademicStream saved = subjectConfigService.addStream(streamName);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @DeleteMapping("/streams/{id}")
     public ResponseEntity<?> deleteStream(@PathVariable Long id) {
         log.info("DELETE /api/streams/{}", id);
-        try {
-            subjectConfigService.deleteStream(id);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        subjectConfigService.deleteStream(id);
+        return ResponseEntity.noContent().build();
     }
 
     // ─── StreamCoreSubject ────────────────────────────────────────────────────
@@ -106,25 +89,15 @@ public class SubjectConfigController {
                                                   @RequestBody Map<String, String> body) {
         String subjectName = body.get("subjectName");
         log.info("POST /api/streams/{}/subjects: subjectName={}", streamId, subjectName);
-        try {
-            StreamCoreSubject saved = subjectConfigService.addStreamCoreSubject(streamId, subjectName);
-            return new ResponseEntity<>(saved, HttpStatus.CREATED);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        StreamCoreSubject saved = subjectConfigService.addStreamCoreSubject(streamId, subjectName);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @DeleteMapping("/streams/subjects/{id}")
     public ResponseEntity<?> deleteStreamCoreSubject(@PathVariable Long id) {
         log.info("DELETE /api/streams/subjects/{}", id);
-        try {
-            subjectConfigService.deleteStreamCoreSubject(id);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        subjectConfigService.deleteStreamCoreSubject(id);
+        return ResponseEntity.noContent().build();
     }
 
     // ─── OptionalSubjectGroup ─────────────────────────────────────────────────
@@ -139,23 +112,15 @@ public class SubjectConfigController {
     public ResponseEntity<?> addOptionalGroup(@RequestBody Map<String, String> body) {
         String groupName = body.get("groupName");
         log.info("POST /api/optional-groups: groupName={}", groupName);
-        try {
-            OptionalSubjectGroup saved = subjectConfigService.addOptionalGroup(groupName);
-            return new ResponseEntity<>(saved, HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        OptionalSubjectGroup saved = subjectConfigService.addOptionalGroup(groupName);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @DeleteMapping("/optional-groups/{id}")
     public ResponseEntity<?> deleteOptionalGroup(@PathVariable Long id) {
         log.info("DELETE /api/optional-groups/{}", id);
-        try {
-            subjectConfigService.deleteOptionalGroup(id);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        subjectConfigService.deleteOptionalGroup(id);
+        return ResponseEntity.noContent().build();
     }
 
     // ─── OptionalSubject ──────────────────────────────────────────────────────
@@ -165,24 +130,14 @@ public class SubjectConfigController {
                                                 @RequestBody Map<String, String> body) {
         String subjectName = body.get("subjectName");
         log.info("POST /api/optional-groups/{}/subjects: subjectName={}", groupId, subjectName);
-        try {
-            OptionalSubject saved = subjectConfigService.addOptionalSubject(groupId, subjectName);
-            return new ResponseEntity<>(saved, HttpStatus.CREATED);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        OptionalSubject saved = subjectConfigService.addOptionalSubject(groupId, subjectName);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @DeleteMapping("/optional-subjects/{id}")
     public ResponseEntity<?> deleteOptionalSubject(@PathVariable Long id) {
         log.info("DELETE /api/optional-subjects/{}", id);
-        try {
-            subjectConfigService.deleteOptionalSubject(id);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        subjectConfigService.deleteOptionalSubject(id);
+        return ResponseEntity.noContent().build();
     }
 }

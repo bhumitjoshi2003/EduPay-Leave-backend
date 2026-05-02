@@ -8,7 +8,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -69,45 +68,35 @@ public class NoticeController {
             return ResponseEntity.badRequest().body("subject is required when deliveryMode is EMAIL or BOTH.");
         }
 
-        try {
-            // --- Email dispatch ---
-            if (sendEmail) {
-                if ("ALL_TEACHERS".equalsIgnoreCase(targetClass)) {
-                    emailService.sendBulkEmailToTeachers(subject, body);
-                    log.info("Bulk email sent to all teachers.");
-                } else if (targetClass.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
-                    String className = targetClass.substring("CLASS_WITH_TEACHER:".length()).trim();
-                    emailService.sendBulkEmailToClassWithTeacher(subject, body, className);
-                    log.info("Bulk email sent to class {} and their class teacher.", className);
-                } else {
-                    // "All" or a specific class name → students only
-                    emailService.sendBulkEmailToClass(subject, body, targetClass);
-                    log.info("Bulk email sent to class: {}", targetClass);
-                }
+        // --- Email dispatch ---
+        if (sendEmail) {
+            if ("ALL_TEACHERS".equalsIgnoreCase(targetClass)) {
+                emailService.sendBulkEmailToTeachers(subject, body);
+                log.info("Bulk email sent to all teachers.");
+            } else if (targetClass.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
+                String className = targetClass.substring("CLASS_WITH_TEACHER:".length()).trim();
+                emailService.sendBulkEmailToClassWithTeacher(subject, body, className);
+                log.info("Bulk email sent to class {} and their class teacher.", className);
+            } else {
+                // "All" or a specific class name → students only
+                emailService.sendBulkEmailToClass(subject, body, targetClass);
+                log.info("Bulk email sent to class: {}", targetClass);
             }
-
-            // --- In-app notification ---
-            if (saveInApp) {
-                String audience = resolveAudience(targetClass);
-                Notification notification = new Notification();
-                notification.setTitle(title);
-                notification.setMessage(body);
-                notification.setType("NOTICE");
-                notification.setAudience(audience);
-                notificationService.createBroadNotification(notification, request);
-                log.info("In-app notification saved with audience: {}", audience);
-            }
-
-            return ResponseEntity.ok(Map.of("message", "Notice sent successfully."));
-
-        } catch (IllegalArgumentException e) {
-            log.error("Notice request rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Unexpected error sending notice.", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to send notice due to an internal error.");
         }
+
+        // --- In-app notification ---
+        if (saveInApp) {
+            String audience = resolveAudience(targetClass);
+            Notification notification = new Notification();
+            notification.setTitle(title);
+            notification.setMessage(body);
+            notification.setType("NOTICE");
+            notification.setAudience(audience);
+            notificationService.createBroadNotification(notification, request);
+            log.info("In-app notification saved with audience: {}", audience);
+        }
+
+        return ResponseEntity.ok(Map.of("message", "Notice sent successfully."));
     }
 
     /**

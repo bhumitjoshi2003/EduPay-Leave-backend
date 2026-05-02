@@ -32,7 +32,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -96,28 +95,17 @@ public class StudentController {
     @PutMapping("/{studentId}")
     public ResponseEntity<Student> updateStudent(@PathVariable String studentId, @RequestBody Map<String, Object> requestBody, HttpServletRequest request) {
         log.info("Request to update student details for ID: {}", studentId);
-        try {
-            Student updatedStudent = objectMapper.convertValue(requestBody.get("studentDetails"), Student.class);
-            Integer effectiveFromMonth = (Integer) requestBody.get("effectiveFromMonth");
+        Student updatedStudent = objectMapper.convertValue(requestBody.get("studentDetails"), Student.class);
+        Integer effectiveFromMonth = (Integer) requestBody.get("effectiveFromMonth");
 
-            if (updatedStudent == null) {
-                log.warn("Update student failed: Missing studentDetails");
-                return ResponseEntity.badRequest().build();
-            }
-
-            Student savedStudent = studentService.updateStudent(studentId, updatedStudent, effectiveFromMonth, request);
-            log.info("Student updated successfully with ID: {}", studentId);
-            return ResponseEntity.ok(savedStudent);
-        } catch (NoSuchElementException e) {
-            log.error("Student with ID {} not found for update.", studentId);
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid data provided for updating student {}: {}", studentId, e.getMessage());
+        if (updatedStudent == null) {
+            log.warn("Update student failed: Missing studentDetails");
             return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Unexpected error during student update for ID {}.", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+
+        Student savedStudent = studentService.updateStudent(studentId, updatedStudent, effectiveFromMonth, request);
+        log.info("Student updated successfully with ID: {}", studentId);
+        return ResponseEntity.ok(savedStudent);
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
@@ -156,19 +144,10 @@ public class StudentController {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body("Uploaded file is empty.");
         }
-        try {
-            BulkImportResultDTO result = studentBulkImportService.bulkImport(file, request);
-            log.info("Bulk import completed: {} total, {} successful, {} failed",
-                    result.getTotalRows(), result.getSuccessful(), result.getFailed());
-            return ResponseEntity.ok(result);
-        } catch (IllegalArgumentException e) {
-            log.warn("Bulk import rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Unexpected error during bulk student import.", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to process the CSV file.");
-        }
+        BulkImportResultDTO result = studentBulkImportService.bulkImport(file, request);
+        log.info("Bulk import completed: {} total, {} successful, {} failed",
+                result.getTotalRows(), result.getSuccessful(), result.getFailed());
+        return ResponseEntity.ok(result);
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
@@ -192,17 +171,8 @@ public class StudentController {
             return ResponseEntity.badRequest().body("Uploaded file is empty.");
         }
 
-        try {
-            String photoUrl = studentService.uploadPhoto(studentId, file);
-            return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (RuntimeException e) {
-            log.error("Photo upload failed for student {}", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to upload photo.");
-        }
+        String photoUrl = studentService.uploadPhoto(studentId, file);
+        return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
     }
 
     // ─── Promotion endpoints ──────────────────────────────────────────────────

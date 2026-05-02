@@ -21,7 +21,6 @@ import org.slf4j.LoggerFactory;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -55,20 +54,12 @@ public class StudentFeesController {
             log.info("Admin/Teacher accessing fees for student {} in year: {}", resolvedStudentId, year);
         }
 
-        try {
-            List<StudentFees> fees = studentFeesService.getStudentFees(resolvedStudentId, year);
-            if (fees.isEmpty()) {
-                log.warn("No fees found for student {} in year {}", resolvedStudentId, year);
-                return ResponseEntity.notFound().build();
-            }
-            return ResponseEntity.ok(fees);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid input for fetching student fees (ID: {}, Year: {}): {}", resolvedStudentId, year, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Unexpected error fetching student fees (ID: {}, Year: {}).", resolvedStudentId, year, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        List<StudentFees> fees = studentFeesService.getStudentFees(resolvedStudentId, year);
+        if (fees.isEmpty()) {
+            log.warn("No fees found for student {} in year {}", resolvedStudentId, year);
+            return ResponseEntity.notFound().build();
         }
+        return ResponseEntity.ok(fees);
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
@@ -115,9 +106,6 @@ public class StudentFeesController {
         } catch (ClassCastException | NullPointerException e) {
             log.error("Invalid data format in manual payment request for student {}.", studentId, e);
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid data format in payment request. Check all number fields and required string fields."));
-        } catch (Exception e) {
-            log.error("Failed to record manual payment for student {}.", studentId, e);
-            return new ResponseEntity<>(Map.of("error", "Failed to record manual payment: An internal error occurred."), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -125,33 +113,14 @@ public class StudentFeesController {
     @PutMapping("/")
     public ResponseEntity<StudentFees> updateStudentFees(@RequestBody StudentFees studentFees) {
         log.info("Request to update student fee record ID: {}", studentFees.getId());
-        try {
-            return ResponseEntity.ok(studentFeesService.updateStudentFees(studentFees));
-        } catch (NoSuchElementException e) {
-            log.error("Student fees record not found for update (ID: {}).", studentFees.getId());
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid data for student fees update (ID: {}): {}", studentFees.getId(), e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Unexpected error updating student fees record ID: {}.", studentFees.getId(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        return ResponseEntity.ok(studentFeesService.updateStudentFees(studentFees));
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping("/")
     public ResponseEntity<StudentFees> createStudentFees(@RequestBody StudentFees studentFees) {
         log.info("Request to create student fees record for student: {} month: {}", studentFees.getStudentId(), studentFees.getMonth());
-        try {
-            return new ResponseEntity<>(studentFeesService.createStudentFees(studentFees), HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            log.error("Failed to create student fees record: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Unexpected error creating student fees record for student: {}.", studentFees.getStudentId(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        return new ResponseEntity<>(studentFeesService.createStudentFees(studentFees), HttpStatus.CREATED);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "')")
@@ -169,32 +138,19 @@ public class StudentFeesController {
 
         log.info("Request to get student fee for ID: {} Year: {} Month: {}", resolvedStudentId, year, month);
 
-        try {
-            Optional<StudentFees> studentFee = studentFeesService.getStudentFee(resolvedStudentId, year, month);
-            return studentFee.map(ResponseEntity::ok)
-                    .orElseGet(() -> {
-                        log.warn("Student fee not found for ID: {} Year: {} Month: {}", resolvedStudentId, year, month);
-                        return ResponseEntity.notFound().build();
-                    });
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid input for fetching single student fee (ID: {} Year: {} Month: {}): {}", resolvedStudentId, year, month, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Unexpected error fetching single student fee (ID: {} Year: {} Month: {}).", resolvedStudentId, year, month, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        Optional<StudentFees> studentFee = studentFeesService.getStudentFee(resolvedStudentId, year, month);
+        return studentFee.map(ResponseEntity::ok)
+                .orElseGet(() -> {
+                    log.warn("Student fee not found for ID: {} Year: {} Month: {}", resolvedStudentId, year, month);
+                    return ResponseEntity.notFound().build();
+                });
     }
 
     @GetMapping("/sessions/{studentId}")
     public ResponseEntity<List<String>> getDistinctYearsByStudentId(@PathVariable String studentId) {
         log.info("Request to get distinct academic years for student: {}", studentId);
-        try {
-            List<String> sessions = studentFeesService.getDistinctYearsByStudentId(studentId);
-            return ResponseEntity.ok(sessions);
-        } catch (Exception e) {
-            log.error("Error fetching distinct years for student: {}.", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        List<String> sessions = studentFeesService.getDistinctYearsByStudentId(studentId);
+        return ResponseEntity.ok(sessions);
     }
 
     // ─── Overdue & Reminders ──────────────────────────────────────────────────
@@ -209,15 +165,8 @@ public class StudentFeesController {
             @RequestParam String session,
             @RequestParam(required = false) String className) {
         log.info("Overdue fees request: session={}, className={}", session, className);
-        try {
-            List<OverdueStudentDto> result = feeReminderService.getOverdueStudents(session, className);
-            return ResponseEntity.ok(result);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Error fetching overdue students for session {}", session, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to fetch overdue fee data.");
-        }
+        List<OverdueStudentDto> result = feeReminderService.getOverdueStudents(session, className);
+        return ResponseEntity.ok(result);
     }
 
     /**
@@ -235,20 +184,11 @@ public class StudentFeesController {
         if (studentId == null || session == null) {
             return ResponseEntity.badRequest().body("studentId and session are required.");
         }
-        try {
-            boolean sent = feeReminderService.sendReminder(studentId, session, request);
-            if (sent) {
-                return ResponseEntity.ok(Map.of("message", "Reminder sent successfully."));
-            } else {
-                return ResponseEntity.ok(Map.of("message", "Student has no email configured; reminder not sent."));
-            }
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Failed to send reminder for student {}", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to send reminder.");
+        boolean sent = feeReminderService.sendReminder(studentId, session, request);
+        if (sent) {
+            return ResponseEntity.ok(Map.of("message", "Reminder sent successfully."));
+        } else {
+            return ResponseEntity.ok(Map.of("message", "Student has no email configured; reminder not sent."));
         }
     }
 
@@ -268,14 +208,7 @@ public class StudentFeesController {
         if (studentIds == null || studentIds.isEmpty() || session == null) {
             return ResponseEntity.badRequest().body("studentIds (non-empty list) and session are required.");
         }
-        try {
-            int sent = feeReminderService.sendBulkReminders(studentIds, session, request);
-            return ResponseEntity.ok(Map.of("sent", sent));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Bulk reminder failed for session {}", session, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Bulk reminder failed.");
-        }
+        int sent = feeReminderService.sendBulkReminders(studentIds, session, request);
+        return ResponseEntity.ok(Map.of("sent", sent));
     }
 }

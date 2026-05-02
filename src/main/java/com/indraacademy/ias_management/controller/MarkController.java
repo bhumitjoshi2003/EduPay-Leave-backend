@@ -16,7 +16,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/marks")
@@ -42,19 +41,12 @@ public class MarkController {
     public ResponseEntity<?> getStudentsForSubjectEntry(
             @PathVariable Long examSubjectEntryId) {
         log.info("GET /api/marks/exam/{}/students", examSubjectEntryId);
-        try {
-            String className = examConfigService.resolveClassName(examSubjectEntryId).orElse(null);
-            ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-            if (authCheck != null) return authCheck;
+        String className = examConfigService.resolveClassName(examSubjectEntryId).orElse(null);
+        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
+        if (authCheck != null) return authCheck;
 
-            List<StudentSubjectMarkDTO> result = markService.getStudentsForSubjectEntry(examSubjectEntryId);
-            return ResponseEntity.ok(result);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        } catch (Exception e) {
-            log.error("Error fetching students for examSubjectEntry {}", examSubjectEntryId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        List<StudentSubjectMarkDTO> result = markService.getStudentsForSubjectEntry(examSubjectEntryId);
+        return ResponseEntity.ok(result);
     }
 
     // ─── Mark Entry Mode B: by student ───────────────────────────────────────
@@ -70,19 +62,12 @@ public class MarkController {
             @PathVariable String studentId,
             @PathVariable Long examConfigId) {
         log.info("GET /api/marks/student/{}/exam/{}", studentId, examConfigId);
-        try {
-            String className = examConfigService.resolveClassNameForExam(examConfigId).orElse(null);
-            ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-            if (authCheck != null) return authCheck;
+        String className = examConfigService.resolveClassNameForExam(examConfigId).orElse(null);
+        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
+        if (authCheck != null) return authCheck;
 
-            List<StudentExamSubjectDTO> result = markService.getStudentMarksForExam(studentId, examConfigId);
-            return ResponseEntity.ok(result);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        } catch (Exception e) {
-            log.error("Error fetching marks for student {} in exam {}", studentId, examConfigId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        List<StudentExamSubjectDTO> result = markService.getStudentMarksForExam(studentId, examConfigId);
+        return ResponseEntity.ok(result);
     }
 
     // ─── Bulk mark save ───────────────────────────────────────────────────────
@@ -100,21 +85,16 @@ public class MarkController {
         if (requests == null || requests.isEmpty()) {
             return ResponseEntity.badRequest().body("Request body must be a non-empty list.");
         }
-        try {
-            // For TEACHER, verify class access using the first entry's exam subject
-            if (Role.TEACHER.equals(securityUtil.getRole()) && requests.get(0).getExamSubjectEntryId() != null) {
-                String className = examConfigService
-                        .resolveClassName(requests.get(0).getExamSubjectEntryId()).orElse(null);
-                ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-                if (authCheck != null) return authCheck;
-            }
-
-            MarkBulkResultDTO result = markService.bulkSaveMarks(requests, request);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            log.error("Unexpected error during bulk mark save", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        // For TEACHER, verify class access using the first entry's exam subject
+        if (Role.TEACHER.equals(securityUtil.getRole()) && requests.get(0).getExamSubjectEntryId() != null) {
+            String className = examConfigService
+                    .resolveClassName(requests.get(0).getExamSubjectEntryId()).orElse(null);
+            ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
+            if (authCheck != null) return authCheck;
         }
+
+        MarkBulkResultDTO result = markService.bulkSaveMarks(requests, request);
+        return ResponseEntity.ok(result);
     }
 
     // ─── Student results view ─────────────────────────────────────────────────
@@ -139,15 +119,8 @@ public class MarkController {
                     .body("Students can only view their own results.");
         }
 
-        try {
-            List<ExamResultDTO> results = markService.getStudentResults(studentId, session);
-            return ResponseEntity.ok(results);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        } catch (Exception e) {
-            log.error("Error fetching results for student {}", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        List<ExamResultDTO> results = markService.getStudentResults(studentId, session);
+        return ResponseEntity.ok(results);
     }
 
     // ─── Class-wide results ───────────────────────────────────────────────────
@@ -163,16 +136,11 @@ public class MarkController {
             @PathVariable String className,
             @PathVariable Long examConfigId) {
         log.info("GET /api/marks/class/{}/exam/{}", className, examConfigId);
-        try {
-            ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-            if (authCheck != null) return authCheck;
+        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
+        if (authCheck != null) return authCheck;
 
-            List<ClassStudentResultDTO> results = markService.getClassResults(className, examConfigId);
-            return ResponseEntity.ok(results);
-        } catch (Exception e) {
-            log.error("Error fetching class results for class {} exam {}", className, examConfigId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        List<ClassStudentResultDTO> results = markService.getClassResults(className, examConfigId);
+        return ResponseEntity.ok(results);
     }
 
     // ─── Helper ───────────────────────────────────────────────────────────────

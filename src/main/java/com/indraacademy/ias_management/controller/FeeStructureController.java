@@ -13,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/fee-structure")
@@ -34,17 +33,12 @@ public class FeeStructureController {
     @GetMapping("/{academicYear}/{className}")
     public ResponseEntity<FeeStructure> getFeeStructure(@PathVariable String academicYear, @PathVariable String className) {
         log.info("Request to get fee structure for Year: {} and Class: {}", academicYear, className);
-        try {
-            FeeStructure feeStructure = feeStructureService.getFeeStructuresByAcademicYearAndClassName(academicYear, className);
-            if (feeStructure == null) {
-                log.warn("Fee structure not found for Year: {} and Class: {}", academicYear, className);
-                return ResponseEntity.notFound().build();
-            }
-            return ResponseEntity.ok(feeStructure);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid parameters for fee structure retrieval: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
+        FeeStructure feeStructure = feeStructureService.getFeeStructuresByAcademicYearAndClassName(academicYear, className);
+        if (feeStructure == null) {
+            log.warn("Fee structure not found for Year: {} and Class: {}", academicYear, className);
+            return ResponseEntity.notFound().build();
         }
+        return ResponseEntity.ok(feeStructure);
     }
 
     @GetMapping("/{academicYear}")
@@ -58,26 +52,13 @@ public class FeeStructureController {
     @PutMapping("/{academicYear}")
     public ResponseEntity<List<FeeStructure>> updateFeeStructures(@PathVariable String academicYear, @RequestBody List<FeeStructure> updatedFees, HttpServletRequest request) {
         log.info("Request to update fee structures for academic year: {}", academicYear);
-        try {
-            return ResponseEntity.ok(feeStructureService.updateFeeStructures(academicYear, updatedFees, request));
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid data for fee structure update in year {}: {}", academicYear, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (NoSuchElementException e) {
-            log.error("One or more fee structures not found for year {}.", academicYear);
-            return ResponseEntity.notFound().build();
-        }
+        return ResponseEntity.ok(feeStructureService.updateFeeStructures(academicYear, updatedFees, request));
     }
 
     @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
     @PostMapping("/{academicYear}")
     public ResponseEntity<List<FeeStructure>> createNewSession(@PathVariable String academicYear, @RequestBody List<FeeStructure> newFees, HttpServletRequest request) {
         log.info("Request to create new fee session for year: {}", academicYear);
-        try {
-            return new ResponseEntity<>(feeStructureService.createNewSession(academicYear,newFees, request), HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            log.error("New session creation failed for year {}: {}", academicYear, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        return new ResponseEntity<>(feeStructureService.createNewSession(academicYear, newFees, request), HttpStatus.CREATED);
     }
 }

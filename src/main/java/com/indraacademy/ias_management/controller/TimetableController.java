@@ -8,14 +8,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/timetable")
@@ -66,17 +64,8 @@ public class TimetableController {
     @PostMapping
     public ResponseEntity<?> create(@RequestBody TimetableEntry entry, HttpServletRequest request) {
         log.info("POST timetable: class={}, day={}, period={}", entry.getClassName(), entry.getDay(), entry.getPeriodNumber());
-        try {
-            TimetableEntry saved = timetableService.create(entry, request);
-            return ResponseEntity.status(HttpStatus.CREATED).body(saved);
-        } catch (DataIntegrityViolationException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Failed to create timetable entry", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to create timetable entry.");
-        }
+        TimetableEntry saved = timetableService.create(entry, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(saved);
     }
 
     /**
@@ -87,19 +76,8 @@ public class TimetableController {
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody TimetableEntry entry, HttpServletRequest request) {
         log.info("PUT timetable/{}", id);
-        try {
-            TimetableEntry saved = timetableService.update(id, entry, request);
-            return ResponseEntity.ok(saved);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (DataIntegrityViolationException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Failed to update timetable entry {}", id, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to update timetable entry.");
-        }
+        TimetableEntry saved = timetableService.update(id, entry, request);
+        return ResponseEntity.ok(saved);
     }
 
     /**
@@ -110,14 +88,7 @@ public class TimetableController {
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id, HttpServletRequest request) {
         log.warn("DELETE timetable/{}", id);
-        try {
-            timetableService.delete(id, request);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Failed to delete timetable entry {}", id, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to delete timetable entry.");
-        }
+        timetableService.delete(id, request);
+        return ResponseEntity.noContent().build();
     }
 }

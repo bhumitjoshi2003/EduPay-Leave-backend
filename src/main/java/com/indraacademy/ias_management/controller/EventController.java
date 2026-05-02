@@ -14,7 +14,6 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/events")
@@ -29,17 +28,9 @@ public class EventController {
     @PostMapping
     public ResponseEntity<?> createEvent(@RequestBody Event event, HttpServletRequest request) {
         log.info("Request to create new event: {}", event.getTitle());
-        try {
-            Event createdEvent = eventService.createEvent(event, request);
-            log.info("Event created successfully with ID: {}", createdEvent.getId());
-            return new ResponseEntity<>(createdEvent, HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            log.error("Bad request to create event: {}", e.getMessage());
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
-        } catch (Exception e) {
-            log.error("Unexpected error creating event.", e);
-            return new ResponseEntity<>("Failed to create event due to internal error.", HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        Event createdEvent = eventService.createEvent(event, request);
+        log.info("Event created successfully with ID: {}", createdEvent.getId());
+        return new ResponseEntity<>(createdEvent, HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")
@@ -66,14 +57,7 @@ public class EventController {
             return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
         }
 
-        List<Event> events;
-        try {
-            events = eventService.getEventsForMonthAndYear(year, month);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid month/year for event retrieval: {}", e.getMessage());
-            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
-        }
-
+        List<Event> events = eventService.getEventsForMonthAndYear(year, month);
         return new ResponseEntity<>(events, HttpStatus.OK);
     }
 
@@ -81,30 +65,17 @@ public class EventController {
     @PutMapping("/{id}")
     public ResponseEntity<Event> updateEvent(@PathVariable Long id, @RequestBody Event eventDetails, HttpServletRequest request) {
         log.info("Request to update event with ID: {}", id);
-        try {
-            Event updatedEvent = eventService.updateEvent(id, eventDetails, request);
-            log.info("Event updated successfully with ID: {}", id);
-            return new ResponseEntity<>(updatedEvent, HttpStatus.OK);
-        } catch (NoSuchElementException e) {
-            log.error("Event with ID {} not found for update.", id);
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid data for event update (ID: {}): {}", id, e.getMessage());
-            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
-        }
+        Event updatedEvent = eventService.updateEvent(id, eventDetails, request);
+        log.info("Event updated successfully with ID: {}", id);
+        return new ResponseEntity<>(updatedEvent, HttpStatus.OK);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteEvent(@PathVariable Long id) {
         log.warn("Request to delete event with ID: {}", id);
-        try {
-            eventService.deleteEvent(id);
-            log.info("Event deleted successfully with ID: {}", id);
-            return new ResponseEntity<>(HttpStatus.NO_CONTENT);
-        } catch (NoSuchElementException e) {
-            log.error("Event with ID {} not found for deletion.", id);
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
-        }
+        eventService.deleteEvent(id);
+        log.info("Event deleted successfully with ID: {}", id);
+        return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 }

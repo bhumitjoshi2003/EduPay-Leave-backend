@@ -24,7 +24,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/teachers")
@@ -60,34 +59,24 @@ public class TeacherController {
     public ResponseEntity<Teacher> getTeacher(@PathVariable String teacherId) {
         final String finalTeacherId = teacherId;
         log.info("Request to get teacher with ID: {}", finalTeacherId);
-        try {
-            Optional<Teacher> teacher = teacherService.getTeacher(finalTeacherId);
-            return teacher.map(ResponseEntity::ok)
-                    .orElseGet(() -> {
-                        log.warn("Teacher with ID {} not found.", finalTeacherId);
-                        return ResponseEntity.notFound().build();
-                    });
-        } catch (Exception e) {
-            log.error("Unexpected error fetching teacher ID: {}.", finalTeacherId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        Optional<Teacher> teacher = teacherService.getTeacher(finalTeacherId);
+        return teacher.map(ResponseEntity::ok)
+                .orElseGet(() -> {
+                    log.warn("Teacher with ID {} not found.", finalTeacherId);
+                    return ResponseEntity.notFound().build();
+                });
     }
 
     @GetMapping
     public ResponseEntity<List<Teacher>> getAllTeachers() {
         log.info("Request to get all teachers.");
-        try {
-            List<Teacher> teachers = teacherService.getAllTeachers();
-            if (teachers.isEmpty()) {
-                log.info("No teachers found.");
-                return ResponseEntity.noContent().build();
-            }
-            log.info("Successfully returned {} teachers.", teachers.size());
-            return ResponseEntity.ok(teachers);
-        } catch (Exception e) {
-            log.error("Unexpected error fetching all teachers.", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        List<Teacher> teachers = teacherService.getAllTeachers();
+        if (teachers.isEmpty()) {
+            log.info("No teachers found.");
+            return ResponseEntity.noContent().build();
         }
+        log.info("Successfully returned {} teachers.", teachers.size());
+        return ResponseEntity.ok(teachers);
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
@@ -99,19 +88,10 @@ public class TeacherController {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body("Uploaded file is empty.");
         }
-        try {
-            BulkImportResultDTO result = teacherBulkImportService.bulkImport(file, request);
-            log.info("Bulk import completed: {} total, {} successful, {} failed",
-                    result.getTotalRows(), result.getSuccessful(), result.getFailed());
-            return ResponseEntity.ok(result);
-        } catch (IllegalArgumentException e) {
-            log.warn("Bulk import rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Unexpected error during bulk teacher import.", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to process the CSV file.");
-        }
+        BulkImportResultDTO result = teacherBulkImportService.bulkImport(file, request);
+        log.info("Bulk import completed: {} total, {} successful, {} failed",
+                result.getTotalRows(), result.getSuccessful(), result.getFailed());
+        return ResponseEntity.ok(result);
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
@@ -130,43 +110,32 @@ public class TeacherController {
     @PutMapping("/{teacherId}")
     public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @RequestBody Teacher updatedTeacher, HttpServletRequest request) {
         log.info("Request to update teacher ID: {}", teacherId);
-        try {
-            Optional<Teacher> existingTeacherOptional = teacherService.getTeacher(teacherId);
+        Optional<Teacher> existingTeacherOptional = teacherService.getTeacher(teacherId);
 
-            if (existingTeacherOptional.isPresent()) {
-                Teacher existingTeacher = existingTeacherOptional.get();
+        if (existingTeacherOptional.isPresent()) {
+            Teacher existingTeacher = existingTeacherOptional.get();
 
-                // Check if email has changed
-                boolean emailChanged = !existingTeacher.getEmail().equals(updatedTeacher.getEmail());
+            // Check if email has changed
+            boolean emailChanged = !existingTeacher.getEmail().equals(updatedTeacher.getEmail());
 
-                if (emailChanged) {
-                    log.info("Teacher {} email updated from {} to {}. Updating associated User record.",
-                            teacherId, existingTeacher.getEmail(), updatedTeacher.getEmail());
+            if (emailChanged) {
+                log.info("Teacher {} email updated from {} to {}. Updating associated User record.",
+                        teacherId, existingTeacher.getEmail(), updatedTeacher.getEmail());
 
-                    Optional<User> userOptional = userDetailsService.findUserByUserId(teacherId);
-                    userOptional.ifPresent(user -> {
-                        user.setEmail(updatedTeacher.getEmail());
-                        userDetailsService.save(user);
-                        log.info("Associated User record updated successfully for teacher ID: {}", teacherId);
-                    });
-                }
-
-                Teacher savedTeacher = teacherService.updateTeacher(updatedTeacher, request);
-                log.info("Teacher details updated successfully for ID: {}", teacherId);
-                return ResponseEntity.ok(savedTeacher);
-            } else {
-                log.warn("Teacher with ID {} not found for update.", teacherId);
-                return ResponseEntity.notFound().build();
+                Optional<User> userOptional = userDetailsService.findUserByUserId(teacherId);
+                userOptional.ifPresent(user -> {
+                    user.setEmail(updatedTeacher.getEmail());
+                    userDetailsService.save(user);
+                    log.info("Associated User record updated successfully for teacher ID: {}", teacherId);
+                });
             }
-        } catch (NoSuchElementException e) {
-            log.error("Update failed: Teacher with ID {} not found (should be caught by isPresent check, but safe to include).", teacherId, e);
+
+            Teacher savedTeacher = teacherService.updateTeacher(updatedTeacher, request);
+            log.info("Teacher details updated successfully for ID: {}", teacherId);
+            return ResponseEntity.ok(savedTeacher);
+        } else {
+            log.warn("Teacher with ID {} not found for update.", teacherId);
             return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            log.error("Update failed for teacher ID {}: Invalid data provided. {}", teacherId, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Unexpected error during teacher update for ID {}.", teacherId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
@@ -187,16 +156,7 @@ public class TeacherController {
             return ResponseEntity.badRequest().body("Uploaded file is empty.");
         }
 
-        try {
-            String photoUrl = teacherService.uploadPhoto(teacherId, file);
-            return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (RuntimeException e) {
-            log.error("Photo upload failed for teacher {}", teacherId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to upload photo.");
-        }
+        String photoUrl = teacherService.uploadPhoto(teacherId, file);
+        return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
     }
 }

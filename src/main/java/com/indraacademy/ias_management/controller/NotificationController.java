@@ -16,7 +16,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.NoSuchElementException;
 import java.util.Optional;
 
 @RestController
@@ -31,17 +30,9 @@ public class NotificationController {
     @PostMapping
     public ResponseEntity<?> createNotification(@RequestBody Notification notification, HttpServletRequest request) {
         log.info("Request to create broad notification with title: {}", notification.getTitle());
-        try{
-            Notification createdNotification = notificationService.createBroadNotification(notification, request);
-            log.info("Notification created successfully with ID: {}", createdNotification.getId());
-            return new ResponseEntity<>(createdNotification, HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            log.error("Error creating notification (Bad Request): {}", e.getMessage());
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.BAD_REQUEST);
-        } catch (Exception e) {
-            log.error("An unexpected error occurred during notification creation.", e);
-            return new ResponseEntity<>("An internal server error occurred.", HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        Notification createdNotification = notificationService.createBroadNotification(notification, request);
+        log.info("Notification created successfully with ID: {}", createdNotification.getId());
+        return new ResponseEntity<>(createdNotification, HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")
@@ -60,62 +51,33 @@ public class NotificationController {
         String userId = authService.getUserId();
         String userRole = authService.getRole();
         log.info("Fetching notifications for userId: {} with role: {}", userId, userRole);
-        try {
-            Page<UserNotificationDTO> userNotifications = notificationService.getNotificationsForUser(userId, userRole, pageable);
-            return new ResponseEntity<>(userNotifications, HttpStatus.OK);
-        } catch (Exception e) {
-            log.error("Error fetching user notifications for {}: {}", userId, e.getMessage(), e);
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        Page<UserNotificationDTO> userNotifications = notificationService.getNotificationsForUser(userId, userRole, pageable);
+        return new ResponseEntity<>(userNotifications, HttpStatus.OK);
     }
 
     @GetMapping("/all")
     public ResponseEntity<Page<Notification>> getAllNotifications(Pageable pageable) {
         log.info("Fetching all notifications.");
-        try {
-            Page<Notification> notifications = notificationService.getAllNotifications(pageable);
-            return new ResponseEntity<>(notifications, HttpStatus.OK);
-        } catch (Exception e) {
-            log.error("Error fetching all notifications.", e);
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        Page<Notification> notifications = notificationService.getAllNotifications(pageable);
+        return new ResponseEntity<>(notifications, HttpStatus.OK);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{id}")
     public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, HttpServletRequest request) {
         log.info("Updating notification with ID: {}", id);
-        try {
-            Notification savedNotification = notificationService.updateNotification(id, notification, request);
-            log.info("Notification updated successfully with ID: {}", id);
-            return new ResponseEntity<>(savedNotification, HttpStatus.OK);
-        } catch (NoSuchElementException e) {
-            log.error("Error updating notification with ID {}: Not found.", id);
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
-        } catch (IllegalArgumentException e) {
-            log.error("Error updating notification with ID {}: Bad Request - {}", id, e.getMessage());
-            return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
-        } catch (Exception e) {
-            log.error("An unexpected error occurred during notification update for ID {}.", id, e);
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        Notification savedNotification = notificationService.updateNotification(id, notification, request);
+        log.info("Notification updated successfully with ID: {}", id);
+        return new ResponseEntity<>(savedNotification, HttpStatus.OK);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteNotification(@PathVariable Long id, HttpServletRequest request) {
         log.warn("Request to delete notification with ID: {}", id);
-        try {
-            notificationService.deleteNotification(id, request);
-            log.info("Notification deleted successfully with ID: {}", id);
-            return new ResponseEntity<>(HttpStatus.NO_CONTENT);
-        } catch (NoSuchElementException e) {
-            log.error("Error deleting notification with ID {}: Not found.", id);
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
-        } catch (Exception e) {
-            log.error("An unexpected error occurred during notification deletion for ID {}.", id, e);
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        notificationService.deleteNotification(id, request);
+        log.info("Notification deleted successfully with ID: {}", id);
+        return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 
     @GetMapping("/user/unread/count")
@@ -123,25 +85,15 @@ public class NotificationController {
         String userId = authService.getUserId();
         String userRole = authService.getRole();
         log.info("Fetching unread notification count for userId: {} with role: {}", userId, userRole);
-        try {
-            long count = notificationService.getUnreadNotificationCount(userId, userRole);
-            return new ResponseEntity<>(count, HttpStatus.OK);
-        } catch (Exception e) {
-            log.error("Error fetching unread notification count for {}: {}", userId, e.getMessage(), e);
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        long count = notificationService.getUnreadNotificationCount(userId, userRole);
+        return new ResponseEntity<>(count, HttpStatus.OK);
     }
 
     @PutMapping("/user/read-all")
     public ResponseEntity<Void> markAllNotificationsAsRead() {
         String userId = authService.getUserId();
         log.info("Marking all notifications as read for user ID {}", userId);
-        try {
-            notificationService.markAllNotificationsAsRead(userId);
-            return new ResponseEntity<>(HttpStatus.NO_CONTENT);
-        } catch (Exception e) {
-            log.error("Error marking all notifications as read for user {}: {}", userId, e.getMessage(), e);
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
-        }
+        notificationService.markAllNotificationsAsRead(userId);
+        return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
 }

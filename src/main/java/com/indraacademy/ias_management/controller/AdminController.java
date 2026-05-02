@@ -17,7 +17,6 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 import java.util.Optional;
 import java.util.List;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/admins")
@@ -34,17 +33,9 @@ public class AdminController {
     @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
     public ResponseEntity<Admin> registerNewAdmin(@RequestBody Admin admin, HttpServletRequest request) {
         log.info("Request from Super Admin to create a new admin with email: {}", admin.getEmail());
-        try {
-            Admin savedAdmin = adminService.createAdmin(admin, request);
-            log.info("Successfully created new Admin with ID: {}", savedAdmin.getAdminId());
-            return ResponseEntity.ok(savedAdmin);
-        } catch (IllegalArgumentException e) {
-            log.error("Validation error during admin creation: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        } catch (Exception e) {
-            log.error("Unexpected error during admin creation", e);
-            return ResponseEntity.internalServerError().build();
-        }
+        Admin savedAdmin = adminService.createAdmin(admin, request);
+        log.info("Successfully created new Admin with ID: {}", savedAdmin.getAdminId());
+        return ResponseEntity.ok(savedAdmin);
     }
 
     @GetMapping("/{adminId}")
@@ -69,31 +60,18 @@ public class AdminController {
     @PutMapping("/{adminId}")
     public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin, HttpServletRequest request) {
         log.info("Request to update Admin with ID: {}", adminId);
-        try {
-            Admin updatedAdmin = adminService.updateAdmin(adminId, admin, request);
-            log.info("Successfully updated Admin with ID: {}", adminId);
-            return ResponseEntity.ok(updatedAdmin);
-        } catch (NoSuchElementException e) {
-            log.error("Admin with ID {} not found for update.", adminId);
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid data for Admin update (ID: {}): {}", adminId, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        Admin updatedAdmin = adminService.updateAdmin(adminId, admin, request);
+        log.info("Successfully updated Admin with ID: {}", adminId);
+        return ResponseEntity.ok(updatedAdmin);
     }
 
     @DeleteMapping("/{adminId}")
     @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
     public ResponseEntity<Void> deleteAdmin(@PathVariable String adminId, HttpServletRequest request) {
         log.warn("Request to delete Admin with ID: {}", adminId);
-        try {
-            adminService.deleteAdmin(adminId, request);
-            log.info("Successfully deleted Admin with ID: {}", adminId);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            log.error("Admin with ID {} not found for deletion.", adminId);
-            return ResponseEntity.notFound().build();
-        }
+        adminService.deleteAdmin(adminId, request);
+        log.info("Successfully deleted Admin with ID: {}", adminId);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{adminId}/photo")
@@ -113,16 +91,7 @@ public class AdminController {
             return ResponseEntity.badRequest().body("Uploaded file is empty.");
         }
 
-        try {
-            String photoUrl = adminService.uploadPhoto(adminId, file);
-            return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (RuntimeException e) {
-            log.error("Photo upload failed for admin {}", adminId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to upload photo.");
-        }
+        String photoUrl = adminService.uploadPhoto(adminId, file);
+        return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
     }
 }

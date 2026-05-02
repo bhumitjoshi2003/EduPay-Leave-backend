@@ -8,7 +8,6 @@ import com.indraacademy.ias_management.service.DashboardService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,39 +28,21 @@ public class DashboardController {
     @GetMapping("/stats")
     public ResponseEntity<?> getStats() {
         log.info("GET /api/dashboard/stats");
-        try {
-            DashboardStatsDto stats = dashboardService.getStats();
-            return ResponseEntity.ok(stats);
-        } catch (Exception e) {
-            log.error("Error fetching dashboard stats", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to fetch dashboard stats.");
-        }
+        DashboardStatsDto stats = dashboardService.getStats();
+        return ResponseEntity.ok(stats);
     }
 
     @GetMapping("/fee-trend")
     public ResponseEntity<?> getFeeTrend() {
         log.info("GET /api/dashboard/fee-trend");
-        try {
-            List<FeeTrendDto> trend = dashboardService.getFeeTrend();
-            return ResponseEntity.ok(trend);
-        } catch (Exception e) {
-            log.error("Error fetching fee trend", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to fetch fee trend.");
-        }
+        List<FeeTrendDto> trend = dashboardService.getFeeTrend();
+        return ResponseEntity.ok(trend);
     }
 
     @GetMapping("/class-stats")
     public ResponseEntity<?> getClassStats() {
         log.info("GET /api/dashboard/class-stats");
-        try {
-            List<ClassStatsDto> stats = dashboardService.getClassStats();
-            return ResponseEntity.ok(stats);
-        } catch (Exception e) {
-            log.error("Error fetching class stats", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to fetch class stats.");
-        }
+        List<ClassStatsDto> stats = dashboardService.getClassStats();
+        return ResponseEntity.ok(stats);
     }
 }

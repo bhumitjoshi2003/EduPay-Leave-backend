@@ -22,7 +22,6 @@ import org.slf4j.LoggerFactory;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/payments")
@@ -71,12 +70,6 @@ public class PaymentController {
         } catch (ClassCastException | NullPointerException e) {
             log.error("Invalid data format in order creation request.", e);
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid data format in payment request."));
-        } catch (IllegalArgumentException e) {
-            log.error("Payment order creation failed: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            log.error("Unexpected error during Razorpay order creation.", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to create payment order."));
         }
     }
 
@@ -95,12 +88,6 @@ public class PaymentController {
         } catch (ClassCastException | NullPointerException e) {
             log.error("Invalid data format in payment verification request.", e);
             return ResponseEntity.badRequest().body(Map.of("error", "Invalid data format in verification request."));
-        } catch (IllegalArgumentException e) {
-            log.error("Payment verification failed (Bad Request): {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            log.error("Unexpected error during payment verification.", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Failed to verify payment."));
         }
     }
 
@@ -113,14 +100,9 @@ public class PaymentController {
             Pageable pageable
     ) {
         log.info("Request for payment history filtered. Class: {}, Student: {}, Date: {}", className, studentId, paymentDate);
-        try {
-            return ResponseEntity.ok(
-                    paymentService.gePaymentHistoryFiltered(className, studentId, paymentDate, pageable)
-            );
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid filter parameters for payment history: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(
+                paymentService.gePaymentHistoryFiltered(className, studentId, paymentDate, pageable)
+        );
     }
 
     @GetMapping("/history/student/{studentId}")
@@ -129,30 +111,20 @@ public class PaymentController {
             @PathVariable String studentId, Pageable pageable){
 
         log.info("Request for payment history for student: {}", studentId);
-        try {
-            return ResponseEntity.ok(
-                    paymentService.getPaymentHistoryByStudentId(studentId, pageable));
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid student ID for payment history: {}", studentId);
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(
+                paymentService.getPaymentHistoryByStudentId(studentId, pageable));
     }
 
 //    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")   // to be removed
     @GetMapping("/history/details/{paymentId}")
     public ResponseEntity<PaymentResponseDTO> getPaymentHistoryDetails(@PathVariable String paymentId) {
         log.info("Request for payment details for ID: {}", paymentId);
-        try {
-            PaymentResponseDTO dto = paymentService.getPaymentHistoryDetails(paymentId);
-            if (dto == null) {
-                log.warn("Payment details not found for ID: {}", paymentId);
-                return ResponseEntity.notFound().build();
-            }
-            return ResponseEntity.ok(dto);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid payment ID format: {}", paymentId);
-            return ResponseEntity.badRequest().build();
+        PaymentResponseDTO dto = paymentService.getPaymentHistoryDetails(paymentId);
+        if (dto == null) {
+            log.warn("Payment details not found for ID: {}", paymentId);
+            return ResponseEntity.notFound().build();
         }
+        return ResponseEntity.ok(dto);
     }
 
     @GetMapping("/history/receipt/{paymentId}")
@@ -160,16 +132,7 @@ public class PaymentController {
     public ResponseEntity<byte[]> downloadPaymentReceipt(@PathVariable String paymentId) {
         log.info("Request to download receipt for payment ID: {}", paymentId);
 
-        byte[] pdfBytes;
-        try {
-            pdfBytes = paymentService.generatePaymentReceiptPdf(paymentId);
-        } catch (NoSuchElementException e) {
-            log.warn("Receipt not found for payment ID: {}", paymentId);
-            return ResponseEntity.notFound().build();
-        } catch (Exception e) {
-            log.error("Error generating PDF receipt for payment ID: {}", paymentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        byte[] pdfBytes = paymentService.generatePaymentReceiptPdf(paymentId);
 
         if (pdfBytes == null || pdfBytes.length == 0) {
             log.warn("PDF generation returned empty content for payment ID: {}", paymentId);

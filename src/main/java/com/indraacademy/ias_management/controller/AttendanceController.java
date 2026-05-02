@@ -22,7 +22,6 @@ import org.slf4j.LoggerFactory;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 
 
 @RestController
@@ -41,17 +40,9 @@ public class AttendanceController {
     @PostMapping
     public ResponseEntity<String> saveAttendance(@RequestBody List<Attendance> attendanceList, HttpServletRequest request) {
         log.info("Request to save attendance for {} records.", attendanceList != null ? attendanceList.size() : 0);
-        try {
-            attendanceService.saveAttendance(attendanceList, request);
-            log.info("Attendance data saved successfully.");
-            return ResponseEntity.ok("Attendance data saved successfully.");
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid data provided for saving attendance: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Failed to save attendance data.", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to save attendance data.");
-        }
+        attendanceService.saveAttendance(attendanceList, request);
+        log.info("Attendance data saved successfully.");
+        return ResponseEntity.ok("Attendance data saved successfully.");
     }
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
@@ -67,13 +58,8 @@ public class AttendanceController {
     @GetMapping("/counts/{studentId}/{year}/{month}")
     public ResponseEntity<Map<String, Long>> getAttendanceCounts(@PathVariable String studentId, @PathVariable int year, @PathVariable int month) {
         log.info("Request to get attendance counts for Student: {} in {}-{}", studentId, year, month);
-        try {
-            Map<String, Long> counts = attendanceService.getAttendanceCounts(studentId, year, month);
-            return ResponseEntity.ok(counts);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid parameters for attendance counts (Student: {}, Year: {}, Month: {}): {}", studentId, year, month, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        Map<String, Long> counts = attendanceService.getAttendanceCounts(studentId, year, month);
+        return ResponseEntity.ok(counts);
     }
 
     @GetMapping("/unapplied-leave-count/{studentId}/session/{session}")
@@ -81,13 +67,8 @@ public class AttendanceController {
             @PathVariable String studentId,
             @PathVariable String session) {
         log.info("Request to get unapplied leave count for Student: {} in Session: {}", studentId, session);
-        try {
-            long count = attendanceService.getTotalUnappliedLeaveCount(studentId, session);
-            return ResponseEntity.ok(count);
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid parameters for unapplied leave count (Student: {}, Session: {}): {}", studentId, session, e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        long count = attendanceService.getTotalUnappliedLeaveCount(studentId, session);
+        return ResponseEntity.ok(count);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER + "', '" + Role.ADMIN + "')")
@@ -97,18 +78,9 @@ public class AttendanceController {
             @PathVariable String className,
             HttpServletRequest request) {
         log.warn("Request to delete attendance for Date: {} and Class: {}", date, className);
-        try {
-            attendanceService.deleteAttendanceByDateAndClass(date, className, request);
-            log.info("Attendance records deleted successfully for Date: {} and Class: {}", date, className);
-            return ResponseEntity.ok("Attendance records deleted successfully.");
-        } catch (IllegalArgumentException e) {
-            log.error("Invalid parameters for attendance deletion (Date: {}, Class: {}): {}", date, className, e.getMessage());
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Failed to delete attendance records for Date: {} and Class: {}.", date, className, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to delete attendance records.");
-        }
+        attendanceService.deleteAttendanceByDateAndClass(date, className, request);
+        log.info("Attendance records deleted successfully for Date: {} and Class: {}", date, className);
+        return ResponseEntity.ok("Attendance records deleted successfully.");
     }
 
     @GetMapping("/student/{studentId}/month/{month}/year/{year}")
@@ -152,16 +124,8 @@ public class AttendanceController {
         }
 
         log.info("Daily attendance request — student: {}, month: {}, year: {}", studentId, month, year);
-        try {
-            DailyAttendanceDTO result = attendanceService.getDailyAttendance(studentId, month, year);
-            return ResponseEntity.ok(result);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Error fetching daily attendance for student {}", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to retrieve daily attendance.");
-        }
+        DailyAttendanceDTO result = attendanceService.getDailyAttendance(studentId, month, year);
+        return ResponseEntity.ok(result);
     }
 
     /**
@@ -200,18 +164,8 @@ public class AttendanceController {
 
         log.info("Attendance summary request — student: {}, type: {}, month: {}, year: {}, session: {}",
                 studentId, type, month, year, session);
-        try {
-            AttendanceSummaryDTO summary = attendanceService.getStudentSummary(studentId, type, month, year, session);
-            return ResponseEntity.ok(summary);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Error fetching student attendance summary for {}", studentId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to retrieve attendance summary.");
-        }
+        AttendanceSummaryDTO summary = attendanceService.getStudentSummary(studentId, type, month, year, session);
+        return ResponseEntity.ok(summary);
     }
 
     /**
@@ -248,15 +202,7 @@ public class AttendanceController {
 
         log.info("Class attendance summary request — class: {}, type: {}, month: {}, year: {}, session: {}",
                 className, type, month, year, session);
-        try {
-            List<ClassAttendanceSummaryDTO> summary = attendanceService.getClassSummary(className, type, month, year, session);
-            return ResponseEntity.ok(summary);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            log.error("Error fetching class attendance summary for {}", className, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body("Failed to retrieve class attendance summary.");
-        }
+        List<ClassAttendanceSummaryDTO> summary = attendanceService.getClassSummary(className, type, month, year, session);
+        return ResponseEntity.ok(summary);
     }
 }

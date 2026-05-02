@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/exams")
@@ -43,24 +42,16 @@ public class ExamController {
         String className = body.get("className");
         String examName  = body.get("examName");
         log.info("POST /api/exams: session={}, className={}, examName={}", session, className, examName);
-        try {
-            ExamConfig saved = examConfigService.addExam(session, className, examName);
-            return new ResponseEntity<>(saved, HttpStatus.CREATED);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        ExamConfig saved = examConfigService.addExam(session, className, examName);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteExam(@PathVariable Long id) {
         log.info("DELETE /api/exams/{}", id);
-        try {
-            examConfigService.deleteExam(id);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        examConfigService.deleteExam(id);
+        return ResponseEntity.noContent().build();
     }
 
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
@@ -69,11 +60,7 @@ public class ExamController {
     @GetMapping("/{examId}/subjects")
     public ResponseEntity<?> getExamSubjects(@PathVariable Long examId) {
         log.info("GET /api/exams/{}/subjects", examId);
-        try {
-            return ResponseEntity.ok(examConfigService.getExamSubjects(examId));
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        return ResponseEntity.ok(examConfigService.getExamSubjects(examId));
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
@@ -86,14 +73,8 @@ public class ExamController {
         LocalDate examDate = body.get("examDate") != null
                 ? LocalDate.parse(body.get("examDate").toString()) : null;
         log.info("POST /api/exams/{}/subjects: subject={}, maxMarks={}", examId, subjectName, maxMarks);
-        try {
-            ExamSubjectEntry saved = examConfigService.addExamSubject(examId, subjectName, maxMarks, examDate);
-            return new ResponseEntity<>(saved, HttpStatus.CREATED);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        ExamSubjectEntry saved = examConfigService.addExamSubject(examId, subjectName, maxMarks, examDate);
+        return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
@@ -105,25 +86,15 @@ public class ExamController {
         LocalDate examDate = body.get("examDate") != null
                 ? LocalDate.parse(body.get("examDate").toString()) : null;
         log.info("PUT /api/exams/subjects/{}: maxMarks={}, examDate={}", entryId, maxMarks, examDate);
-        try {
-            ExamSubjectEntry updated = examConfigService.updateExamSubject(entryId, maxMarks, examDate);
-            return ResponseEntity.ok(updated);
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
+        ExamSubjectEntry updated = examConfigService.updateExamSubject(entryId, maxMarks, examDate);
+        return ResponseEntity.ok(updated);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/subjects/{entryId}")
     public ResponseEntity<?> deleteExamSubject(@PathVariable Long entryId) {
         log.info("DELETE /api/exams/subjects/{}", entryId);
-        try {
-            examConfigService.deleteExamSubject(entryId);
-            return ResponseEntity.noContent().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        examConfigService.deleteExamSubject(entryId);
+        return ResponseEntity.noContent().build();
     }
 }
