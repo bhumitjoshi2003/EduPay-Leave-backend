@@ -61,4 +61,5 @@ jobs:
               -v ~/firebase-configs/service-account.json:/app/firebase-service-account.json \
               -e FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json \
               -e REDIS_URL='${{ secrets.REDIS_URL }}' \
+              -e DEMO_NOTIFY_EMAIL='${{ secrets.DEMO_NOTIFY_EMAIL }}' \
               ias-backend
