@@ -27,7 +27,7 @@ public class DemoRequestService {
     @Autowired
     private EmailService emailService;
 
-    @Value("${app.admin.email:admin@edunexify.co.in}")
+    @Value("${app.super-admin.email:bhumitharidas@gmail.com}")
     private String adminEmail;
 
     @Transactional
