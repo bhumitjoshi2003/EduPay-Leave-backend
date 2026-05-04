@@ -21,7 +21,6 @@ WORKDIR /app
 # Copy jar from builder stage
 COPY --from=builder /app/target/*.jar app.jar
 
-# Expose port (Render will override via PORT env)
 EXPOSE 8080
 
 # Run the application
