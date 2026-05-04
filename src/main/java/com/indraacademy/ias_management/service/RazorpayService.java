@@ -17,8 +17,10 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -192,10 +194,11 @@ public class RazorpayService {
                 String studentName = student.getName();
 
                 if (studentEmail != null && !studentEmail.trim().isEmpty()) {
-                    String subject  = "Payment Confirmation – Fee Receipt";
-                    String session  = (String) orderDetails.get("session");
-                    String month    = (String) orderDetails.get("month");
-                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, amountInRupees, session, month);
+                    String subject     = "Payment Confirmation – Fee Receipt";
+                    String session     = (String) orderDetails.get("session");
+                    String monthBitmask = (String) orderDetails.get("month");
+                    String monthNames  = convertMonthBitmask(monthBitmask);
+                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, amountInRupees, session, monthNames);
 
                     log.info("Initiating asynchronous HTML email send to {} for payment verification.", studentEmail);
                     emailService.sendHtmlEmail(studentEmail, subject, htmlBody);
@@ -226,6 +229,21 @@ public class RazorpayService {
             response.put("message", "Error Verifying Payment: " + e.getMessage());
             return response;
         }
+    }
+
+    private static final String[] ACADEMIC_MONTHS = {
+        "April", "May", "June", "July", "August", "September",
+        "October", "November", "December", "January", "February", "March"
+    };
+
+    /** Converts a 12-char bitmask like "010000000000" to "May", or "April, May" for multi-month. */
+    private String convertMonthBitmask(String bitmask) {
+        if (bitmask == null || bitmask.isBlank()) return "—";
+        List<String> selected = new ArrayList<>();
+        for (int i = 0; i < Math.min(bitmask.length(), 12); i++) {
+            if (bitmask.charAt(i) == '1') selected.add(ACADEMIC_MONTHS[i]);
+        }
+        return selected.isEmpty() ? "—" : String.join(", ", selected);
     }
 
     private String buildPaymentConfirmationHtml(String studentName, String paymentId,
@@ -309,7 +327,7 @@ public class RazorpayService {
                                 <td style="background-color:#fffbeb;border-left:4px solid #f59e0b;padding:14px 18px;border-radius:0 8px 8px 0;">
                                   <p style="margin:0;font-size:13px;color:#92400e;line-height:1.7;">
                                     &#128196; Please save this email as your fee payment receipt. You can also view
-                                    payment history in the <strong>Indra Academy EduPay</strong> app.
+                                    payment history on the <strong>Edunexify</strong> website.
                                   </p>
                                 </td>
                               </tr>

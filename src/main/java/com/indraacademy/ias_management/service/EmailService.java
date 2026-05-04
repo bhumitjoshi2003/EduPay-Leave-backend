@@ -146,7 +146,7 @@ public class EmailService {
 
                         <!-- Header -->
                         <tr>
-                          <td align="center" style="background-color:#991b1b;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
+                          <td align="center" style="background-color:#1e3a5f;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
                             <p style="margin:0 0 10px;font-size:40px;line-height:1;">&#127978;</p>
                             <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
                             <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
@@ -155,7 +155,7 @@ public class EmailService {
 
                         <!-- Title band -->
                         <tr>
-                          <td align="center" style="background-color:#dc2626;padding:12px 40px;">
+                          <td align="center" style="background-color:#2563eb;padding:12px 40px;">
                             <p style="margin:0;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
                               &#128226; School Notice
                             </p>
@@ -165,7 +165,7 @@ public class EmailService {
                         <!-- Body -->
                         <tr>
                           <td style="background-color:#ffffff;padding:36px 40px;">
-                            <h2 style="margin:0 0 20px;font-size:19px;font-weight:800;color:#111827;border-bottom:2px solid #fee2e2;padding-bottom:14px;">
+                            <h2 style="margin:0 0 20px;font-size:19px;font-weight:800;color:#111827;border-bottom:2px solid #dbeafe;padding-bottom:14px;">
                               %s
                             </h2>
                             <p style="margin:0 0 32px;font-size:14px;color:#374151;line-height:1.9;">%s</p>

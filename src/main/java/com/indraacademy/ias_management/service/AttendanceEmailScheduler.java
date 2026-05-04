@@ -152,7 +152,7 @@ public class AttendanceEmailScheduler {
                                 <td style="background-color:#f0fdf4;border-left:4px solid #16a34a;padding:14px 18px;border-radius:0 8px 8px 0;">
                                   <p style="margin:0;font-size:13px;color:#166534;line-height:1.7;">
                                     If this absence was planned or there is a valid reason, please submit a leave application
-                                    through the <strong>Indra Academy</strong> app or contact the school office.
+                                    through the <strong>Edunexify</strong> app or contact the school office.
                                   </p>
                                 </td>
                               </tr>
