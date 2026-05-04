@@ -45,8 +45,8 @@ public class DemoRequestService {
 
         try {
             String subject = "New Demo Request — " + dto.getSchoolName();
-            String body = buildEmailBody(dto);
-            emailService.sendEmail(adminEmail, subject, body);
+            String htmlBody = buildEmailHtml(dto);
+            emailService.sendHtmlEmail(adminEmail, subject, htmlBody);
         } catch (Exception e) {
             log.error("Failed to send demo request notification email: {}", e.getMessage());
         }
@@ -85,14 +85,107 @@ public class DemoRequestService {
         return dto;
     }
 
-    private String buildEmailBody(DemoRequestDTO dto) {
-        return "A new demo request has been received.\n\n" +
-                "School Name      : " + dto.getSchoolName() + "\n" +
-                "Contact Name     : " + dto.getContactName() + "\n" +
-                "Email            : " + dto.getEmail() + "\n" +
-                "Phone            : " + dto.getPhone() + "\n" +
-                "Number of Students: " + (dto.getNumberOfStudents() != null ? dto.getNumberOfStudents() : "N/A") + "\n" +
-                "City             : " + (dto.getCity() != null ? dto.getCity() : "N/A") + "\n" +
-                "Message          : " + (dto.getMessage() != null ? dto.getMessage() : "N/A") + "\n";
+    private String buildEmailHtml(DemoRequestDTO dto) {
+        String na = "N/A";
+        String students  = dto.getNumberOfStudents() != null ? String.valueOf(dto.getNumberOfStudents()) : na;
+        String city      = dto.getCity()    != null && !dto.getCity().isBlank()    ? dto.getCity()    : na;
+        String message   = dto.getMessage() != null && !dto.getMessage().isBlank() ? dto.getMessage() : na;
+
+        return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <title>New Demo Request</title>
+                </head>
+                <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+                  <table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9;padding:32px 16px;">
+                    <tr><td align="center">
+                      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
+
+                        <!-- Header -->
+                        <tr>
+                          <td align="center" style="background-color:#0f172a;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
+                            <p style="margin:0 0 10px;font-size:44px;line-height:1;">&#127760;</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">EduNexify</h1>
+                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.6);font-size:13px;">School Management Platform</p>
+                          </td>
+                        </tr>
+
+                        <!-- Band -->
+                        <tr>
+                          <td align="center" style="background-color:#1e293b;padding:10px 40px;">
+                            <p style="margin:0;color:#94a3b8;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
+                              &#128204; New Demo Request Received
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Body -->
+                        <tr>
+                          <td style="background-color:#ffffff;padding:36px 40px;">
+                            <p style="margin:0 0 8px;font-size:16px;color:#111827;">A new school has requested a demo.</p>
+                            <p style="margin:0 0 28px;font-size:13px;color:#6b7280;">Please review the details below and follow up at your earliest convenience.</p>
+
+                            <!-- Details table -->
+                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+                              <tr style="background-color:#f8fafc;">
+                                <td colspan="2" style="padding:14px 20px;font-size:11px;font-weight:700;color:#475569;letter-spacing:1.2px;text-transform:uppercase;border-bottom:1px solid #e2e8f0;">
+                                  Request Details
+                                </td>
+                              </tr>
+                              <tr>
+                                <td style="padding:12px 20px;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #f1f5f9;width:38%%;">School Name</td>
+                                <td style="padding:12px 20px;font-size:13px;color:#111827;font-weight:700;border-bottom:1px solid #f1f5f9;">%s</td>
+                              </tr>
+                              <tr>
+                                <td style="padding:12px 20px;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #f1f5f9;">Contact Person</td>
+                                <td style="padding:12px 20px;font-size:13px;color:#111827;border-bottom:1px solid #f1f5f9;">%s</td>
+                              </tr>
+                              <tr style="background-color:#f8fafc;">
+                                <td style="padding:12px 20px;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #f1f5f9;">Email</td>
+                                <td style="padding:12px 20px;font-size:13px;color:#2563eb;border-bottom:1px solid #f1f5f9;">%s</td>
+                              </tr>
+                              <tr>
+                                <td style="padding:12px 20px;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #f1f5f9;">Phone</td>
+                                <td style="padding:12px 20px;font-size:13px;color:#111827;border-bottom:1px solid #f1f5f9;">%s</td>
+                              </tr>
+                              <tr style="background-color:#f8fafc;">
+                                <td style="padding:12px 20px;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #f1f5f9;">No. of Students</td>
+                                <td style="padding:12px 20px;font-size:13px;color:#111827;border-bottom:1px solid #f1f5f9;">%s</td>
+                              </tr>
+                              <tr>
+                                <td style="padding:12px 20px;font-size:13px;color:#64748b;font-weight:600;border-bottom:1px solid #f1f5f9;">City</td>
+                                <td style="padding:12px 20px;font-size:13px;color:#111827;border-bottom:1px solid #f1f5f9;">%s</td>
+                              </tr>
+                              <tr style="background-color:#f8fafc;">
+                                <td style="padding:12px 20px;font-size:13px;color:#64748b;font-weight:600;vertical-align:top;">Message</td>
+                                <td style="padding:12px 20px;font-size:13px;color:#374151;font-style:italic;">%s</td>
+                              </tr>
+                            </table>
+
+                            <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
+                            <p style="margin:0;font-size:13px;color:#6b7280;">
+                              Please log in to the EduNexify admin portal to view and manage all demo requests.
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Footer -->
+                        <tr>
+                          <td align="center" style="background-color:#0f172a;border-radius:0 0 16px 16px;padding:20px 40px;">
+                            <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.5);">This is an automated internal notification from EduNexify.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.3);">&copy; 2026 EduNexify. All rights reserved.</p>
+                          </td>
+                        </tr>
+
+                      </table>
+                    </td></tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(dto.getSchoolName(), dto.getContactName(), dto.getEmail(),
+                              dto.getPhone(), students, city, message);
     }
 }

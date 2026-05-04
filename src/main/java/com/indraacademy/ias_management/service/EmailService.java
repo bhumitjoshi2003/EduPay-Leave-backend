@@ -94,7 +94,6 @@ public class EmailService {
             return;
         }
 
-        // Filter and clean the list before sending
         List<String> validEmails = toEmails.stream()
                 .filter(email -> email != null && !email.trim().isEmpty())
                 .toList();
@@ -104,23 +103,95 @@ public class EmailService {
             return;
         }
 
-        log.info("Attempting to send bulk email to {} unique recipients with subject: {}", validEmails.size(), subject);
+        log.info("Attempting to send bulk HTML email to {} unique recipients with subject: {}", validEmails.size(), subject);
 
         try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(emailSender);
-            message.setSubject(subject);
-            message.setText(body);
-            // Using setBcc is standard for bulk emails to protect recipient privacy
-            message.setBcc(validEmails.toArray(new String[0]));
-
+            String htmlBody = buildAnnouncementHtml(subject, body);
+            MimeMessage message = javaMailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(emailSender);
+            helper.setSubject(subject);
+            helper.setText(htmlBody, true);
+            helper.setBcc(validEmails.toArray(new String[0]));
             javaMailSender.send(message);
-            log.info("Successfully sent bulk email to {} recipients.", validEmails.size());
+            log.info("Successfully sent bulk HTML email to {} recipients.", validEmails.size());
+        } catch (MessagingException e) {
+            log.error("MessagingException while sending bulk email to {} recipients with subject: {}", validEmails.size(), subject, e);
         } catch (MailException e) {
             log.error("MailException occurred while sending bulk email to {} recipients with subject: {}", validEmails.size(), subject, e);
         } catch (Exception e) {
             log.error("Unexpected error occurred while sending bulk email to {} recipients with subject: {}", validEmails.size(), subject, e);
         }
+    }
+
+    /** Wraps a plain-text notice body in the branded school announcement HTML template. */
+    String buildAnnouncementHtml(String subject, String body) {
+        String safeSubject = subject == null ? "" : subject;
+        String safeBody    = body    == null ? "" : body.replace("&", "&amp;")
+                                                        .replace("<", "&lt;")
+                                                        .replace(">", "&gt;")
+                                                        .replace("\n", "<br>");
+        return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <title>%s</title>
+                </head>
+                <body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
+                  <table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:32px 16px;">
+                    <tr><td align="center">
+                      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
+
+                        <!-- Header -->
+                        <tr>
+                          <td align="center" style="background-color:#991b1b;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
+                            <p style="margin:0 0 10px;font-size:40px;line-height:1;">&#127978;</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
+                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
+                          </td>
+                        </tr>
+
+                        <!-- Title band -->
+                        <tr>
+                          <td align="center" style="background-color:#dc2626;padding:12px 40px;">
+                            <p style="margin:0;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
+                              &#128226; School Notice
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Body -->
+                        <tr>
+                          <td style="background-color:#ffffff;padding:36px 40px;">
+                            <h2 style="margin:0 0 20px;font-size:19px;font-weight:800;color:#111827;border-bottom:2px solid #fee2e2;padding-bottom:14px;">
+                              %s
+                            </h2>
+                            <p style="margin:0 0 32px;font-size:14px;color:#374151;line-height:1.9;">%s</p>
+                            <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
+                            <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
+                              With regards,<br>
+                              <strong>Indra Academy Sr. Sec. School</strong><br>
+                              <span style="font-size:12px;color:#9ca3af;">Administration</span>
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Footer -->
+                        <tr>
+                          <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
+                            <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.</p>
+                          </td>
+                        </tr>
+
+                      </table>
+                    </td></tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(safeSubject, safeSubject, safeBody);
     }
 
     @Async

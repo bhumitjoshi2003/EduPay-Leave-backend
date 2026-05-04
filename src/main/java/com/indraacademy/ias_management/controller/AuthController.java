@@ -337,9 +337,9 @@ public class AuthController {
             userRepository.save(user);
 
             String resetLink = frontendUrl + "/reset-password?token=" + resetToken;
-            String subject = "Password Reset Request";
-            String body = "To reset your password, please click on the following link: " + resetLink;
-            emailService.sendEmail(user.getEmail(), subject, body);
+            String subject   = "Password Reset Request – Indra Academy";
+            String htmlBody  = buildPasswordResetHtml(resetLink);
+            emailService.sendHtmlEmail(user.getEmail(), subject, htmlBody);
 
             log.info("Password reset link sent to email for user: {}", userId);
 
@@ -386,5 +386,101 @@ public class AuthController {
             log.error("Unexpected error during password reset.", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to reset password.");
         }
+    }
+
+    private String buildPasswordResetHtml(String resetLink) {
+        return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <title>Password Reset</title>
+                </head>
+                <body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
+                  <table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:32px 16px;">
+                    <tr><td align="center">
+                      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
+
+                        <!-- Header -->
+                        <tr>
+                          <td align="center" style="background-color:#3730a3;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
+                            <p style="margin:0 0 10px;font-size:44px;line-height:1;">&#128274;</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
+                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
+                          </td>
+                        </tr>
+
+                        <!-- Band -->
+                        <tr>
+                          <td align="center" style="background-color:#4f46e5;padding:10px 40px;">
+                            <p style="margin:0;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
+                              Password Reset Request
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Body -->
+                        <tr>
+                          <td style="background-color:#ffffff;padding:36px 40px;">
+                            <p style="margin:0 0 16px;font-size:16px;color:#111827;">Hello,</p>
+                            <p style="margin:0 0 28px;font-size:14px;color:#6b7280;line-height:1.8;">
+                              We received a request to reset the password for your Indra Academy account.
+                              Click the button below to set a new password. This link will expire in
+                              <strong style="color:#111827;">1 hour</strong>.
+                            </p>
+
+                            <!-- CTA Button -->
+                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                              <tr>
+                                <td align="center">
+                                  <a href="%s"
+                                     style="display:inline-block;background-color:#4f46e5;color:#ffffff;text-decoration:none;
+                                            font-size:15px;font-weight:700;padding:14px 36px;border-radius:10px;
+                                            letter-spacing:0.3px;">
+                                    &#128273;&nbsp; Reset My Password
+                                  </a>
+                                </td>
+                              </tr>
+                            </table>
+
+                            <!-- Security note -->
+                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                              <tr>
+                                <td style="background-color:#fef2f2;border-left:4px solid #dc2626;padding:14px 18px;border-radius:0 8px 8px 0;">
+                                  <p style="margin:0;font-size:13px;color:#991b1b;line-height:1.7;">
+                                    <strong>Didn't request this?</strong> If you did not request a password reset,
+                                    please ignore this email. Your account remains secure.
+                                  </p>
+                                </td>
+                              </tr>
+                            </table>
+
+                            <p style="margin:0 0 6px;font-size:12px;color:#9ca3af;">Or copy and paste this URL into your browser:</p>
+                            <p style="margin:0 0 28px;font-size:11px;color:#6b7280;word-break:break-all;">%s</p>
+
+                            <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
+                            <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
+                              With regards,<br>
+                              <strong>Indra Academy Sr. Sec. School</strong><br>
+                              <span style="font-size:12px;color:#9ca3af;">IT &amp; Administration</span>
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Footer -->
+                        <tr>
+                          <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
+                            <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.</p>
+                          </td>
+                        </tr>
+
+                      </table>
+                    </td></tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(resetLink, resetLink);
     }
 }

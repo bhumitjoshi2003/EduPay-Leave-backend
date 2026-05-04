@@ -192,16 +192,13 @@ public class RazorpayService {
                 String studentName = student.getName();
 
                 if (studentEmail != null && !studentEmail.trim().isEmpty()) {
-                    String subject = "Payment Confirmation: Your recent fee payment was successful!";
-                    String body = "Dear " + studentName + ",\n\n"
-                            + "Your payment for fees has been successfully processed.\n"
-                            + "Payment ID: " + paymentId + "\n"
-                            + "Amount Paid: INR " + amountInRupees + "\n"
-                            + "Thank you for the payment!\n\n"
-                            + "Regards,\nIndra Academy";
+                    String subject  = "Payment Confirmation – Fee Receipt";
+                    String session  = (String) orderDetails.get("session");
+                    String month    = (String) orderDetails.get("month");
+                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, amountInRupees, session, month);
 
-                    log.info("Initiating asynchronous email send to {} for payment verification.", studentEmail);
-                    emailService.sendEmail(studentEmail, subject, body);
+                    log.info("Initiating asynchronous HTML email send to {} for payment verification.", studentEmail);
+                    emailService.sendHtmlEmail(studentEmail, subject, htmlBody);
                 } else {
                     log.warn("Student email not found or is empty for student ID: {}. Skipping email notification.", studentId);
                 }
@@ -212,6 +209,118 @@ public class RazorpayService {
             response.put("success", true);
             response.put("message", "Payment Verified Successfully");
             return response;
+
+    private String buildPaymentConfirmationHtml(String studentName, String paymentId,
+                                                   double amount, String session, String month) {
+        String formattedAmount = String.format("%.2f", amount);
+        String safeSession = session != null ? session : "—";
+        String safeMonth   = month   != null ? month   : "—";
+        return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <title>Payment Confirmation</title>
+                </head>
+                <body style="margin:0;padding:0;background-color:#f0fdf4;font-family:Arial,Helvetica,sans-serif;">
+                  <table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f0fdf4;padding:32px 16px;">
+                    <tr><td align="center">
+                      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
+
+                        <!-- Header -->
+                        <tr>
+                          <td align="center" style="background-color:#065f46;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
+                            <p style="margin:0 0 10px;font-size:48px;line-height:1;">&#10003;</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
+                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
+                          </td>
+                        </tr>
+
+                        <!-- Band -->
+                        <tr>
+                          <td align="center" style="background-color:#059669;padding:10px 40px;">
+                            <p style="margin:0;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
+                              &#9989; Payment Successful
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Body -->
+                        <tr>
+                          <td style="background-color:#ffffff;padding:36px 40px;">
+                            <p style="margin:0 0 20px;font-size:16px;color:#111827;">Dear <strong>%s</strong>,</p>
+                            <p style="margin:0 0 28px;font-size:14px;color:#6b7280;line-height:1.8;">
+                              Your school fee payment has been <strong style="color:#059669;">successfully processed</strong>.
+                              Please find your payment summary below for your records.
+                            </p>
+
+                            <!-- Amount highlight -->
+                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                              <tr>
+                                <td align="center" style="background-color:#ecfdf5;border:2px solid #6ee7b7;border-radius:14px;padding:24px;">
+                                  <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:#059669;letter-spacing:1.5px;text-transform:uppercase;">Amount Paid</p>
+                                  <p style="margin:0;font-size:36px;font-weight:800;color:#065f46;">&#8377; %s</p>
+                                </td>
+                              </tr>
+                            </table>
+
+                            <!-- Receipt table -->
+                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;border:1px solid #d1fae5;border-radius:12px;overflow:hidden;">
+                              <tr style="background-color:#f0fdf4;">
+                                <td colspan="2" style="padding:12px 20px;font-size:11px;font-weight:700;color:#065f46;letter-spacing:1.2px;text-transform:uppercase;border-bottom:1px solid #d1fae5;">
+                                  Transaction Details
+                                </td>
+                              </tr>
+                              <tr>
+                                <td style="padding:11px 20px;font-size:13px;color:#6b7280;font-weight:600;border-bottom:1px solid #f0fdf4;width:40%%;">Payment ID</td>
+                                <td style="padding:11px 20px;font-size:12px;color:#111827;font-family:monospace;border-bottom:1px solid #f0fdf4;">%s</td>
+                              </tr>
+                              <tr style="background-color:#f9fafb;">
+                                <td style="padding:11px 20px;font-size:13px;color:#6b7280;font-weight:600;border-bottom:1px solid #f0fdf4;">Academic Session</td>
+                                <td style="padding:11px 20px;font-size:13px;color:#111827;font-weight:700;border-bottom:1px solid #f0fdf4;">%s</td>
+                              </tr>
+                              <tr>
+                                <td style="padding:11px 20px;font-size:13px;color:#6b7280;font-weight:600;">Month</td>
+                                <td style="padding:11px 20px;font-size:13px;color:#111827;font-weight:700;">%s</td>
+                              </tr>
+                            </table>
+
+                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                              <tr>
+                                <td style="background-color:#fffbeb;border-left:4px solid #f59e0b;padding:14px 18px;border-radius:0 8px 8px 0;">
+                                  <p style="margin:0;font-size:13px;color:#92400e;line-height:1.7;">
+                                    &#128196; Please save this email as your fee payment receipt. You can also view
+                                    payment history in the <strong>Indra Academy EduPay</strong> app.
+                                  </p>
+                                </td>
+                              </tr>
+                            </table>
+
+                            <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
+                            <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
+                              Thank you,<br>
+                              <strong>Indra Academy Sr. Sec. School</strong><br>
+                              <span style="font-size:12px;color:#9ca3af;">Fee Management Team</span>
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Footer -->
+                        <tr>
+                          <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
+                            <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.</p>
+                          </td>
+                        </tr>
+
+                      </table>
+                    </td></tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(studentName, formattedAmount, paymentId, safeSession, safeMonth);
+    }
 
         } catch (RazorpayException e) {
             log.error("Razorpay signature verification failed for Order ID: {}. Payload: {}", orderId, payload, e);
