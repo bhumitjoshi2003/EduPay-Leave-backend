@@ -30,12 +30,12 @@ public class BusFeesService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
 
-    @Cacheable(value = "bus-fees", key = "'all'")
     @Transactional(readOnly = true)
     public List<BusFees> getAllRecords() {
         log.info("Attempting to fetch all bus fees records.");
+        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
-            List<BusFees> fees = busFeesRepository.findAll();
+            List<BusFees> fees = busFeesRepository.findBySchoolId(securityUtil.getSchoolId());
             log.info("Successfully fetched {} bus fees records.", fees.size());
             return fees;
         } catch (DataAccessException e) {
@@ -53,8 +53,9 @@ public class BusFeesService {
         }
         log.info("Fetching bus fees for distance: {} and academic year: {}", distance, academicYear);
 
+        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
-            BigDecimal fees = busFeesRepository.findFeesByDistanceAndAcademicYear(distance, academicYear);
+            BigDecimal fees = busFeesRepository.findFeesByDistanceAndAcademicYearAndSchoolId(distance, academicYear, securityUtil.getSchoolId());
             if (fees != null) {
                 log.info("Found bus fees: {} for distance: {}", fees, distance);
             } else {
@@ -76,8 +77,9 @@ public class BusFeesService {
         }
         log.info("Fetching bus fees for academic year: {}", academicYear);
 
+        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
-            List<BusFees> fees = busFeesRepository.findByAcademicYear(academicYear);
+            List<BusFees> fees = busFeesRepository.findByAcademicYearAndSchoolId(academicYear, securityUtil.getSchoolId());
             log.info("Found {} bus fees records for academic year: {}", fees.size(), academicYear);
             return fees;
         } catch (DataAccessException e) {
@@ -102,13 +104,14 @@ public class BusFeesService {
 
         log.info("Updating bus fees for academic year: {}", academicYear);
 
+        Long schoolId = securityUtil.getSchoolId();
         try {
             // Capture old state before deletion
-            List<BusFees> existingFees = busFeesRepository.findByAcademicYear(academicYear);
+            List<BusFees> existingFees = busFeesRepository.findByAcademicYearAndSchoolId(academicYear, schoolId);
             String oldValue = objectMapper.writeValueAsString(existingFees);
 
             if (!existingFees.isEmpty()) {
-                busFeesRepository.deleteAll(existingFees);
+                busFeesRepository.deleteByAcademicYearAndSchoolId(academicYear, schoolId);
             }
 
             List<BusFees> savedFees = new ArrayList<>();
@@ -125,6 +128,7 @@ public class BusFeesService {
                 newFee.setMinDistance(fee.getMinDistance());
                 newFee.setMaxDistance(fee.getMaxDistance());
                 newFee.setFees(fee.getFees());
+                newFee.setSchoolId(schoolId);
 
                 savedFees.add(busFeesRepository.save(newFee));
             }

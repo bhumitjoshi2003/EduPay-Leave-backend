@@ -66,6 +66,7 @@ public class StudentService {
         }
         log.info("Attempting to add new student with ID: {}", student.getStudentId());
 
+        Long schoolId = securityUtil.getSchoolId();
         try {
             Optional<Student> existingStudent = studentRepository.findById(student.getStudentId());
             if (existingStudent.isPresent()) {
@@ -80,6 +81,7 @@ public class StudentService {
             else {
                 student.setStatus(StudentStatus.ACTIVE);
             }
+            student.setSchoolId(schoolId);
             Student savedStudent = studentRepository.save(student);
 
             auditService.log(
@@ -129,7 +131,7 @@ public class StudentService {
         }
         log.info("Fetching student with ID: {}", studentId);
         try {
-            return studentRepository.findById(studentId);
+            return studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Data access error fetching student with ID: {}", studentId, e);
             throw new RuntimeException("Failed to retrieve student data.", e);
@@ -138,17 +140,17 @@ public class StudentService {
 
     @Transactional(readOnly = true)
     public List<Student> getActiveStudentsByClass(String className) {
-        return studentRepository.findByClassNameAndStatus(className, StudentStatus.ACTIVE);
+        return studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, securityUtil.getSchoolId());
     }
 
     @Transactional(readOnly = true)
     public List<Student> getUpcomingStudentsByClass(String className) {
-        return studentRepository.findByClassNameAndStatus(className, StudentStatus.UPCOMING);
+        return studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.UPCOMING, securityUtil.getSchoolId());
     }
 
     @Transactional(readOnly = true)
     public List<Student> getInactiveStudentsByClass(String className) {
-        return studentRepository.findByClassNameAndStatus(className, StudentStatus.INACTIVE);
+        return studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.INACTIVE, securityUtil.getSchoolId());
     }
 
     private StudentStatus calculateStatus(LocalDate joiningDate, LocalDate leavingDate) {
@@ -173,8 +175,9 @@ public class StudentService {
         }
         log.info("Attempting to update student with ID: {}", studentId);
 
+        Long schoolId = securityUtil.getSchoolId();
         try {
-            Optional<Student> existingStudentOptional = studentRepository.findById(studentId);
+            Optional<Student> existingStudentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
             if (existingStudentOptional.isEmpty()) {
                 log.warn("Student with ID {} not found for update.", studentId);
                 throw new NoSuchElementException("Student with ID " + studentId + " not found");
@@ -211,8 +214,9 @@ public class StudentService {
                 studentFeesService.updateStudentFeesForClassChange(studentId, updatedStudent.getClassName());
             }
 
-            // Ensure the correct ID is set before saving the updated object
+            // Ensure the correct ID and school are set before saving
             updatedStudent.setStudentId(studentId);
+            updatedStudent.setSchoolId(schoolId);
 
             boolean joiningDateChanged = !Objects.equals(existingStudent.getJoiningDate(), updatedStudent.getJoiningDate());
             boolean leavingDateChanged = !Objects.equals(existingStudent.getLeavingDate(), updatedStudent.getLeavingDate());
@@ -278,7 +282,7 @@ public class StudentService {
             throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
         }
 
-        Student student = studentRepository.findByStudentId(studentId)
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
         try {

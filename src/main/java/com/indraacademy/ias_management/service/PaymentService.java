@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
@@ -31,6 +32,7 @@ public class PaymentService {
 
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private ModelMapper modelMapper; // Retained, though not used in DTO mapping below
+    @Autowired private SecurityUtil securityUtil;
 
     @Transactional(readOnly = true)
     public PaymentResponseDTO getPaymentHistoryDetails(String paymentId) {
@@ -78,24 +80,25 @@ public class PaymentService {
 
     public Page<Payment> gePaymentHistoryFiltered(String className, String studentId, LocalDate paymentDate, Pageable pageable) {
         log.info("Filtering payment history. Class: {}, Student ID: {}, Date: {}", className, studentId, paymentDate);
+        Long schoolId = securityUtil.getSchoolId();
 
         try {
             if (className != null && studentId != null && paymentDate != null) {
-                return paymentRepository.findByClassNameAndStudentIdContainingAndPaymentDate(className, studentId, paymentDate, pageable);
+                return paymentRepository.findBySchoolIdAndClassNameAndStudentIdContainingAndPaymentDate(schoolId, className, studentId, paymentDate, pageable);
             } else if (className != null && studentId != null) {
-                return paymentRepository.findByClassNameAndStudentIdContaining(className, studentId, pageable);
+                return paymentRepository.findBySchoolIdAndClassNameAndStudentIdContaining(schoolId, className, studentId, pageable);
             } else if (className != null && paymentDate != null) {
-                return paymentRepository.findByClassNameAndPaymentDate(className, paymentDate, pageable);
+                return paymentRepository.findBySchoolIdAndClassNameAndPaymentDate(schoolId, className, paymentDate, pageable);
             } else if (studentId != null && paymentDate != null) {
-                return paymentRepository.findByStudentIdContainingAndPaymentDate(studentId, paymentDate, pageable);
+                return paymentRepository.findBySchoolIdAndStudentIdContainingAndPaymentDate(schoolId, studentId, paymentDate, pageable);
             } else if (className != null) {
-                return paymentRepository.findByClassName(className, pageable);
+                return paymentRepository.findBySchoolIdAndClassName(schoolId, className, pageable);
             } else if (studentId != null) {
-                return paymentRepository.findByStudentIdContaining(studentId, pageable);
+                return paymentRepository.findBySchoolIdAndStudentIdContaining(schoolId, studentId, pageable);
             } else if (paymentDate != null) {
-                return paymentRepository.findByPaymentDate(paymentDate, pageable);
+                return paymentRepository.findBySchoolIdAndPaymentDate(schoolId, paymentDate, pageable);
             } else {
-                return paymentRepository.findAll(pageable);
+                return paymentRepository.findBySchoolIdAndStudentIdContaining(schoolId, "", pageable);
             }
         } catch (DataAccessException e) {
             log.error("Data access error during payment history filtering. Class: {}, Student ID: {}, Date: {}", className, studentId, paymentDate, e);
@@ -112,7 +115,7 @@ public class PaymentService {
         log.info("Fetching payment history for student ID: {}", studentId);
 
         try {
-            return paymentRepository.findByStudentId(studentId, pageable);
+            return paymentRepository.findBySchoolIdAndStudentId(securityUtil.getSchoolId(), studentId, pageable);
         } catch (DataAccessException e) {
             log.error("Data access error fetching payment history for student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve payment history by student ID due to data access issue", e);

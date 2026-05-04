@@ -14,47 +14,49 @@ import java.util.List;
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
-    @Query("SELECT p FROM Payment p WHERE p.className = :className AND p.studentId LIKE %:studentId% AND DATE(p.paymentDate) = :paymentDate")
-    Page<Payment> findByClassNameAndStudentIdContainingAndPaymentDate(
+    @Query("SELECT p FROM Payment p WHERE p.schoolId = :schoolId AND p.className = :className AND p.studentId LIKE %:studentId% AND DATE(p.paymentDate) = :paymentDate")
+    Page<Payment> findBySchoolIdAndClassNameAndStudentIdContainingAndPaymentDate(
+            @Param("schoolId") Long schoolId,
             @Param("className") String className,
             @Param("studentId") String studentId,
             @Param("paymentDate") LocalDate paymentDate,
             Pageable pageable);
-    
-    Page<Payment> findByClassNameAndStudentIdContaining(String className, String studentId, Pageable pageable);
 
-    @Query("SELECT p FROM Payment p WHERE p.className = :className AND DATE(p.paymentDate) = :paymentDate")
-    Page<Payment> findByClassNameAndPaymentDate(
+    Page<Payment> findBySchoolIdAndClassNameAndStudentIdContaining(Long schoolId, String className, String studentId, Pageable pageable);
+
+    @Query("SELECT p FROM Payment p WHERE p.schoolId = :schoolId AND p.className = :className AND DATE(p.paymentDate) = :paymentDate")
+    Page<Payment> findBySchoolIdAndClassNameAndPaymentDate(
+            @Param("schoolId") Long schoolId,
             @Param("className") String className,
             @Param("paymentDate") LocalDate paymentDate,
             Pageable pageable);
 
-    @Query("SELECT p FROM Payment p WHERE p.studentId LIKE %:studentId% AND DATE(p.paymentDate) = :paymentDate")
-    Page<Payment> findByStudentIdContainingAndPaymentDate(
+    @Query("SELECT p FROM Payment p WHERE p.schoolId = :schoolId AND p.studentId LIKE %:studentId% AND DATE(p.paymentDate) = :paymentDate")
+    Page<Payment> findBySchoolIdAndStudentIdContainingAndPaymentDate(
+            @Param("schoolId") Long schoolId,
             @Param("studentId") String studentId,
             @Param("paymentDate") LocalDate paymentDate,
             Pageable pageable);
 
-    Page<Payment> findByClassName(String className, Pageable pageable);
+    Page<Payment> findBySchoolIdAndClassName(Long schoolId, String className, Pageable pageable);
 
-    Page<Payment> findByStudentIdContaining(String studentId, Pageable pageable);
+    Page<Payment> findBySchoolIdAndStudentIdContaining(Long schoolId, String studentId, Pageable pageable);
 
-    @Query("SELECT p FROM Payment p WHERE DATE(p.paymentDate) = :paymentDate")
-    Page<Payment> findByPaymentDate(@Param("paymentDate") LocalDate paymentDate, Pageable pageable);
+    @Query("SELECT p FROM Payment p WHERE p.schoolId = :schoolId AND DATE(p.paymentDate) = :paymentDate")
+    Page<Payment> findBySchoolIdAndPaymentDate(@Param("schoolId") Long schoolId, @Param("paymentDate") LocalDate paymentDate, Pageable pageable);
 
-    Page<Payment> findByStudentId(String studentId, Pageable pageable);
+    Page<Payment> findBySchoolIdAndStudentId(Long schoolId, String studentId, Pageable pageable);
 
     Payment findByPaymentId(String paymentId);
 
-    @Query("SELECT MAX(p.paymentDate) FROM Payment p WHERE p.studentId = :studentId AND p.session = :session")
-    java.util.Optional<java.time.LocalDateTime> findLatestPaymentDateByStudentIdAndSession(
+    @Query("SELECT MAX(p.paymentDate) FROM Payment p WHERE p.studentId = :studentId AND p.schoolId = :schoolId AND p.session = :session")
+    java.util.Optional<java.time.LocalDateTime> findLatestPaymentDateByStudentIdAndSchoolIdAndSession(
             @Param("studentId") String studentId,
+            @Param("schoolId") Long schoolId,
             @Param("session") String session);
 
-    /** Sum of amountPaid for a given calendar month and year (excludes platform fee). */
-    @Query("SELECT COALESCE(SUM(p.amountPaid - p.platformFee), 0) FROM Payment p WHERE EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
-    long sumAmountCollectedByMonthAndYear(@Param("month") int month, @Param("year") int year);
+    @Query("SELECT COALESCE(SUM(p.amountPaid - p.platformFee), 0) FROM Payment p WHERE p.schoolId = :schoolId AND EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
+    long sumAmountCollectedBySchoolIdAndMonthAndYear(@Param("schoolId") Long schoolId, @Param("month") int month, @Param("year") int year);
 
-    /** All payments on or after a given date — used for fee-trend aggregation. */
-    List<Payment> findByPaymentDateAfter(LocalDateTime since);
+    List<Payment> findBySchoolIdAndPaymentDateAfter(Long schoolId, LocalDateTime since);
 }

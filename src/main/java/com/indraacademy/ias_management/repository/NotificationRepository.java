@@ -1,6 +1,5 @@
 package com.indraacademy.ias_management.repository;
 
-
 import com.indraacademy.ias_management.entity.Notification;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -12,11 +11,15 @@ import java.util.List;
 
 @Repository
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
-    List<Notification> findByCreatedAtBefore(LocalDateTime twoMonthsAgo);
 
-    int deleteByCreatedAtBefore(LocalDateTime fourDaysAgo);
+    List<Notification> findBySchoolIdAndCreatedAtBefore(Long schoolId, LocalDateTime twoMonthsAgo);
 
-    List<Notification> findByCreatedByIsNotNull();
+    // Platform-wide lookup (used by cleanupOldNotifications scheduler — no schoolId filter)
+    List<Notification> findByCreatedAtBefore(LocalDateTime dateTime);
 
-    Page<Notification> findByCreatedByIsNotNull(Pageable pageable);
+    int deleteBySchoolIdAndCreatedAtBefore(Long schoolId, LocalDateTime fourDaysAgo);
+
+    List<Notification> findBySchoolIdAndCreatedByIsNotNull(Long schoolId);
+
+    Page<Notification> findBySchoolIdAndCreatedByIsNotNull(Long schoolId, Pageable pageable);
 }

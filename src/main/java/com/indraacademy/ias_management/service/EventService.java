@@ -42,6 +42,7 @@ public class EventService {
 
         try {
             event.setCreatedBy(securityUtil.getUsername());
+            event.setSchoolId(securityUtil.getSchoolId());
 
             LocalDateTime now = LocalDateTime.now();
             event.setCreatedAt(now.toLocalDate());
@@ -101,7 +102,7 @@ public class EventService {
             LocalDate firstDayOfMonth = LocalDate.of(year, month, 1);
             LocalDate lastDayOfMonth = firstDayOfMonth.withDayOfMonth(firstDayOfMonth.lengthOfMonth());
 
-            List<Event> events = eventRepository.findByStartDateLessThanEqualAndEndDateGreaterThanEqual(lastDayOfMonth, firstDayOfMonth);
+            List<Event> events = eventRepository.findBySchoolIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(securityUtil.getSchoolId(), lastDayOfMonth, firstDayOfMonth);
             events.forEach(this::resolveImageUrl);
             log.info("Found {} events for year: {} and month: {}", events.size(), year, month);
             return events;

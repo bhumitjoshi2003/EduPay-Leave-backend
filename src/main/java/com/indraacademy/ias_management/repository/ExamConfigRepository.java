@@ -8,8 +8,14 @@ import java.util.List;
 
 @Repository
 public interface ExamConfigRepository extends JpaRepository<ExamConfig, Long> {
-    List<ExamConfig> findBySessionAndClassName(String session, String className);
-    List<ExamConfig> findBySession(String session);
-    List<ExamConfig> findByClassName(String className);
-    boolean existsBySessionAndClassNameAndExamName(String session, String className, String examName);
+
+    List<ExamConfig> findBySchoolId(Long schoolId);
+
+    List<ExamConfig> findBySessionAndClassNameAndSchoolId(String session, String className, Long schoolId);
+
+    List<ExamConfig> findBySessionAndSchoolId(String session, Long schoolId);
+
+    List<ExamConfig> findByClassNameAndSchoolId(String className, Long schoolId);
+
+    boolean existsBySessionAndClassNameAndExamNameAndSchoolId(String session, String className, String examName, Long schoolId);
 }

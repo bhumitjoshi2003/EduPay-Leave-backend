@@ -54,7 +54,7 @@ public class TeacherService {
         }
         log.info("Fetching teacher with ID: {}", teacherId);
         try {
-            return teacherRepository.findById(teacherId);
+            return teacherRepository.findByTeacherIdAndSchoolId(teacherId, securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Data access error fetching teacher with ID: {}", teacherId, e);
             throw new RuntimeException("Failed to retrieve teacher data.", e);
@@ -65,7 +65,7 @@ public class TeacherService {
     public List<Teacher> getAllTeachers() {
         log.info("Fetching all teachers.");
         try {
-            return teacherRepository.findAll();
+            return teacherRepository.findBySchoolId(securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Data access error fetching all teachers.", e);
             throw new RuntimeException("Failed to retrieve list of teachers.", e);
@@ -82,13 +82,15 @@ public class TeacherService {
         log.info("Updating teacher with ID: {}", teacher.getTeacherId());
 
         try {
-            Optional<Teacher> existingTeacher = teacherRepository.findById(teacher.getTeacherId());
+            Long schoolId = securityUtil.getSchoolId();
+            Optional<Teacher> existingTeacher = teacherRepository.findByTeacherIdAndSchoolId(teacher.getTeacherId(), schoolId);
 
             String oldValue = null;
             if(existingTeacher.isPresent()){
                 oldValue = objectMapper.writeValueAsString(existingTeacher.get());
             }
 
+            teacher.setSchoolId(schoolId);
             Teacher savedTeacher = teacherRepository.save(teacher);
 
             auditService.logUpdate(
@@ -118,11 +120,13 @@ public class TeacherService {
         log.info("Attempting to add new teacher with ID: {}", teacher.getTeacherId());
 
         try {
-            Optional<Teacher> existingTeacher = teacherRepository.findById(teacher.getTeacherId());
+            Long schoolId = securityUtil.getSchoolId();
+            Optional<Teacher> existingTeacher = teacherRepository.findByTeacherIdAndSchoolId(teacher.getTeacherId(), schoolId);
             if (existingTeacher.isPresent()) {
                 log.warn("Teacher with ID {} already exists.", teacher.getTeacherId());
                 throw new IllegalArgumentException("Teacher with ID " + teacher.getTeacherId() + " already exists.");
             }
+            teacher.setSchoolId(schoolId);
             Teacher savedTeacher = teacherRepository.save(teacher);
 
             auditService.log(
@@ -158,7 +162,7 @@ public class TeacherService {
             throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
         }
 
-        Teacher teacher = teacherRepository.findById(teacherId)
+        Teacher teacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + teacherId));
 
         try {

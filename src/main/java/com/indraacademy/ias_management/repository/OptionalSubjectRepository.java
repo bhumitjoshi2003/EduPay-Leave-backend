@@ -9,8 +9,9 @@ import java.util.List;
 
 @Repository
 public interface OptionalSubjectRepository extends JpaRepository<OptionalSubject, Long> {
-    List<OptionalSubject> findByGroupId(Long groupId);
+
+    List<OptionalSubject> findByGroupIdAndSchoolId(Long groupId, Long schoolId);
 
     @Transactional
-    void deleteByGroupId(Long groupId);
+    void deleteByGroupIdAndSchoolId(Long groupId, Long schoolId);
 }

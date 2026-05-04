@@ -10,11 +10,11 @@ import java.util.List;
 @Repository
 public interface TimetableRepository extends JpaRepository<TimetableEntry, Long> {
 
-    List<TimetableEntry> findByClassNameOrderByDayAscPeriodNumberAsc(String className);
+    List<TimetableEntry> findByClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(String className, Long schoolId);
 
-    List<TimetableEntry> findByTeacherIdOrderByDayAscPeriodNumberAsc(String teacherId);
+    List<TimetableEntry> findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc(String teacherId, Long schoolId);
 
-    boolean existsByClassNameAndDayAndPeriodNumber(String className, Day day, Integer periodNumber);
+    boolean existsByClassNameAndDayAndPeriodNumberAndSchoolId(String className, Day day, Integer periodNumber, Long schoolId);
 
-    boolean existsByClassNameAndDayAndPeriodNumberAndIdNot(String className, Day day, Integer periodNumber, Long id);
+    boolean existsByClassNameAndDayAndPeriodNumberAndSchoolIdAndIdNot(String className, Day day, Integer periodNumber, Long schoolId, Long id);
 }

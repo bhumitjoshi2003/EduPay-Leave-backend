@@ -31,12 +31,12 @@ public class FeeStructureService {
     @Autowired
     private FeeStructureRepository feeStructureRepository;
 
-    @Cacheable(value = "fee-structures", key = "'all'")
     @Transactional(readOnly = true)
     public List<FeeStructure> getAllRecords() {
         log.info("Attempting to fetch all fee structure records.");
+        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
-            List<FeeStructure> fees = feeStructureRepository.findAll();
+            List<FeeStructure> fees = feeStructureRepository.findBySchoolId(securityUtil.getSchoolId());
             log.info("Successfully fetched {} fee structure records.", fees.size());
             return fees;
         } catch (DataAccessException e) {
@@ -53,8 +53,9 @@ public class FeeStructureService {
             return Collections.emptyList();
         }
         log.info("Fetching fee structures for academic year: {}", academicYear);
+        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
-            List<FeeStructure> fees = feeStructureRepository.findByAcademicYear(academicYear);
+            List<FeeStructure> fees = feeStructureRepository.findByAcademicYearAndSchoolId(academicYear, securityUtil.getSchoolId());
             log.info("Found {} fee structure records for academic year: {}", fees.size(), academicYear);
             return fees;
         } catch (DataAccessException e) {
@@ -71,8 +72,9 @@ public class FeeStructureService {
             return null;
         }
         log.info("Fetching fee structure for academic year: {} and class: {}", academicYear, className);
+        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
-            FeeStructure fee = feeStructureRepository.findByAcademicYearAndClassName(academicYear, className);
+            FeeStructure fee = feeStructureRepository.findByAcademicYearAndClassNameAndSchoolId(academicYear, className, securityUtil.getSchoolId());
             if (fee == null) {
                 log.warn("Fee structure not found for year: {} and class: {}", academicYear, className);
             } else {
@@ -101,15 +103,16 @@ public class FeeStructureService {
 
         log.info("Updating fee structures for academic year: {}", academicYear);
 
+        Long schoolId = securityUtil.getSchoolId();
         try {
             // Capture old state
             List<FeeStructure> existingFees =
-                    feeStructureRepository.findByAcademicYear(academicYear);
+                    feeStructureRepository.findByAcademicYearAndSchoolId(academicYear, schoolId);
 
             String oldValue = objectMapper.writeValueAsString(existingFees);
 
             if (!existingFees.isEmpty()) {
-                feeStructureRepository.deleteAll(existingFees);
+                feeStructureRepository.deleteByAcademicYearAndSchoolId(academicYear, schoolId);
             }
 
             List<FeeStructure> savedFees = new ArrayList<>();
@@ -129,6 +132,7 @@ public class FeeStructureService {
                 newFee.setEcaProject(fee.getEcaProject());
                 newFee.setExaminationFee(fee.getExaminationFee());
                 newFee.setLabCharges(fee.getLabCharges());
+                newFee.setSchoolId(schoolId);
 
                 savedFees.add(feeStructureRepository.save(newFee));
             }
@@ -168,6 +172,7 @@ public class FeeStructureService {
         }
 
         log.info("Creating new fee session for academic year: {}", academicYear);
+        Long schoolId = securityUtil.getSchoolId();
 
         try {
             List<FeeStructure> savedFees = new ArrayList<>();
@@ -187,6 +192,7 @@ public class FeeStructureService {
                 newFee.setEcaProject(fee.getEcaProject());
                 newFee.setExaminationFee(fee.getExaminationFee());
                 newFee.setLabCharges(fee.getLabCharges());
+                newFee.setSchoolId(schoolId);
 
                 savedFees.add(feeStructureRepository.save(newFee));
             }

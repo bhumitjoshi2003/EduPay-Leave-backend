@@ -143,6 +143,7 @@ public class TeacherBulkImportService {
         user.setEmail(email);
         user.setRole(role);
         user.setPassword(passwordEncoder.encode(rawPassword));
+        user.setSchoolId(securityUtil.getSchoolId());
         userRepository.save(user);
         log.info("Bulk import: created User account for teacherId={} (password=DOB? {})",
                 teacherId, dob != null);

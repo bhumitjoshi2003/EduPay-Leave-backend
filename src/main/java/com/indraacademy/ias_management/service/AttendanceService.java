@@ -57,13 +57,20 @@ public class AttendanceService {
         log.info("Saving attendance for date: {} and class: {}", absentDate, className);
 
         try {
+            Long schoolId = securityUtil.getSchoolId();
+
+            // Set schoolId on each attendance record before saving
+            for (Attendance a : attendanceList) {
+                a.setSchoolId(schoolId);
+            }
+
             // Capture old state before deletion
             List<Attendance> oldRecords =
-                    attendanceRepository.findByDateAndClassName(absentDate, className);
+                    attendanceRepository.findByDateAndClassNameAndSchoolId(absentDate, className, schoolId);
 
             String oldValue = objectMapper.writeValueAsString(oldRecords);
 
-            attendanceRepository.deleteByDateAndClassName(absentDate, className);
+            attendanceRepository.deleteByDateAndClassNameAndSchoolId(absentDate, className, schoolId);
             attendanceRepository.saveAll(attendanceList);
 
             auditService.log(
@@ -95,7 +102,7 @@ public class AttendanceService {
         }
         log.info("Fetching attendance for date: {} and class: {}", absentDate, className);
         try {
-            List<Attendance> attendanceList = attendanceRepository.findByDateAndClassName(absentDate, className);
+            List<Attendance> attendanceList = attendanceRepository.findByDateAndClassNameAndSchoolId(absentDate, className, securityUtil.getSchoolId());
             log.info("Found {} attendance records for date: {} and class: {}", attendanceList.size(), absentDate, className);
             return attendanceList;
         } catch (DataAccessException e) {
@@ -138,9 +145,9 @@ public class AttendanceService {
         long totalWorkingDays;
 
         try {
-            studentAbsentCount = attendanceRepository.countAbsences(studentId, year, month);
+            studentAbsentCount = attendanceRepository.countAbsences(studentId, securityUtil.getSchoolId(), year, month);
             // dummy student "X" = total working days (days school was open)
-            totalWorkingDays = attendanceRepository.countWorkingDaysForClass(className, year, month);
+            totalWorkingDays = attendanceRepository.countWorkingDaysForClass(className, securityUtil.getSchoolId(), year, month);
         } catch (DataAccessException e) {
             log.error("Data access error calculating absence counts for student ID: {}", studentId, e);
             throw new RuntimeException("Could not calculate attendance counts", e);
@@ -168,7 +175,7 @@ public class AttendanceService {
 
                 LocalDate joinDate = studentJoiningDate;
                 try {
-                    long daysBeforeJoin = attendanceRepository.countWorkingDaysBeforeJoin(className, year, month, joinDate);
+                    long daysBeforeJoin = attendanceRepository.countWorkingDaysBeforeJoin(className, securityUtil.getSchoolId(), year, month, joinDate);
                     totalWorkingDays -= daysBeforeJoin;
                     log.debug("Adjusted total working days for student ID: {} due to mid-month joining. Adjusted by: {}",
                             studentId, daysBeforeJoin);
@@ -184,7 +191,7 @@ public class AttendanceService {
 
                 LocalDate leaveDate = studentLeavingDate;
                 try {
-                    long daysAfterLeave = attendanceRepository.countWorkingDaysAfterLeave(className, year, month, leaveDate);
+                    long daysAfterLeave = attendanceRepository.countWorkingDaysAfterLeave(className, securityUtil.getSchoolId(), year, month, leaveDate);
                     totalWorkingDays -= daysAfterLeave;
                     log.debug("Adjusted total working days for student ID: {} due to mid-month leaving. Adjusted by: {}",
                             studentId, daysAfterLeave);
@@ -240,7 +247,7 @@ public class AttendanceService {
             int startYear = Integer.parseInt(years[0]);
             int endYear = Integer.parseInt(years[1]);
 
-            long count = attendanceRepository.countUnappliedLeavesForAcademicYear(studentId, startYear, endYear);
+            long count = attendanceRepository.countUnappliedLeavesForAcademicYear(studentId, securityUtil.getSchoolId(), startYear, endYear);
             log.info("Total unapplied leave count for student ID: {} is {}", studentId, count);
             return count;
         } catch (NumberFormatException e) {
@@ -271,7 +278,7 @@ public class AttendanceService {
             LocalDate startDate = LocalDate.of(startYear, 4, 1);
             LocalDate endDate = LocalDate.of(endYear, 3, 31);
 
-            attendanceRepository.updateChargePaidForSession(studentId, startDate, endDate);
+            attendanceRepository.updateChargePaidForSession(studentId, securityUtil.getSchoolId(), startDate, endDate);
 
             String ipAddress = (request != null) ? request.getRemoteAddr() : "SYSTEM";
 
@@ -316,12 +323,13 @@ public class AttendanceService {
         }
 
         try {
+            Long schoolId = securityUtil.getSchoolId();
             List<Attendance> oldRecords =
-                    attendanceRepository.findByDateAndClassName(date, className);
+                    attendanceRepository.findByDateAndClassNameAndSchoolId(date, className, schoolId);
 
             String oldValue = objectMapper.writeValueAsString(oldRecords);
 
-            attendanceRepository.deleteByDateAndClassName(date, className);
+            attendanceRepository.deleteByDateAndClassNameAndSchoolId(date, className, schoolId);
 
             auditService.log(
                     securityUtil.getUsername(),
@@ -352,7 +360,7 @@ public class AttendanceService {
             LocalDate startDate = LocalDate.of(year, month, 1);
             LocalDate endDate = startDate.withDayOfMonth(startDate.lengthOfMonth());
 
-            return attendanceRepository.findByStudentIdAndClassNameAndDateRange(studentId, className, startDate, endDate);
+            return attendanceRepository.findByStudentIdAndClassNameAndDateRange(studentId, securityUtil.getSchoolId(), className, startDate, endDate);
         } catch (Exception e) {
             log.error("Error fetching attendance for student: {} in class: {}", studentId, className, e);
             throw new RuntimeException("Could not retrieve attendance records");
@@ -365,7 +373,7 @@ public class AttendanceService {
     public AttendanceSummaryDTO getStudentSummary(String studentId, String type,
                                                    Integer month, Integer year,
                                                    String session) {
-        Student student = studentRepository.findByStudentId(studentId)
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
         String className = student.getClassName();
@@ -384,8 +392,8 @@ public class AttendanceService {
                     ? joiningDate : start;
 
             // NOTE: DO NOT filter 'X' from countDistinctWorkingDays — see getClassSummary.
-            long workingDays = attendanceRepository.countDistinctWorkingDays(className, effectiveStart, end);
-            long absences    = attendanceRepository.countByStudentIdAndDateBetween(studentId, start, end);
+            long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), effectiveStart, end);
+            long absences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
             long present     = Math.max(0, workingDays - absences);
 
             AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
@@ -408,8 +416,8 @@ public class AttendanceService {
             LocalDate start = LocalDate.of(startYear, 4, 1);
             LocalDate end   = LocalDate.of(endYear, 3, 31);
 
-            long totalWorkingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
-            long totalAbsences    = attendanceRepository.countByStudentIdAndDateBetween(studentId, start, end);
+            long totalWorkingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
+            long totalAbsences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
             long totalPresent     = Math.max(0, totalWorkingDays - totalAbsences);
 
             // Monthly breakdown: Apr(startYear)…Dec(startYear), Jan(endYear)…Mar(endYear)
@@ -441,7 +449,7 @@ public class AttendanceService {
     public List<ClassAttendanceSummaryDTO> getClassSummary(String className, String type,
                                                             Integer month, Integer year,
                                                             String session) {
-        List<Student> students = studentRepository.findByClassName(className);
+        List<Student> students = studentRepository.findByClassNameAndSchoolId(className, securityUtil.getSchoolId());
 
         LocalDate start;
         LocalDate end;
@@ -467,7 +475,7 @@ public class AttendanceService {
         // Fetch all absences for the class in one query, group by studentId.
         // 'X' rows (studentId = "X") are excluded here — they are sentinel records used
         // to mark all-present days and must never appear in a student's absence count.
-        List<Attendance> allAbsences = attendanceRepository.findByClassNameAndDateBetween(className, start, end);
+        List<Attendance> allAbsences = attendanceRepository.findByClassNameAndSchoolIdAndDateBetween(className, securityUtil.getSchoolId(), start, end);
         Map<String, Long> absencesByStudent = allAbsences.stream()
                 .filter(a -> !"X".equals(a.getStudentId()))
                 .collect(Collectors.groupingBy(Attendance::getStudentId, Collectors.counting()));
@@ -476,7 +484,7 @@ public class AttendanceService {
         // attendance is submitted, including all-present days. These rows are essential —
         // they make all-present days visible to this COUNT(DISTINCT date) query.
         // DO NOT filter out 'X' from countDistinctWorkingDays.
-        long workingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
+        long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
 
         List<ClassAttendanceSummaryDTO> result = students.stream()
                 .map(s -> {
@@ -503,8 +511,8 @@ public class AttendanceService {
         LocalDate start = LocalDate.of(year, monthNum, 1);
         LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
 
-        long workingDays = attendanceRepository.countDistinctWorkingDays(className, start, end);
-        long absences    = attendanceRepository.countByStudentIdAndDateBetween(studentId, start, end);
+        long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
+        long absences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
         long present     = Math.max(0, workingDays - absences);
         String monthName = Month.of(monthNum).getDisplayName(TextStyle.FULL, Locale.ENGLISH);
 
@@ -513,7 +521,7 @@ public class AttendanceService {
 
     @Transactional(readOnly = true)
     public DailyAttendanceDTO getDailyAttendance(String studentId, int month, int year) {
-        Student student = studentRepository.findByStudentId(studentId)
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
         LocalDate start = LocalDate.of(year, month, 1);
@@ -524,8 +532,9 @@ public class AttendanceService {
         // so they intentionally make those days visible here as "school was open".
         // Do NOT filter out 'X' from this query — without it, all-present days would
         // be indistinguishable from holidays.
+        Long schoolId = securityUtil.getSchoolId();
         List<String> schoolDays = attendanceRepository
-                .findByClassNameAndDateBetween(student.getClassName(), start, end)
+                .findByClassNameAndSchoolIdAndDateBetween(student.getClassName(), schoolId, start, end)
                 .stream()
                 .map(a -> a.getDate().toString())
                 .distinct()
@@ -534,7 +543,7 @@ public class AttendanceService {
 
         // Absent days = dates this student was marked absent
         List<String> absentDays = attendanceRepository
-                .findByStudentIdAndDateBetween(studentId, start, end)
+                .findByStudentIdAndSchoolIdAndDateBetween(studentId, schoolId, start, end)
                 .stream()
                 .map(a -> a.getDate().toString())
                 .sorted()

@@ -55,7 +55,7 @@ public class StudentFeesService {
         }
         log.info("Fetching student fees for ID: {} and Year: {}", studentId, year);
         try {
-            return studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, year);
+            return studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, securityUtil.getSchoolId(), year);
         } catch (DataAccessException e) {
             log.error("Data access error fetching fees for student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve student fees due to data access issue.", e);
@@ -135,7 +135,7 @@ public class StudentFeesService {
                 int monthNumber = i + 1;
 
                 try {
-                    Optional<StudentFees> optionalStudentFees = Optional.ofNullable(studentFeesRepository.findByStudentIdAndYearAndMonth(studentId, session, monthNumber));
+                    Optional<StudentFees> optionalStudentFees = Optional.ofNullable(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(studentId, securityUtil.getSchoolId(), session, monthNumber));
 
                     if (optionalStudentFees.isPresent()) {
                         StudentFees studentFees = optionalStudentFees.get();
@@ -243,7 +243,7 @@ public class StudentFeesService {
         }
         log.info("Fetching student fee for ID: {}, Year: {}, Month: {}", studentId, year, month);
         try {
-            return Optional.ofNullable(studentFeesRepository.findByStudentIdAndYearAndMonth(studentId, year, month));
+            return Optional.ofNullable(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(studentId, securityUtil.getSchoolId(), year, month));
         } catch (DataAccessException e) {
             log.error("Data access error fetching single fee record for student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve student fee record due to data access issue.", e);
@@ -272,7 +272,7 @@ public class StudentFeesService {
         }
         log.info("Fetching distinct years for student ID: {}", studentId);
         try {
-            return studentFeesRepository.findDistinctYearsByStudentId(studentId);
+            return studentFeesRepository.findDistinctYearsByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Data access error fetching distinct years for student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve distinct years due to data access issue.", e);
@@ -290,7 +290,8 @@ public class StudentFeesService {
         log.info("Updating class name for student ID: {} to {} in academic year: {}", studentId, newClassName, academicYear);
 
         try {
-            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, academicYear);
+            Long schoolId = securityUtil.getSchoolId();
+            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, academicYear);
             if (studentFeesList.isEmpty()) {
                 log.info("No StudentFees records found for student ID: {} in academic year: {}. Skipping update.", studentId, academicYear);
                 return;
@@ -347,6 +348,7 @@ public class StudentFeesService {
             endMonth = 12;
         }
 
+        Long schoolId = securityUtil.getSchoolId();
         try {
             for (int month = startMonth; month <= endMonth; month++) {
                 StudentFees studentFee = new StudentFees();
@@ -359,6 +361,7 @@ public class StudentFeesService {
                 studentFee.setDistance(Objects.requireNonNullElse(distance, 0.0));
                 studentFee.setManuallyPaid(false);
                 studentFee.setManualPaymentReceived(null);
+                studentFee.setSchoolId(schoolId);
                 studentFeesRepository.save(studentFee);
             }
 
@@ -395,7 +398,8 @@ public class StudentFeesService {
         log.info("Updating bus fees for student ID: {} starting from academic month {} in year {}", studentId, effectiveFromMonth, academicYear);
 
         try {
-            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndYearOrderByMonthAsc(studentId, academicYear);
+            Long schoolId = securityUtil.getSchoolId();
+            List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, academicYear);
 
             if (studentFeesList.isEmpty()) {
                 log.info("No StudentFees records found for student ID: {} in academic year: {}. Skipping bus fees update.", studentId, academicYear);

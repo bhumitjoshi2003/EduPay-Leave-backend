@@ -15,60 +15,59 @@ import java.util.List;
 public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
 
     @Transactional
-    void deleteByDateAndClassName(LocalDate date, String className);
+    void deleteByDateAndClassNameAndSchoolId(LocalDate date, String className, Long schoolId);
 
-    List<Attendance> findByDateAndClassName(LocalDate date, String className);
+    List<Attendance> findByDateAndClassNameAndSchoolId(LocalDate date, String className, Long schoolId);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")
-    long countAbsences(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month);
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")
+    long countAbsences(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("year") int year, @Param("month") int month);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.chargePaid = false " +
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND a.chargePaid = false " +
             "AND ((EXTRACT(YEAR FROM a.date) = :startYear AND EXTRACT(MONTH FROM a.date) >= 4) " +
             "OR (EXTRACT(YEAR FROM a.date) = :endYear AND EXTRACT(MONTH FROM a.date) <= 3))")
-    long countUnappliedLeavesForAcademicYear(@Param("studentId") String studentId, @Param("startYear") int startYear, @Param("endYear") int endYear);
+    long countUnappliedLeavesForAcademicYear(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("startYear") int startYear, @Param("endYear") int endYear);
 
     @Transactional
     @Modifying
-    @Query("UPDATE Attendance a SET a.chargePaid = true WHERE a.studentId = :studentId " +
+    @Query("UPDATE Attendance a SET a.chargePaid = true WHERE a.studentId = :studentId AND a.schoolId = :schoolId " +
             "AND a.date >= :startDate AND a.date <= :endDate AND a.chargePaid = false")
-    void updateChargePaidForSession(@Param("studentId") String studentId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
+    void updateChargePaidForSession(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date < :joinDate")
-    long countAbsencesBeforeJoin(@Param("studentId") String studentId, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate);
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date < :joinDate")
+    long countAbsencesBeforeJoin(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate);
 
+    // Used by scheduler — no schoolId filter (runs platform-wide)
     List<Attendance> findByDate(LocalDate today);
 
-    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")
-    long countWorkingDaysForClass(@Param("className") String className, @Param("year") int year, @Param("month") int month);
+    List<Attendance> findByDateAndSchoolId(LocalDate date, Long schoolId);
 
-    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date < :joinDate")
-    long countWorkingDaysBeforeJoin(@Param("className") String className, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate);
+    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND a.schoolId = :schoolId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")
+    long countWorkingDaysForClass(@Param("className") String className, @Param("schoolId") Long schoolId, @Param("year") int year, @Param("month") int month);
 
-    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date > :leaveDate")
-    long countWorkingDaysAfterLeave(@Param("className") String className, @Param("year") int year, @Param("month") int month, @Param("leaveDate") LocalDate leaveDate);
+    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND a.schoolId = :schoolId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date < :joinDate")
+    long countWorkingDaysBeforeJoin(@Param("className") String className, @Param("schoolId") Long schoolId, @Param("year") int year, @Param("month") int month, @Param("joinDate") LocalDate joinDate);
 
-    @Query("SELECT a FROM Attendance a WHERE a.studentId = :studentId " +
-            "AND a.className = :className " +
-            "AND a.date >= :startDate AND a.date <= :endDate")
+    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND a.schoolId = :schoolId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month AND a.date > :leaveDate")
+    long countWorkingDaysAfterLeave(@Param("className") String className, @Param("schoolId") Long schoolId, @Param("year") int year, @Param("month") int month, @Param("leaveDate") LocalDate leaveDate);
+
+    @Query("SELECT a FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId " +
+            "AND a.className = :className AND a.date >= :startDate AND a.date <= :endDate")
     List<Attendance> findByStudentIdAndClassNameAndDateRange(
             @Param("studentId") String studentId,
+            @Param("schoolId") Long schoolId,
             @Param("className") String className,
             @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate
-    );
+            @Param("endDate") LocalDate endDate);
 
-    /** Count distinct dates on which attendance was marked for a class in a date range (= working days). */
-    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND a.date >= :startDate AND a.date <= :endDate")
+    @Query("SELECT COUNT(DISTINCT a.date) FROM Attendance a WHERE a.className = :className AND a.schoolId = :schoolId AND a.date >= :startDate AND a.date <= :endDate")
     long countDistinctWorkingDays(@Param("className") String className,
+                                  @Param("schoolId") Long schoolId,
                                   @Param("startDate") LocalDate startDate,
                                   @Param("endDate") LocalDate endDate);
 
-    /** Count absence records for a student in a date range. */
-    long countByStudentIdAndDateBetween(String studentId, LocalDate startDate, LocalDate endDate);
+    long countByStudentIdAndSchoolIdAndDateBetween(String studentId, Long schoolId, LocalDate startDate, LocalDate endDate);
 
-    /** Fetch absence records for a student in a date range. */
-    List<Attendance> findByStudentIdAndDateBetween(String studentId, LocalDate startDate, LocalDate endDate);
+    List<Attendance> findByStudentIdAndSchoolIdAndDateBetween(String studentId, Long schoolId, LocalDate startDate, LocalDate endDate);
 
-    /** Fetch all absence records for a class in a date range (used for bulk class-summary calculation). */
-    List<Attendance> findByClassNameAndDateBetween(String className, LocalDate startDate, LocalDate endDate);
+    List<Attendance> findByClassNameAndSchoolIdAndDateBetween(String className, Long schoolId, LocalDate startDate, LocalDate endDate);
 }

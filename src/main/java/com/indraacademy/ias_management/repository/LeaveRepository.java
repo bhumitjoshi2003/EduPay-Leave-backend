@@ -14,32 +14,32 @@ import java.util.List;
 @Repository
 public interface LeaveRepository extends JpaRepository<Leave, Long> {
 
-    void deleteByStudentIdAndLeaveDate(String studentId, String leaveDate);
+    void deleteByStudentIdAndLeaveDateAndSchoolId(String studentId, String leaveDate, Long schoolId);
 
-    Page<Leave> findByStudentIdContaining(String studentId, Pageable pageable);
+    Page<Leave> findByStudentIdContainingAndSchoolId(String studentId, Long schoolId, Pageable pageable);
 
-    Page<Leave> findByLeaveDate(String leaveDate, Pageable pageable);
+    Page<Leave> findByLeaveDateAndSchoolId(String leaveDate, Long schoolId, Pageable pageable);
 
-    Page<Leave> findByStudentIdContainingAndLeaveDate(String studentId, String leaveDate, Pageable pageable);
+    Page<Leave> findByStudentIdContainingAndLeaveDateAndSchoolId(String studentId, String leaveDate, Long schoolId, Pageable pageable);
 
-    Page<Leave> findByClassNameAndStudentIdContainingAndLeaveDate(String className, String studentId, String leaveDate, Pageable pageable);
+    Page<Leave> findByClassNameAndStudentIdContainingAndLeaveDateAndSchoolId(String className, String studentId, String leaveDate, Long schoolId, Pageable pageable);
 
-    Page<Leave> findByClassNameAndStudentIdContaining(String className, String studentId, Pageable pageable);
+    Page<Leave> findByClassNameAndStudentIdContainingAndSchoolId(String className, String studentId, Long schoolId, Pageable pageable);
 
-    Page<Leave> findByClassNameAndLeaveDate(String className, String leaveDate, Pageable pageable);
+    Page<Leave> findByClassNameAndLeaveDateAndSchoolId(String className, String leaveDate, Long schoolId, Pageable pageable);
 
-    Page<Leave> findByClassName(String className, Pageable pageable);
+    Page<Leave> findByClassNameAndSchoolId(String className, Long schoolId, Pageable pageable);
 
-    Page<Leave> findByStudentId(String studentId, Pageable pageable);
+    Page<Leave> findByStudentIdAndSchoolId(String studentId, Long schoolId, Pageable pageable);
 
-    @Query("SELECT studentId FROM Leave WHERE leaveDate = :date AND className = :className")
-    List<String> findByLeaveDateAndClassName(@Param("date") String date, @Param("className") String className);
+    @Query("SELECT l.studentId FROM Leave l WHERE l.leaveDate = :date AND l.className = :className AND l.schoolId = :schoolId")
+    List<String> findByLeaveDateAndClassNameAndSchoolId(@Param("date") String date, @Param("className") String className, @Param("schoolId") Long schoolId);
 
-    Leave findByStudentIdAndLeaveDate(String studentId, String leaveDate);
+    Leave findByStudentIdAndLeaveDateAndSchoolId(String studentId, String leaveDate, Long schoolId);
 
-    long countByAppliedDateBetween(java.time.LocalDateTime start, java.time.LocalDateTime end);
+    long countBySchoolIdAndAppliedDateBetween(Long schoolId, java.time.LocalDateTime start, java.time.LocalDateTime end);
 
-    long countByStatusAndAppliedDateBetween(LeaveStatus status, java.time.LocalDateTime start, java.time.LocalDateTime end);
+    long countByStatusAndSchoolIdAndAppliedDateBetween(LeaveStatus status, Long schoolId, java.time.LocalDateTime start, java.time.LocalDateTime end);
 
-    long countByStatus(LeaveStatus status);
+    long countByStatusAndSchoolId(LeaveStatus status, Long schoolId);
 }

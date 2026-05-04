@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import com.razorpay.Order;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
@@ -35,6 +36,7 @@ public class RazorpayService {
     @Autowired private EmailService emailService;
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private NotificationService notificationService;
+    @Autowired private SecurityUtil securityUtil;
 
     @Value("${razorpay.key.id}")
     private String keyId;
@@ -161,6 +163,7 @@ public class RazorpayService {
             payment.setAdditionalCharges((Integer) orderDetails.get("additionalCharges"));
             payment.setLateFees((Integer) orderDetails.get("lateFees"));
             payment.setPlatformFee((Integer) orderDetails.get("platformFee"));
+            payment.setSchoolId(securityUtil.getSchoolId());
 
             Payment savedPayment = paymentRepository.save(payment);
             log.info("Payment saved successfully to DB. Record ID: {}", savedPayment.getId());
@@ -186,7 +189,7 @@ public class RazorpayService {
             log.info("Payment success notification initiated for student ID: {}", studentId);
 
             // 5. Asynchronous Email Sending
-            Optional<Student> studentOptional = studentRepository.findById(studentId);
+            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
 
             if (studentOptional.isPresent()) {
                 Student student = studentOptional.get();

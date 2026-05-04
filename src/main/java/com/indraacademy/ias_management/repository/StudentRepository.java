@@ -14,42 +14,40 @@ import java.util.Optional;
 
 @Repository
 public interface StudentRepository extends JpaRepository<Student, String> {
+
+    // Platform-wide lookups (used by schedulers/controllers — no schoolId filter)
     List<Student> findByClassName(String className);
-
-    List<Student> findByClassNameAndStatus(String className, StudentStatus status);
-
-    List<Student> findByStatus(StudentStatus status);
-
-    @Modifying
-    @Query("""
-           update Student s
-           set s.status = 'UPCOMING'
-           where s.joiningDate > :today
-           """)
-    void updateStatusUpcoming(@Param("today") LocalDate today);
-
-    @Modifying
-    @Query("""
-           update Student s
-           set s.status = 'INACTIVE'
-           where s.leavingDate is not null
-             and s.leavingDate <= :today
-           """)
-    void updateStatusInactive(@Param("today") LocalDate today);
-
-    @Modifying
-    @Query("""
-           update Student s
-           set s.status = 'ACTIVE'
-           where (s.joiningDate is null or s.joiningDate <= :today)
-             and (s.leavingDate is null or s.leavingDate > :today)
-           """)
-    void updateStatusActive(@Param("today") LocalDate today);
 
     Optional<Student> findByStudentId(String studentId);
 
-    long countByStatus(StudentStatus status);
+    List<Student> findByClassNameAndSchoolId(String className, Long schoolId);
 
-    @Query("SELECT DISTINCT s.className FROM Student s WHERE s.status = 'ACTIVE' ORDER BY s.className")
-    List<String> findDistinctActiveClassNames();
+    List<Student> findByClassNameAndStatusAndSchoolId(String className, StudentStatus status, Long schoolId);
+
+    // Platform-wide status lookup (used by scheduler — no schoolId filter)
+    List<Student> findByStatus(StudentStatus status);
+
+    List<Student> findByStatusAndSchoolId(StudentStatus status, Long schoolId);
+
+    List<Student> findBySchoolId(Long schoolId);
+
+    Optional<Student> findByStudentIdAndSchoolId(String studentId, Long schoolId);
+
+    long countByStatusAndSchoolId(StudentStatus status, Long schoolId);
+
+    @Query("SELECT DISTINCT s.className FROM Student s WHERE s.status = 'ACTIVE' AND s.schoolId = :schoolId ORDER BY s.className")
+    List<String> findDistinctActiveClassNamesBySchoolId(@Param("schoolId") Long schoolId);
+
+    // Platform-wide status updates (run by scheduler across all schools)
+    @Modifying
+    @Query("UPDATE Student s SET s.status = 'UPCOMING' WHERE s.joiningDate > :today")
+    void updateStatusUpcoming(@Param("today") LocalDate today);
+
+    @Modifying
+    @Query("UPDATE Student s SET s.status = 'INACTIVE' WHERE s.leavingDate IS NOT NULL AND s.leavingDate <= :today")
+    void updateStatusInactive(@Param("today") LocalDate today);
+
+    @Modifying
+    @Query("UPDATE Student s SET s.status = 'ACTIVE' WHERE (s.joiningDate IS NULL OR s.joiningDate <= :today) AND (s.leavingDate IS NULL OR s.leavingDate > :today)")
+    void updateStatusActive(@Param("today") LocalDate today);
 }

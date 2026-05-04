@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.dto.OptionalGroupResponseDTO;
 import com.indraacademy.ias_management.dto.StreamResponseDTO;
 import com.indraacademy.ias_management.entity.*;
 import com.indraacademy.ias_management.repository.*;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,7 @@ public class SubjectConfigService {
     @Autowired private StreamCoreSubjectRepository streamCoreSubjectRepository;
     @Autowired private OptionalSubjectGroupRepository optionalSubjectGroupRepository;
     @Autowired private OptionalSubjectRepository optionalSubjectRepository;
+    @Autowired private SecurityUtil securityUtil;
 
     // ─── ClassSubject ─────────────────────────────────────────────────────────
 
@@ -33,7 +35,8 @@ public class SubjectConfigService {
     @Transactional(readOnly = true)
     public List<ClassSubject> getClassSubjects(String className) {
         log.info("Fetching subjects for class {}", className);
-        return classSubjectRepository.findByClassName(className);
+        // TODO: cache key should incorporate schoolId for multi-tenancy
+        return classSubjectRepository.findByClassNameAndSchoolId(className, securityUtil.getSchoolId());
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
@@ -41,13 +44,15 @@ public class SubjectConfigService {
         if (className == null || className.isBlank() || subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("className and subjectName are required.");
         }
-        if (classSubjectRepository.existsByClassNameAndSubjectName(className, subjectName)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (classSubjectRepository.existsByClassNameAndSubjectNameAndSchoolId(className, subjectName, schoolId)) {
             throw new IllegalArgumentException(
                     "Subject '" + subjectName + "' already exists for class " + className + ".");
         }
         ClassSubject cs = new ClassSubject();
         cs.setClassName(className);
         cs.setSubjectName(subjectName);
+        cs.setSchoolId(schoolId);
         ClassSubject saved = classSubjectRepository.save(cs);
         log.info("Added subject '{}' to class {}", subjectName, className);
         return saved;
@@ -69,10 +74,12 @@ public class SubjectConfigService {
     @Transactional(readOnly = true)
     public List<StreamResponseDTO> getAllStreams() {
         log.info("Fetching all streams with core subjects");
-        return academicStreamRepository.findAll().stream()
+        // TODO: cache key should incorporate schoolId for multi-tenancy
+        Long schoolId = securityUtil.getSchoolId();
+        return academicStreamRepository.findBySchoolId(schoolId).stream()
                 .map(stream -> {
                     List<StreamResponseDTO.CoreSubjectDTO> cores = streamCoreSubjectRepository
-                            .findByStreamId(stream.getId())
+                            .findByStreamIdAndSchoolId(stream.getId(), schoolId)
                             .stream()
                             .map(s -> new StreamResponseDTO.CoreSubjectDTO(s.getId(), s.getSubjectName()))
                             .collect(Collectors.toList());
@@ -86,11 +93,13 @@ public class SubjectConfigService {
         if (streamName == null || streamName.isBlank()) {
             throw new IllegalArgumentException("streamName is required.");
         }
-        if (academicStreamRepository.existsByStreamName(streamName)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (academicStreamRepository.existsByStreamNameAndSchoolId(streamName, schoolId)) {
             throw new IllegalArgumentException("Stream '" + streamName + "' already exists.");
         }
         AcademicStream stream = new AcademicStream();
         stream.setStreamName(streamName);
+        stream.setSchoolId(schoolId);
         AcademicStream saved = academicStreamRepository.save(stream);
         log.info("Added stream '{}'", streamName);
         return saved;
@@ -102,7 +111,7 @@ public class SubjectConfigService {
         if (!academicStreamRepository.existsById(id)) {
             throw new NoSuchElementException("Stream not found: " + id);
         }
-        streamCoreSubjectRepository.deleteByStreamId(id);
+        streamCoreSubjectRepository.deleteByStreamIdAndSchoolId(id, securityUtil.getSchoolId());
         academicStreamRepository.deleteById(id);
         log.info("Deleted stream id={} and its core subjects", id);
     }
@@ -117,13 +126,15 @@ public class SubjectConfigService {
         if (subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("subjectName is required.");
         }
-        if (streamCoreSubjectRepository.existsByStreamIdAndSubjectName(streamId, subjectName)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (streamCoreSubjectRepository.existsByStreamIdAndSubjectNameAndSchoolId(streamId, subjectName, schoolId)) {
             throw new IllegalArgumentException(
                     "Subject '" + subjectName + "' already exists in this stream.");
         }
         StreamCoreSubject scs = new StreamCoreSubject();
         scs.setStreamId(streamId);
         scs.setSubjectName(subjectName);
+        scs.setSchoolId(schoolId);
         StreamCoreSubject saved = streamCoreSubjectRepository.save(scs);
         log.info("Added core subject '{}' to stream id={}", subjectName, streamId);
         return saved;
@@ -145,10 +156,12 @@ public class SubjectConfigService {
     @Transactional(readOnly = true)
     public List<OptionalGroupResponseDTO> getAllOptionalGroups() {
         log.info("Fetching all optional subject groups");
-        return optionalSubjectGroupRepository.findAll().stream()
+        // TODO: cache key should incorporate schoolId for multi-tenancy
+        Long schoolId = securityUtil.getSchoolId();
+        return optionalSubjectGroupRepository.findBySchoolId(schoolId).stream()
                 .map(group -> {
                     List<OptionalGroupResponseDTO.OptionalSubjectDTO> subjects = optionalSubjectRepository
-                            .findByGroupId(group.getId())
+                            .findByGroupIdAndSchoolId(group.getId(), schoolId)
                             .stream()
                             .map(s -> new OptionalGroupResponseDTO.OptionalSubjectDTO(s.getId(), s.getSubjectName()))
                             .collect(Collectors.toList());
@@ -164,6 +177,7 @@ public class SubjectConfigService {
         }
         OptionalSubjectGroup group = new OptionalSubjectGroup();
         group.setGroupName(groupName);
+        group.setSchoolId(securityUtil.getSchoolId());
         OptionalSubjectGroup saved = optionalSubjectGroupRepository.save(group);
         log.info("Added optional subject group '{}'", groupName);
         return saved;
@@ -175,7 +189,7 @@ public class SubjectConfigService {
         if (!optionalSubjectGroupRepository.existsById(id)) {
             throw new NoSuchElementException("OptionalSubjectGroup not found: " + id);
         }
-        optionalSubjectRepository.deleteByGroupId(id);
+        optionalSubjectRepository.deleteByGroupIdAndSchoolId(id, securityUtil.getSchoolId());
         optionalSubjectGroupRepository.deleteById(id);
         log.info("Deleted OptionalSubjectGroup id={} and its subjects", id);
     }
@@ -193,6 +207,7 @@ public class SubjectConfigService {
         OptionalSubject os = new OptionalSubject();
         os.setGroupId(groupId);
         os.setSubjectName(subjectName);
+        os.setSchoolId(securityUtil.getSchoolId());
         OptionalSubject saved = optionalSubjectRepository.save(os);
         log.info("Added optional subject '{}' to group id={}", subjectName, groupId);
         return saved;

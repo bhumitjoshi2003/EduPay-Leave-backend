@@ -9,8 +9,9 @@ import java.util.Optional;
 
 @Repository
 public interface StudentStreamSelectionRepository extends JpaRepository<StudentStreamSelection, Long> {
-    Optional<StudentStreamSelection> findByStudentId(String studentId);
+
+    Optional<StudentStreamSelection> findByStudentIdAndSchoolId(String studentId, Long schoolId);
 
     @Transactional
-    void deleteByStudentId(String studentId);
+    void deleteByStudentIdAndSchoolId(String studentId, Long schoolId);
 }

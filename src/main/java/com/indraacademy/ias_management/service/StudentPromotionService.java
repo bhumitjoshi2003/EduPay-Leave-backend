@@ -42,7 +42,7 @@ public class StudentPromotionService {
 
     @Transactional(readOnly = true)
     public List<PromotionPreviewDTO> getPromotionPreview() {
-        List<Student> activeStudents = studentRepository.findByStatus(StudentStatus.ACTIVE);
+        List<Student> activeStudents = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, securityUtil.getSchoolId());
 
         Map<String, List<Student>> byClass = activeStudents.stream()
                 .collect(Collectors.groupingBy(Student::getClassName));
@@ -74,7 +74,7 @@ public class StudentPromotionService {
             String action    = decision.getAction();
 
             try {
-                Optional<Student> opt = studentRepository.findByStudentId(studentId);
+                Optional<Student> opt = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
                 if (opt.isEmpty()) {
                     errors.add(new PromotionResultDTO.PromotionError(studentId, "Student not found"));
                     continue;

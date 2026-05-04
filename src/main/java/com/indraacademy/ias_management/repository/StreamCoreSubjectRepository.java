@@ -9,9 +9,11 @@ import java.util.List;
 
 @Repository
 public interface StreamCoreSubjectRepository extends JpaRepository<StreamCoreSubject, Long> {
-    List<StreamCoreSubject> findByStreamId(Long streamId);
-    boolean existsByStreamIdAndSubjectName(Long streamId, String subjectName);
+
+    List<StreamCoreSubject> findByStreamIdAndSchoolId(Long streamId, Long schoolId);
+
+    boolean existsByStreamIdAndSubjectNameAndSchoolId(Long streamId, String subjectName, Long schoolId);
 
     @Transactional
-    void deleteByStreamId(Long streamId);
+    void deleteByStreamIdAndSchoolId(Long streamId, Long schoolId);
 }

@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.ExamSubjectEntry;
 import com.indraacademy.ias_management.repository.ClassSubjectRepository;
 import com.indraacademy.ias_management.repository.ExamConfigRepository;
 import com.indraacademy.ias_management.repository.ExamSubjectEntryRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,20 +34,23 @@ public class ExamConfigService {
     @Autowired private ExamConfigRepository examConfigRepository;
     @Autowired private ExamSubjectEntryRepository examSubjectEntryRepository;
     @Autowired private ClassSubjectRepository classSubjectRepository;
+    @Autowired private SecurityUtil securityUtil;
 
     // ─── ExamConfig ───────────────────────────────────────────────────────────
 
     @Cacheable(value = "exam-config", key = "#session + '-' + #className")
     @Transactional(readOnly = true)
     public List<ExamConfig> getExams(String session, String className) {
+        // TODO: cache key should incorporate schoolId for multi-tenancy
+        Long schoolId = securityUtil.getSchoolId();
         if (session != null && !session.isBlank() && className != null && !className.isBlank()) {
-            return examConfigRepository.findBySessionAndClassName(session, className);
+            return examConfigRepository.findBySessionAndClassNameAndSchoolId(session, className, schoolId);
         } else if (session != null && !session.isBlank()) {
-            return examConfigRepository.findBySession(session);
+            return examConfigRepository.findBySessionAndSchoolId(session, schoolId);
         } else if (className != null && !className.isBlank()) {
-            return examConfigRepository.findByClassName(className);
+            return examConfigRepository.findByClassNameAndSchoolId(className, schoolId);
         }
-        return examConfigRepository.findAll();
+        return examConfigRepository.findBySchoolId(schoolId);
     }
 
     @CacheEvict(value = "exam-config", allEntries = true)
@@ -56,7 +60,8 @@ public class ExamConfigService {
                 || examName == null || examName.isBlank()) {
             throw new IllegalArgumentException("session, className, and examName are required.");
         }
-        if (examConfigRepository.existsBySessionAndClassNameAndExamName(session, className, examName)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (examConfigRepository.existsBySessionAndClassNameAndExamNameAndSchoolId(session, className, examName, schoolId)) {
             throw new IllegalArgumentException(
                     "Exam '" + examName + "' already exists for class " + className
                             + " in session " + session + ".");
@@ -65,6 +70,7 @@ public class ExamConfigService {
         config.setSession(session);
         config.setClassName(className);
         config.setExamName(examName);
+        config.setSchoolId(schoolId);
         ExamConfig saved = examConfigRepository.save(config);
         log.info("Created ExamConfig id={} ({} / {} / {})", saved.getId(), session, className, examName);
         return saved;
@@ -107,7 +113,7 @@ public class ExamConfigService {
 
         // For classes 1–10, validate the subject exists in ClassSubject configuration.
         if (LOWER_CLASSES.contains(exam.getClassName())
-                && !classSubjectRepository.existsByClassNameAndSubjectName(exam.getClassName(), subjectName)) {
+                && !classSubjectRepository.existsByClassNameAndSubjectNameAndSchoolId(exam.getClassName(), subjectName, securityUtil.getSchoolId())) {
             throw new IllegalArgumentException(
                     "Subject '" + subjectName + "' is not configured for class " + exam.getClassName()
                             + ". Add it via POST /api/subjects/class first.");

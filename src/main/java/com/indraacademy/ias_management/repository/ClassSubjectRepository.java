@@ -8,6 +8,8 @@ import java.util.List;
 
 @Repository
 public interface ClassSubjectRepository extends JpaRepository<ClassSubject, Long> {
-    List<ClassSubject> findByClassName(String className);
-    boolean existsByClassNameAndSubjectName(String className, String subjectName);
+
+    List<ClassSubject> findByClassNameAndSchoolId(String className, Long schoolId);
+
+    boolean existsByClassNameAndSubjectNameAndSchoolId(String className, String subjectName, Long schoolId);
 }

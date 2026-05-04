@@ -146,6 +146,7 @@ public class StudentBulkImportService {
         user.setEmail(email);
         user.setRole(role);
         user.setPassword(passwordEncoder.encode(rawPassword));
+        user.setSchoolId(securityUtil.getSchoolId());
         userRepository.save(user);
         log.info("Bulk import: created User account for studentId={} (password=DOB? {})",
                 studentId, dob != null);

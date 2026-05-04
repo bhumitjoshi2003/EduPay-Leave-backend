@@ -59,6 +59,7 @@ public class NotificationService {
         try {
             notification.setCreatedBy(securityUtil.getUsername());
             notification.setCreatedAt(LocalDateTime.now());
+            notification.setSchoolId(securityUtil.getSchoolId());
 
             Notification savedNotification = notificationRepository.save(notification);
 
@@ -98,6 +99,7 @@ public class NotificationService {
         log.info("Creating individual notification for user: {} with title: {}", userId, title);
 
         try {
+            Long schoolId = securityUtil.getSchoolId();
             // 1. Create and save the Notification entity
             Notification notification = new Notification();
             notification.setTitle(title);
@@ -105,6 +107,7 @@ public class NotificationService {
             notification.setType(type);
             notification.setAudience(userId);
             notification.setCreatedAt(LocalDateTime.now());
+            notification.setSchoolId(schoolId);
             Notification savedNotification = notificationRepository.save(notification);
 
             // 2. Create and save the UserNotification entity
@@ -113,6 +116,7 @@ public class NotificationService {
             userNotification.setNotification(savedNotification);
             userNotification.setIsRead(false);
             userNotification.setCreatedAt(LocalDateTime.now());
+            userNotification.setSchoolId(schoolId);
 
             UserNotification savedUserNotification = userNotificationRepository.save(userNotification);
             log.info("Individual notification created successfully for user: {}. Notification ID: {}", userId, savedNotification.getId());
@@ -142,7 +146,7 @@ public class NotificationService {
 
         if ("STUDENT".equalsIgnoreCase(userRole)) {
             try {
-                studentClassName = studentRepository.findByStudentId(userId)
+                studentClassName = studentRepository.findByStudentIdAndSchoolId(userId, securityUtil.getSchoolId())
                         .map(Student::getClassName)
                         .orElse(null);
             } catch (DataAccessException e) {
@@ -150,7 +154,7 @@ public class NotificationService {
             }
         } else if ("TEACHER".equalsIgnoreCase(userRole)) {
             try {
-                teacherAssignedClass = teacherRepository.findById(userId)
+                teacherAssignedClass = teacherRepository.findByTeacherIdAndSchoolId(userId, securityUtil.getSchoolId())
                         .map(Teacher::getClassTeacher)
                         .orElse(null);
             } catch (DataAccessException e) {
@@ -168,7 +172,7 @@ public class NotificationService {
             userNotifications = new ArrayList<>(userNotificationRepository.findByUserIdOrderByCreatedAtDesc(userId));
 
             // 2. Fetch broad/general notifications applicable to this user
-            broadNotifications = notificationRepository.findAll().stream()
+            broadNotifications = notificationRepository.findBySchoolIdAndCreatedByIsNotNull(securityUtil.getSchoolId()).stream()
                     .filter(notification -> {
                         String audience = notification.getAudience();
                         if (audience == null) return false;
@@ -203,6 +207,7 @@ public class NotificationService {
                     newUserNotif.setNotification(broadNotif);
                     newUserNotif.setIsRead(false);
                     newUserNotif.setCreatedAt(broadNotif.getCreatedAt());
+                    newUserNotif.setSchoolId(securityUtil.getSchoolId());
                     userNotifications.add(userNotificationRepository.save(newUserNotif));
                     newNotificationsCount++;
                 }
@@ -369,7 +374,7 @@ public class NotificationService {
     public List<Notification> getAllBroadNotifications() {
         log.info("Fetching all broad notifications.");
         try {
-            return notificationRepository.findAll().stream()
+            return notificationRepository.findBySchoolIdAndCreatedByIsNotNull(securityUtil.getSchoolId()).stream()
                     .filter(n -> n.getAudience() != null)
                     .collect(Collectors.toList());
         } catch (DataAccessException e) {
@@ -382,7 +387,7 @@ public class NotificationService {
     public Page<Notification> getAllNotifications(Pageable pageable) {
         log.info("Fetching all notifications with a creator.");
         try {
-            return notificationRepository.findByCreatedByIsNotNull(pageable);
+            return notificationRepository.findBySchoolIdAndCreatedByIsNotNull(securityUtil.getSchoolId(), pageable);
         } catch (DataAccessException e) {
             log.error("Data access error fetching all notifications.", e);
             throw new RuntimeException("Could not retrieve all notifications due to data access issue", e);
@@ -405,38 +410,39 @@ public class NotificationService {
         if (audience == null || audience.isBlank()) return;
 
         try {
+            Long schoolId = securityUtil.getSchoolId();
             if ("ALL".equalsIgnoreCase(audience)) {
-                List<String> studentIds = studentRepository.findByStatus(StudentStatus.ACTIVE)
+                List<String> studentIds = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
-                List<String> teacherIds = teacherRepository.findAll()
+                List<String> teacherIds = teacherRepository.findBySchoolId(schoolId)
                         .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
                 fcmService.sendToUsers(studentIds, title, body);
                 fcmService.sendToUsers(teacherIds, title, body);
 
             } else if ("STUDENTS".equalsIgnoreCase(audience)) {
-                List<String> ids = studentRepository.findByStatus(StudentStatus.ACTIVE)
+                List<String> ids = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 fcmService.sendToUsers(ids, title, body);
 
             } else if ("TEACHERS".equalsIgnoreCase(audience)) {
-                List<String> ids = teacherRepository.findAll()
+                List<String> ids = teacherRepository.findBySchoolId(schoolId)
                         .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
                 fcmService.sendToUsers(ids, title, body);
 
             } else if (audience.toUpperCase().startsWith("CLASS:")) {
                 String className = audience.substring("CLASS:".length());
                 List<String> ids = studentRepository
-                        .findByClassNameAndStatus(className, StudentStatus.ACTIVE)
+                        .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 fcmService.sendToUsers(ids, title, body);
 
             } else if (audience.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
                 String className = audience.substring("CLASS_WITH_TEACHER:".length());
                 List<String> studentIds = studentRepository
-                        .findByClassNameAndStatus(className, StudentStatus.ACTIVE)
+                        .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 fcmService.sendToUsers(studentIds, title, body);
-                teacherRepository.findByClassTeacher(className)
+                teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
                         .ifPresent(t -> fcmService.sendToUser(t.getTeacherId(), title, body));
 
             } else {
@@ -451,6 +457,7 @@ public class NotificationService {
     @Scheduled(cron = "0 0 2 * * ?")
     @Transactional
     public void cleanupOldNotifications() {
+        // NOTE: This scheduler runs platform-wide (all schools) intentionally
         log.info("Starting scheduled cleanup of old notifications.");
         try {
             LocalDateTime oneMonthAgo = LocalDateTime.now().minus(Period.ofMonths(1));

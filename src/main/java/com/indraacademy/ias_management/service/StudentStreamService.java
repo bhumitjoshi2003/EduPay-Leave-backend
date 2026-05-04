@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.StudentStreamDTO;
 import com.indraacademy.ias_management.entity.*;
 import com.indraacademy.ias_management.repository.*;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,17 +24,19 @@ public class StudentStreamService {
     @Autowired private AcademicStreamRepository streamRepository;
     @Autowired private OptionalSubjectRepository optionalSubjectRepository;
     @Autowired private StudentService studentService;
+    @Autowired private SecurityUtil securityUtil;
 
     @Transactional(readOnly = true)
     public Optional<StudentStreamSelection> getSelection(String studentId) {
-        return selectionRepository.findByStudentId(studentId);
+        return selectionRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
     }
 
     @Transactional
     public StudentStreamSelection save(String studentId, Long streamId, Long optionalSubjectId) {
         validateIds(studentId, streamId, optionalSubjectId);
+        Long schoolId = securityUtil.getSchoolId();
 
-        if (selectionRepository.findByStudentId(studentId).isPresent()) {
+        if (selectionRepository.findByStudentIdAndSchoolId(studentId, schoolId).isPresent()) {
             throw new IllegalArgumentException(
                     "Stream already assigned to student " + studentId + ". Use PUT to update.");
         }
@@ -42,6 +45,7 @@ public class StudentStreamService {
         sel.setStudentId(studentId);
         sel.setStreamId(streamId);
         sel.setOptionalSubjectId(optionalSubjectId);
+        sel.setSchoolId(schoolId);
         StudentStreamSelection saved = selectionRepository.save(sel);
         log.info("Assigned stream {} to student {}", streamId, studentId);
         return saved;
@@ -51,7 +55,7 @@ public class StudentStreamService {
     public StudentStreamSelection update(String studentId, Long streamId, Long optionalSubjectId) {
         validateIds(studentId, streamId, optionalSubjectId);
 
-        StudentStreamSelection sel = selectionRepository.findByStudentId(studentId)
+        StudentStreamSelection sel = selectionRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException(
                         "No stream selection found for student " + studentId));
 
@@ -64,10 +68,11 @@ public class StudentStreamService {
 
     @Transactional
     public void delete(String studentId) {
-        if (selectionRepository.findByStudentId(studentId).isEmpty()) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (selectionRepository.findByStudentIdAndSchoolId(studentId, schoolId).isEmpty()) {
             throw new NoSuchElementException("No stream selection found for student " + studentId);
         }
-        selectionRepository.deleteByStudentId(studentId);
+        selectionRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
         log.info("Deleted stream selection for student {}", studentId);
     }
 
@@ -79,8 +84,9 @@ public class StudentStreamService {
     public List<StudentStreamDTO> getClassSelections(String className) {
         List<Student> students = studentService.getActiveStudentsByClass(className);
 
+        Long schoolId = securityUtil.getSchoolId();
         return students.stream().map(student -> {
-            Optional<StudentStreamSelection> sel = selectionRepository.findByStudentId(student.getStudentId());
+            Optional<StudentStreamSelection> sel = selectionRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
 
             if (sel.isEmpty()) {
                 return new StudentStreamDTO(student.getStudentId(), student.getName(),

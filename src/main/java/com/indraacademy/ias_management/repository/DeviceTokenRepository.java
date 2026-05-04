@@ -9,7 +9,10 @@ import java.util.Optional;
 
 public interface DeviceTokenRepository extends JpaRepository<DeviceToken, Long> {
 
+    // Platform-wide lookup (used by FcmService @Async methods — ThreadLocal not available)
     List<DeviceToken> findByUserId(String userId);
+
+    List<DeviceToken> findByUserIdAndSchoolId(String userId, Long schoolId);
 
     Optional<DeviceToken> findByToken(String token);
 

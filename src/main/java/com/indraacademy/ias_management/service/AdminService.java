@@ -47,7 +47,7 @@ public class AdminService {
     public List<Admin> getAllAdmins() {
         log.info("Attempting to fetch all admins");
         try {
-            List<Admin> admins = adminRepository.findAll();
+            List<Admin> admins = adminRepository.findBySchoolId(securityUtil.getSchoolId());
             log.info("Successfully fetched {} admins", admins.size());
             return admins;
         } catch (DataAccessException e) {
@@ -66,7 +66,7 @@ public class AdminService {
         log.info("Attempting to fetch admin by ID: {}", adminId);
 
         try {
-            return adminRepository.findById(adminId);
+            return adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Database access error occurred while fetching admin ID: {}", adminId, e);
             throw new RuntimeException("Could not retrieve admin due to data access issue", e);
@@ -83,7 +83,9 @@ public class AdminService {
 
         log.info("Attempting to create a new admin with email: {}", admin.getEmail());
 
+        Long schoolId = securityUtil.getSchoolId();
         try {
+            admin.setSchoolId(schoolId);
             Admin savedAdmin = adminRepository.save(admin);
 
             User newUser = new User();
@@ -91,6 +93,7 @@ public class AdminService {
             newUser.setEmail(savedAdmin.getEmail());
             newUser.setRole("ADMIN");
             newUser.setPassword(passwordEncoder.encode(admin.getDob().toString()));
+            newUser.setSchoolId(schoolId);
             userRepository.save(newUser);
 
             auditService.log(
@@ -135,7 +138,7 @@ public class AdminService {
         }
 
         try {
-            Admin existingAdmin = adminRepository.findById(adminId)
+            Admin existingAdmin = adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId())
                     .orElseThrow(() -> new RuntimeException("Admin not found"));
 
             String oldValue = objectMapper.writeValueAsString(existingAdmin);
@@ -181,7 +184,7 @@ public class AdminService {
         log.info("Attempting to delete admin with ID: {}", adminId);
 
         try {
-            Admin existingAdmin = adminRepository.findById(adminId)
+            Admin existingAdmin = adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId())
                     .orElseThrow(() -> new RuntimeException("Admin not found"));
 
             String oldValue = objectMapper.writeValueAsString(existingAdmin);
@@ -224,7 +227,7 @@ public class AdminService {
             throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
         }
 
-        Admin admin = adminRepository.findById(adminId)
+        Admin admin = adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Admin not found: " + adminId));
 
         try {

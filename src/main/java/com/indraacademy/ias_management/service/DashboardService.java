@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.*;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,32 +33,34 @@ public class DashboardService {
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private LeaveRepository leaveRepository;
+    @Autowired private SecurityUtil securityUtil;
 
     // ─── /api/dashboard/stats ─────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public DashboardStatsDto getStats() {
         LocalDate today = LocalDate.now();
+        Long schoolId = securityUtil.getSchoolId();
 
-        long totalStudents = studentRepository.countByStatus(StudentStatus.ACTIVE);
-        long totalTeachers = teacherRepository.count();
+        long totalStudents = studentRepository.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
+        long totalTeachers = teacherRepository.countBySchoolId(schoolId);
 
         // Fees collected: sum of (amountPaid − platformFee) for current calendar month
         long feesCollectedThisMonth = paymentRepository
-                .sumAmountCollectedByMonthAndYear(today.getMonthValue(), today.getYear());
+                .sumAmountCollectedBySchoolIdAndMonthAndYear(schoolId, today.getMonthValue(), today.getYear());
 
         // Overdue: distinct active students with any unpaid fee up to the current academic month
         String currentSession = currentSession(today);
         int currentAcademicMonth = calendarToAcademicMonth(today.getMonthValue());
         long overdueStudents = studentFeesRepository
-                .countDistinctOverdueStudents(currentSession, currentAcademicMonth);
+                .countDistinctOverdueStudents(schoolId, currentSession, currentAcademicMonth);
 
         // Today's attendance rate: (active students − absents today) / active students × 100.
         // Returns 0 if attendance has not been marked yet today (no records in attendance table for today).
         double todayAttendanceRate = 0.0;
         if (totalStudents > 0) {
             List<com.indraacademy.ias_management.entity.Attendance> todayRecords =
-                    attendanceRepository.findByDate(today);
+                    attendanceRepository.findByDateAndSchoolId(today, schoolId);
             if (!todayRecords.isEmpty()) {
                 long absentsToday = todayRecords.size();
                 long presentToday = totalStudents - absentsToday;
@@ -66,7 +69,7 @@ public class DashboardService {
         }
 
         // Pending leaves: leave applications with PENDING status
-        long pendingLeaves = leaveRepository.countByStatus(LeaveStatus.PENDING);
+        long pendingLeaves = leaveRepository.countByStatusAndSchoolId(LeaveStatus.PENDING, schoolId);
 
         DashboardStatsDto dto = new DashboardStatsDto();
         dto.setTotalStudents(totalStudents);
@@ -89,7 +92,7 @@ public class DashboardService {
         // Fetch all payments in the last 6 calendar months
         LocalDate today = LocalDate.now();
         LocalDateTime since = today.minusMonths(5).withDayOfMonth(1).atStartOfDay();
-        List<Payment> recent = paymentRepository.findByPaymentDateAfter(since);
+        List<Payment> recent = paymentRepository.findBySchoolIdAndPaymentDateAfter(securityUtil.getSchoolId(), since);
 
         // Group by "YYYY-MM" key, sum (amountPaid − platformFee)
         Map<String, Long> sumByMonth = new TreeMap<>(); // TreeMap keeps insertion order after we populate
@@ -122,18 +125,19 @@ public class DashboardService {
         LocalDate monthStart = today.withDayOfMonth(1);
         LocalDate monthEnd   = today.withDayOfMonth(today.lengthOfMonth());
 
-        List<String> classes = studentRepository.findDistinctActiveClassNames();
+        Long schoolId = securityUtil.getSchoolId();
+        List<String> classes = studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId);
 
         List<ClassStatsDto> result = new ArrayList<>();
         for (String cls : classes) {
-            long studentCount = studentRepository.findByClassNameAndStatus(cls, StudentStatus.ACTIVE).size();
+            long studentCount = studentRepository.findByClassNameAndStatusAndSchoolId(cls, StudentStatus.ACTIVE, schoolId).size();
             if (studentCount == 0) continue;
 
-            long workingDays = attendanceRepository.countWorkingDaysForClass(cls, calYear, calMonth);
+            long workingDays = attendanceRepository.countWorkingDaysForClass(cls, schoolId, calYear, calMonth);
             double attendanceRate = 0.0;
             if (workingDays > 0) {
                 long totalAbsences = attendanceRepository
-                        .findByClassNameAndDateBetween(cls, monthStart, monthEnd).size();
+                        .findByClassNameAndSchoolIdAndDateBetween(cls, schoolId, monthStart, monthEnd).size();
                 long totalPossible = workingDays * studentCount;
                 attendanceRate = Math.round((double) (totalPossible - totalAbsences) / totalPossible * 1000.0) / 10.0;
             }

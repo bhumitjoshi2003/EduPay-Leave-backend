@@ -12,12 +12,18 @@ import java.util.List;
 @Repository
 public interface BusFeesRepository extends JpaRepository<BusFees, Long> {
 
-    List<BusFees> findByAcademicYear(String academicYear);
+    List<BusFees> findBySchoolId(Long schoolId);
 
-    BusFees findByMinDistanceLessThanEqualAndMaxDistanceGreaterThanAndAcademicYear(Double minDistance, Double maxDistance, String academicYear);
+    List<BusFees> findByAcademicYearAndSchoolId(String academicYear, Long schoolId);
 
-    @Query("SELECT b.fees FROM BusFees b WHERE b.academicYear = :academicYear AND b.minDistance <= :distance AND (b.maxDistance >= :distance OR b.maxDistance IS NULL)")
-    BigDecimal findFeesByDistanceAndAcademicYear(@Param("distance") Double distance, @Param("academicYear") String academicYear);
+    BusFees findByMinDistanceLessThanEqualAndMaxDistanceGreaterThanAndAcademicYearAndSchoolId(
+            Double minDistance, Double maxDistance, String academicYear, Long schoolId);
 
-    void deleteByAcademicYear(String academicYear);
+    @Query("SELECT b.fees FROM BusFees b WHERE b.schoolId = :schoolId AND b.academicYear = :academicYear AND b.minDistance <= :distance AND (b.maxDistance >= :distance OR b.maxDistance IS NULL)")
+    BigDecimal findFeesByDistanceAndAcademicYearAndSchoolId(
+            @Param("distance") Double distance,
+            @Param("academicYear") String academicYear,
+            @Param("schoolId") Long schoolId);
+
+    void deleteByAcademicYearAndSchoolId(String academicYear, Long schoolId);
 }

@@ -30,22 +30,24 @@ public class TimetableService {
 
     @Transactional(readOnly = true)
     public List<TimetableEntry> getByClass(String className) {
-        return timetableRepository.findByClassNameOrderByDayAscPeriodNumberAsc(className);
+        return timetableRepository.findByClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(className, securityUtil.getSchoolId());
     }
 
     @Transactional(readOnly = true)
     public List<TimetableEntry> getByTeacher(String teacherId) {
-        return timetableRepository.findByTeacherIdOrderByDayAscPeriodNumberAsc(teacherId);
+        return timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc(teacherId, securityUtil.getSchoolId());
     }
 
     public TimetableEntry create(TimetableEntry entry, HttpServletRequest request) {
-        if (timetableRepository.existsByClassNameAndDayAndPeriodNumber(
-                entry.getClassName(), entry.getDay(), entry.getPeriodNumber())) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (timetableRepository.existsByClassNameAndDayAndPeriodNumberAndSchoolId(
+                entry.getClassName(), entry.getDay(), entry.getPeriodNumber(), schoolId)) {
             throw new DataIntegrityViolationException(
                     "Period " + entry.getPeriodNumber() + " on " + entry.getDay()
                             + " is already assigned for class " + entry.getClassName());
         }
 
+        entry.setSchoolId(schoolId);
         resolveTeacherName(entry);
 
         TimetableEntry saved = timetableRepository.save(entry);
@@ -77,8 +79,8 @@ public class TimetableService {
                 || !existing.getDay().equals(incoming.getDay())
                 || !existing.getPeriodNumber().equals(incoming.getPeriodNumber());
 
-        if (slotChanged && timetableRepository.existsByClassNameAndDayAndPeriodNumberAndIdNot(
-                incoming.getClassName(), incoming.getDay(), incoming.getPeriodNumber(), id)) {
+        if (slotChanged && timetableRepository.existsByClassNameAndDayAndPeriodNumberAndSchoolIdAndIdNot(
+                incoming.getClassName(), incoming.getDay(), incoming.getPeriodNumber(), securityUtil.getSchoolId(), id)) {
             throw new DataIntegrityViolationException(
                     "Period " + incoming.getPeriodNumber() + " on " + incoming.getDay()
                             + " is already assigned for class " + incoming.getClassName());
@@ -134,7 +136,7 @@ public class TimetableService {
 
     private void resolveTeacherName(TimetableEntry entry) {
         if (entry.getTeacherId() != null && !entry.getTeacherId().isBlank()) {
-            String name = teacherRepository.findById(entry.getTeacherId())
+            String name = teacherRepository.findByTeacherIdAndSchoolId(entry.getTeacherId(), securityUtil.getSchoolId())
                     .map(t -> t.getName())
                     .orElse(null);
             entry.setTeacherName(name);

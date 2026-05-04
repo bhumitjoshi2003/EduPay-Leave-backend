@@ -133,6 +133,7 @@ public class MarkService {
                     String oldJson = toJson(mark);
                     mark.setMarksObtained(req.getMarksObtained());
                     mark.setEnteredBy(callerUserId);
+                    mark.setSchoolId(securityUtil.getSchoolId());
                     studentMarkRepository.save(mark);
                     auditService.logUpdate(callerUserId, callerRole, "UPDATE_STUDENT_MARK",
                             "STUDENT_MARK", mark.getId().toString(), oldJson, toJson(mark), ip);
@@ -143,6 +144,7 @@ public class MarkService {
                     mark.setExamSubjectEntryId(req.getExamSubjectEntryId());
                     mark.setMarksObtained(req.getMarksObtained());
                     mark.setEnteredBy(callerUserId);
+                    mark.setSchoolId(securityUtil.getSchoolId());
                     studentMarkRepository.save(mark);
                     auditService.log(callerUserId, callerRole, "CREATE_STUDENT_MARK",
                             "STUDENT_MARK", mark.getId().toString(), null, toJson(mark), ip);
@@ -173,9 +175,10 @@ public class MarkService {
         Student student = studentService.getStudent(studentId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
+        Long schoolId = securityUtil.getSchoolId();
         List<ExamConfig> exams = (session != null && !session.isBlank())
-                ? examConfigRepository.findBySessionAndClassName(session, student.getClassName())
-                : examConfigRepository.findByClassName(student.getClassName());
+                ? examConfigRepository.findBySessionAndClassNameAndSchoolId(session, student.getClassName(), schoolId)
+                : examConfigRepository.findByClassNameAndSchoolId(student.getClassName(), schoolId);
 
         List<ExamResultDTO> results = new ArrayList<>();
 
@@ -306,12 +309,12 @@ public class MarkService {
      * (either as a stream core subject or their chosen optional subject).
      */
     private boolean studentHasSubject(String studentId, String subjectName) {
-        Optional<StudentStreamSelection> selOpt = studentStreamSelectionRepository.findByStudentId(studentId);
+        Optional<StudentStreamSelection> selOpt = studentStreamSelectionRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
         if (selOpt.isEmpty()) return false;
 
         StudentStreamSelection sel = selOpt.get();
 
-        boolean isCore = streamCoreSubjectRepository.findByStreamId(sel.getStreamId())
+        boolean isCore = streamCoreSubjectRepository.findByStreamIdAndSchoolId(sel.getStreamId(), securityUtil.getSchoolId())
                 .stream()
                 .anyMatch(s -> s.getSubjectName().equalsIgnoreCase(subjectName));
         if (isCore) return true;

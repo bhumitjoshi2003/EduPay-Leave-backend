@@ -44,6 +44,7 @@ public class LeaveService {
 
         try {
             leave.setAppliedDate(LocalDateTime.now());
+            leave.setSchoolId(securityUtil.getSchoolId());
             Leave savedLeave = leaveRepository.save(leave);
 
             // Audit
@@ -90,7 +91,8 @@ public class LeaveService {
         }
 
         try {
-            Leave leave = leaveRepository.findByStudentIdAndLeaveDate(studentId, leaveDate);
+            Long schoolId = securityUtil.getSchoolId();
+            Leave leave = leaveRepository.findByStudentIdAndLeaveDateAndSchoolId(studentId, leaveDate, schoolId);
 
             if (leave == null) {
                 throw new IllegalArgumentException("Leave not found for student " + studentId);
@@ -103,7 +105,7 @@ public class LeaveService {
             String oldValue = objectMapper.writeValueAsString(leave);
             String leaveIdString = String.valueOf(leave.getId());
 
-            leaveRepository.deleteByStudentIdAndLeaveDate(studentId, leaveDate);
+            leaveRepository.deleteByStudentIdAndLeaveDateAndSchoolId(studentId, leaveDate, schoolId);
 
             // Audit
             auditService.log(
@@ -258,23 +260,24 @@ public class LeaveService {
     @Transactional(readOnly = true)
     public Page<Leave> getLeavesFiltered(String className, String studentId, String date, Pageable pageable) {
         log.info("Filtering leaves. Class: {}, Student ID: {}, Date: {}", className, studentId, date);
+        Long schoolId = securityUtil.getSchoolId();
         try {
             if (className != null && studentId != null && date != null) {
-                return leaveRepository.findByClassNameAndStudentIdContainingAndLeaveDate(className, studentId, date, pageable);
+                return leaveRepository.findByClassNameAndStudentIdContainingAndLeaveDateAndSchoolId(className, studentId, date, schoolId, pageable);
             } else if (className != null && studentId != null) {
-                return leaveRepository.findByClassNameAndStudentIdContaining(className, studentId, pageable);
+                return leaveRepository.findByClassNameAndStudentIdContainingAndSchoolId(className, studentId, schoolId, pageable);
             } else if (className != null && date != null) {
-                return leaveRepository.findByClassNameAndLeaveDate(className, date, pageable);
+                return leaveRepository.findByClassNameAndLeaveDateAndSchoolId(className, date, schoolId, pageable);
             } else if (studentId != null && date != null) {
-                return leaveRepository.findByStudentIdContainingAndLeaveDate(studentId, date, pageable);
+                return leaveRepository.findByStudentIdContainingAndLeaveDateAndSchoolId(studentId, date, schoolId, pageable);
             } else if (className != null) {
-                return leaveRepository.findByClassName(className, pageable);
+                return leaveRepository.findByClassNameAndSchoolId(className, schoolId, pageable);
             } else if (studentId != null) {
-                return leaveRepository.findByStudentIdContaining(studentId, pageable);
+                return leaveRepository.findByStudentIdContainingAndSchoolId(studentId, schoolId, pageable);
             } else if (date != null) {
-                return leaveRepository.findByLeaveDate(date, pageable);
+                return leaveRepository.findByLeaveDateAndSchoolId(date, schoolId, pageable);
             } else {
-                return leaveRepository.findAll(pageable);
+                return leaveRepository.findByStudentIdContainingAndSchoolId("", schoolId, pageable);
             }
         } catch (DataAccessException e) {
             log.error("Data access error during getLeavesFiltered. Class: {}, Student ID: {}, Date: {}", className, studentId, date, e);
@@ -290,7 +293,7 @@ public class LeaveService {
         }
         log.info("Fetching leaves for student ID: {}", studentId);
         try {
-            return leaveRepository.findByStudentId(studentId, pageable);
+            return leaveRepository.findByStudentIdContainingAndSchoolId(studentId, securityUtil.getSchoolId(), pageable);
         } catch (DataAccessException e) {
             log.error("Data access error fetching leaves for student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve leaves by student ID due to data access issue", e);
@@ -305,7 +308,7 @@ public class LeaveService {
         }
         log.info("Fetching leave student IDs for date: {} and class: {}", date, className);
         try {
-            return leaveRepository.findByLeaveDateAndClassName(date, className);
+            return leaveRepository.findByLeaveDateAndClassNameAndSchoolId(date, className, securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Data access error fetching leaves by date {} and class {}", date, className, e);
             throw new RuntimeException("Could not retrieve leaves due to data access issue", e);

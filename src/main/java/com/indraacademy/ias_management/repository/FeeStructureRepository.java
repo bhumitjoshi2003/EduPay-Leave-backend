@@ -9,9 +9,11 @@ import java.util.List;
 @Repository
 public interface FeeStructureRepository extends JpaRepository<FeeStructure, Long> {
 
-    List<FeeStructure> findByAcademicYear(String academicYear);
+    List<FeeStructure> findBySchoolId(Long schoolId);
 
-    FeeStructure findByAcademicYearAndClassName(String academicYear, String className);
+    List<FeeStructure> findByAcademicYearAndSchoolId(String academicYear, Long schoolId);
 
-    void deleteByAcademicYear(String academicYear);
+    FeeStructure findByAcademicYearAndClassNameAndSchoolId(String academicYear, String className, Long schoolId);
+
+    void deleteByAcademicYearAndSchoolId(String academicYear, Long schoolId);
 }

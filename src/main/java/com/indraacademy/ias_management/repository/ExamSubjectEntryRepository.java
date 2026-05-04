@@ -9,7 +9,9 @@ import java.util.List;
 
 @Repository
 public interface ExamSubjectEntryRepository extends JpaRepository<ExamSubjectEntry, Long> {
+
     List<ExamSubjectEntry> findByExamConfigId(Long examConfigId);
+
     boolean existsByExamConfigIdAndSubjectName(Long examConfigId, String subjectName);
 
     @Transactional

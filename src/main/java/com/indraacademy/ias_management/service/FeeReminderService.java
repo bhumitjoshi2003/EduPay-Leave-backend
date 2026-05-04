@@ -58,6 +58,7 @@ public class FeeReminderService {
 
         log.info("Checking unpaid fees for Session: {} | Month: {}", academicYear, academicMonth);
 
+        // NOTE: Scheduler runs platform-wide (all schools) — no schoolId filtering here
         List<StudentFees> unpaidFees = studentFeesRepository.findAllUnpaidByYearAndMonth(academicYear, academicMonth);
 
         for (StudentFees fee : unpaidFees) {
@@ -99,10 +100,11 @@ public class FeeReminderService {
         int startYear = years[0];
         int endYear   = years[1];
 
+        Long schoolId = securityUtil.getSchoolId();
         // Fetch all unpaid fee records for the session (optionally filtered by class)
         List<StudentFees> unpaid = (className != null && !className.isBlank())
-                ? studentFeesRepository.findAllUnpaidBySessionAndClassName(session, className)
-                : studentFeesRepository.findAllUnpaidBySession(session);
+                ? studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(schoolId, session, className)
+                : studentFeesRepository.findAllUnpaidBySchoolIdAndSession(schoolId, session);
 
         // Filter to months that have already started (1st day <= start of current month)
         LocalDate currentMonthStart = today.withDayOfMonth(1);
@@ -123,7 +125,7 @@ public class FeeReminderService {
             String studentId = entry.getKey();
             List<StudentFees> fees = entry.getValue();
 
-            Optional<Student> studentOpt = studentRepository.findById(studentId);
+            Optional<Student> studentOpt = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
             if (studentOpt.isEmpty()) continue;
             Student student = studentOpt.get();
 
@@ -140,14 +142,14 @@ public class FeeReminderService {
             // totalDue: sum each month's exact amount due (mirrors what the student sees on their receipt)
             String cls = student.getClassName();
             FeeStructure fs = feeStructureByClass.computeIfAbsent(cls,
-                    c -> feeStructureRepository.findByAcademicYearAndClassName(session, c));
+                    c -> feeStructureRepository.findByAcademicYearAndClassNameAndSchoolId(session, c, securityUtil.getSchoolId()));
             double totalDue = fees.stream()
                     .mapToDouble(sf -> amountDueForMonth(fs, sf, session))
                     .sum();
 
             // Last payment date
             String lastPaymentDate = paymentRepository
-                    .findLatestPaymentDateByStudentIdAndSession(studentId, session)
+                    .findLatestPaymentDateByStudentIdAndSchoolIdAndSession(studentId, schoolId, session)
                     .map(dt -> dt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
                     .orElse(null);
 
@@ -236,7 +238,7 @@ public class FeeReminderService {
      * or null if the student has no email (caller skips audit logging in that case).
      */
     private String sendReminderEmail(String studentId, String session) {
-        Student student = studentRepository.findById(studentId)
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
         String email = student.getEmail();
@@ -248,7 +250,7 @@ public class FeeReminderService {
         int[] years = parseSession(session);
         LocalDate currentMonthStart = LocalDate.now().withDayOfMonth(1);
 
-        List<StudentFees> overdueMonths = studentFeesRepository.findAllUnpaidBySessionAndClassName(session, student.getClassName())
+        List<StudentFees> overdueMonths = studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(securityUtil.getSchoolId(), session, student.getClassName())
                 .stream()
                 .filter(sf -> sf.getStudentId().equals(studentId))
                 .filter(sf -> !academicMonthStart(sf.getMonth(), years[0], years[1]).isAfter(currentMonthStart))
@@ -402,7 +404,7 @@ public class FeeReminderService {
 
         // Add bus fee if the student uses the bus for this month's record
         if (Boolean.TRUE.equals(sf.getTakesBus()) && sf.getDistance() != null && sf.getDistance() > 0) {
-            java.math.BigDecimal busFee = busFeesRepository.findFeesByDistanceAndAcademicYear(sf.getDistance(), session);
+            java.math.BigDecimal busFee = busFeesRepository.findFeesByDistanceAndAcademicYearAndSchoolId(sf.getDistance(), session, securityUtil.getSchoolId());
             if (busFee != null) {
                 amount += busFee.doubleValue();
             }

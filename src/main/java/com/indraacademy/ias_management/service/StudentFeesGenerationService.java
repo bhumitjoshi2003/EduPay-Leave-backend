@@ -68,6 +68,7 @@ public class StudentFeesGenerationService {
                             studentFees.setDistance(student.getDistance());
                             studentFees.setManuallyPaid(false);
                             studentFees.setManualPaymentReceived(null);
+                            studentFees.setSchoolId(student.getSchoolId());
                             studentFeesRepository.save(studentFees);
                         }
                         log.debug("Generated 12 months of fees for student ID: {} (Class: {}) for year: {}", student.getStudentId(), nextClass, nextAcademicYear);
