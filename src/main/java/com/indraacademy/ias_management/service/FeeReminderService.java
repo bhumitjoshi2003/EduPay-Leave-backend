@@ -109,9 +109,10 @@ public class FeeReminderService {
                 ? studentFeesRepository.findAllUnpaidBySessionAndClassName(session, className)
                 : studentFeesRepository.findAllUnpaidBySession(session);
 
-        // Filter to months whose 1st day has already passed
+        // Filter to months that have already started (1st day <= start of current month)
+        LocalDate currentMonthStart = today.withDayOfMonth(1);
         List<StudentFees> overdue = unpaid.stream()
-                .filter(sf -> academicMonthStart(sf.getMonth(), startYear, endYear).isBefore(today))
+                .filter(sf -> !academicMonthStart(sf.getMonth(), startYear, endYear).isAfter(currentMonthStart))
                 .collect(Collectors.toList());
 
         // Group by studentId
@@ -198,10 +199,11 @@ public class FeeReminderService {
         int[] years = parseSession(session);
         LocalDate today = LocalDate.now();
 
+        LocalDate currentMonthStart = today.withDayOfMonth(1);
         List<StudentFees> overdueMonths = studentFeesRepository.findAllUnpaidBySessionAndClassName(session, student.getClassName())
                 .stream()
                 .filter(sf -> sf.getStudentId().equals(studentId))
-                .filter(sf -> academicMonthStart(sf.getMonth(), years[0], years[1]).isBefore(today))
+                .filter(sf -> !academicMonthStart(sf.getMonth(), years[0], years[1]).isAfter(currentMonthStart))
                 .sorted(Comparator.comparingInt(StudentFees::getMonth))
                 .collect(Collectors.toList());
 
