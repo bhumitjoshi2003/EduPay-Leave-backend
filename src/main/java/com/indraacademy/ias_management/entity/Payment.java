@@ -15,6 +15,9 @@ public class Payment {
     @Column(name = "id")
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "student_id", nullable = false)
     private String studentId;
 
@@ -289,4 +292,7 @@ public class Payment {
     public int getPlatformFee() { return platformFee; }
 
     public void setPlatformFee(int platformFee) { this.platformFee = platformFee; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

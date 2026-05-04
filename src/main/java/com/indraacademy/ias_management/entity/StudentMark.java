@@ -16,6 +16,9 @@ public class StudentMark {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "student_id", nullable = false)
     private String studentId;
 
@@ -47,4 +50,7 @@ public class StudentMark {
     public void setMarksObtained(Double marksObtained) { this.marksObtained = marksObtained; }
     public void setEnteredBy(String enteredBy) { this.enteredBy = enteredBy; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

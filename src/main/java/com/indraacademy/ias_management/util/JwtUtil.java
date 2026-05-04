@@ -105,15 +105,25 @@ public class JwtUtil {
         return extractClaim(token, claims -> claims.get("role", String.class));
     }
 
-    public String generateAccessToken(String userId, String role) {
+    public String generateAccessToken(String userId, String role, Long schoolId) {
         return Jwts.builder()
                 .setSubject(userId)
                 .claim("role", role)
                 .claim("userId", userId)
+                .claim("schoolId", schoolId)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + (1000 * 60 * 60))) // 60 min
                 .signWith(getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
+    }
+
+    public Long extractSchoolId(String token) {
+        Object raw = extractClaim(token, claims -> claims.get("schoolId"));
+        if (raw == null) return null;
+        if (raw instanceof Long) return (Long) raw;
+        if (raw instanceof Integer) return ((Integer) raw).longValue();
+        if (raw instanceof Number) return ((Number) raw).longValue();
+        return null;
     }
 
 }

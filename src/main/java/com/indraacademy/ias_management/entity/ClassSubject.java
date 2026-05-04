@@ -13,6 +13,9 @@ public class ClassSubject {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "class_name", nullable = false)
     private String className;
 
@@ -28,4 +31,7 @@ public class ClassSubject {
     public void setId(Long id) { this.id = id; }
     public void setClassName(String className) { this.className = className; }
     public void setSubjectName(String subjectName) { this.subjectName = subjectName; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

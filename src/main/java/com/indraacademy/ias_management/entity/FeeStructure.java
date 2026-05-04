@@ -14,6 +14,9 @@ public class FeeStructure {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "academic_year")
     private String academicYear;
 
@@ -113,4 +116,7 @@ public class FeeStructure {
     public void setLabCharges(double labCharges) {
         this.labCharges = labCharges;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

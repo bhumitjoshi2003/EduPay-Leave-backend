@@ -13,6 +13,9 @@ import java.time.LocalDateTime;
 @Data
 public class Admin {
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Id
     @Column(name = "admin_id", nullable = false)
     private String adminId;
@@ -114,5 +117,8 @@ public class Admin {
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }
 

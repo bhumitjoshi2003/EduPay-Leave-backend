@@ -12,6 +12,9 @@ public class OptionalSubjectGroup {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "group_name", nullable = false)
     private String groupName;
 
@@ -22,4 +25,7 @@ public class OptionalSubjectGroup {
 
     public void setId(Long id) { this.id = id; }
     public void setGroupName(String groupName) { this.groupName = groupName; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

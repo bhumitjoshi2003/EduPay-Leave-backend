@@ -29,6 +29,9 @@ public class AuditLogArchive {
 
     private LocalDateTime timestamp;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     public static AuditLogArchive fromAuditLog(AuditLog log) {
 
         AuditLogArchive archive = new AuditLogArchive();
@@ -42,6 +45,7 @@ public class AuditLogArchive {
         archive.setOldValue(log.getOldValue());
         archive.setNewValue(log.getNewValue());
         archive.setTimestamp(log.getTimestamp());
+        archive.setSchoolId(log.getSchoolId());
 
         return archive;
     }
@@ -125,4 +129,7 @@ public class AuditLogArchive {
     public void setTimestamp(LocalDateTime timestamp) {
         this.timestamp = timestamp;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

@@ -12,7 +12,10 @@ public class AcademicStream {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "stream_name", unique = true, nullable = false)
+    @Column(name = "school_id")
+    private Long schoolId;
+
+    @Column(name = "stream_name", nullable = false)
     private String streamName;
 
     public AcademicStream() {}
@@ -22,4 +25,7 @@ public class AcademicStream {
 
     public void setId(Long id) { this.id = id; }
     public void setStreamName(String streamName) { this.streamName = streamName; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

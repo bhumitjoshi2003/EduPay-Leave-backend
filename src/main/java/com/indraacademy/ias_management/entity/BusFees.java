@@ -14,6 +14,9 @@ public class BusFees {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(nullable = false)
     private String academicYear;  // Stores the year like "2024-2025"
 
@@ -65,4 +68,7 @@ public class BusFees {
     public void setFees(BigDecimal fees) {
         this.fees = fees;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

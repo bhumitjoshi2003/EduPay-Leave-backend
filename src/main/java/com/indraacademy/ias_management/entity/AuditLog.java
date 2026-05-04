@@ -30,6 +30,9 @@ public class AuditLog {
 
     private LocalDateTime timestamp;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     public Long getId() {
         return id;
     }
@@ -109,4 +112,7 @@ public class AuditLog {
     public void setTimestamp(LocalDateTime timestamp) {
         this.timestamp = timestamp;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

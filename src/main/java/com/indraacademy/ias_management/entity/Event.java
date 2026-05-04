@@ -68,6 +68,9 @@ public class Event {
     @Column(name = "created_by", nullable = false)
     private String createdBy;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     public Event(Long id, String title, String imageUrl, String description, LocalDate startDate, LocalDate endDate, LocalTime startTime, LocalTime endTime, String location, String category, List<String> targetAudience, List<String> videoLinks, LocalDate createdAt, LocalDate updatedAt) {
         this.id = id;
         this.title = title;
@@ -203,4 +206,6 @@ public class Event {
         this.createdBy = createdBy;
     }
 
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

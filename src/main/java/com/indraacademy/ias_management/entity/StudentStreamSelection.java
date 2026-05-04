@@ -12,6 +12,9 @@ public class StudentStreamSelection {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "student_id", unique = true, nullable = false)
     private String studentId;
 
@@ -32,4 +35,7 @@ public class StudentStreamSelection {
     public void setStudentId(String studentId) { this.studentId = studentId; }
     public void setStreamId(Long streamId) { this.streamId = streamId; }
     public void setOptionalSubjectId(Long optionalSubjectId) { this.optionalSubjectId = optionalSubjectId; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

@@ -13,6 +13,9 @@ public class ExamConfig {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "session", nullable = false)
     private String session;
 
@@ -33,4 +36,7 @@ public class ExamConfig {
     public void setSession(String session) { this.session = session; }
     public void setClassName(String className) { this.className = className; }
     public void setExamName(String examName) { this.examName = examName; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

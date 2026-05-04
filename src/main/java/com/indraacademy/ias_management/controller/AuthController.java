@@ -131,6 +131,7 @@ public class AuthController {
                 .setSubject(loggedIn.getUserId())
                 .claim("role", loggedIn.getRole())
                 .claim("userId", loggedIn.getUserId())
+                .claim("schoolId", loggedIn.getSchoolId())
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60)))
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
@@ -219,7 +220,7 @@ public class AuthController {
             }
 
             User loggedIn = userOptional.get();
-            String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole());
+            String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole(), loggedIn.getSchoolId());
 
             response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", newAccessToken, Duration.ofHours(1)).toString());
 

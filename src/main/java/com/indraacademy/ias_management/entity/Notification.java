@@ -35,6 +35,9 @@ public class Notification {
     @Column(name = "created_by")
     private String createdBy;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
@@ -109,4 +112,7 @@ public class Notification {
     public void setCreatedBy(String createdBy) {
         this.createdBy = createdBy;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

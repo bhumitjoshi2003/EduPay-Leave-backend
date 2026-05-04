@@ -15,6 +15,9 @@ import java.time.LocalDateTime;
 @Data
 public class Student {
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Id
     @Column(name = "student_id")
     private String studentId;
@@ -215,4 +218,7 @@ public class Student {
     public String getPhotoUrl() { return photoUrl; }
 
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

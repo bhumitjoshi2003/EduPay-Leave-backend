@@ -26,6 +26,9 @@ public class User {
     @Temporal(TemporalType.TIMESTAMP)
     private Date resetTokenExpiry;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     public String getUserId() {
         return userId;
     }
@@ -73,4 +76,7 @@ public class User {
     public void setResetTokenExpiry(Date resetTokenExpiry) {
         this.resetTokenExpiry = resetTokenExpiry;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

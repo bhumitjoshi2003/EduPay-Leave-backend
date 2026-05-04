@@ -13,6 +13,9 @@ public class StreamCoreSubject {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "stream_id", nullable = false)
     private Long streamId;
 
@@ -28,4 +31,7 @@ public class StreamCoreSubject {
     public void setId(Long id) { this.id = id; }
     public void setStreamId(Long streamId) { this.streamId = streamId; }
     public void setSubjectName(String subjectName) { this.subjectName = subjectName; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

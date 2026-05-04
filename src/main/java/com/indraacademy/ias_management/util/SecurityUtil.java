@@ -33,4 +33,8 @@ public class SecurityUtil {
 
         return authority.startsWith("ROLE_") ? authority.substring(5) : authority;
     }
+
+    public Long getSchoolId() {
+        return SchoolContext.get();
+    }
 }

@@ -18,6 +18,10 @@ public class Attendance {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "school_id")
+    private Long schoolId;
+
     private String studentId;
     private boolean chargePaid;
     @JsonFormat(pattern = "yyyy-MM-dd")
@@ -72,4 +76,7 @@ public class Attendance {
     public void setClassName(String className) {
         this.className = className;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

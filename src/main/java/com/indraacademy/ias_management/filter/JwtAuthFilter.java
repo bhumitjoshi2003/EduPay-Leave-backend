@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.filter;
 
 import com.indraacademy.ias_management.util.JwtUtil;
+import com.indraacademy.ias_management.util.SchoolContext;
 import io.jsonwebtoken.ExpiredJwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -65,12 +66,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String token = accessCookie.getValue();
         String userId;
         String role;
+        Long schoolId;
 
         try {
             userId = jwtUtil.extractUserId(token);
             role = jwtUtil.extractUserRole(token);
+            schoolId = jwtUtil.extractSchoolId(token);
 
-            log.debug("JWT extracted from cookie for userId={}, role={}", userId, role);
+            log.debug("JWT extracted from cookie for userId={}, role={}, schoolId={}", userId, role, schoolId);
 
         } catch (ExpiredJwtException e) {
             log.warn("Expired JWT cookie for request: {}", request.getRequestURI());
@@ -108,6 +111,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             }
         }
 
-        filterChain.doFilter(request, response);
+        SchoolContext.set(schoolId);
+        try {
+            filterChain.doFilter(request, response);
+        } finally {
+            SchoolContext.clear();
+        }
     }
 }

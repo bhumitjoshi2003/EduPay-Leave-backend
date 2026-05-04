@@ -18,6 +18,9 @@ public class Leave {
     @Column(name = "id")
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "student_id", nullable = false)
     private String studentId;
 
@@ -100,4 +103,7 @@ public class Leave {
     public LeaveStatus getStatus() { return status; }
 
     public void setStatus(LeaveStatus status) { this.status = status; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

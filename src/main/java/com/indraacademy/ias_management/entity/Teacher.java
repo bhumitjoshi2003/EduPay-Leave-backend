@@ -13,6 +13,9 @@ import java.time.LocalDateTime;
 @Data
 public class Teacher {
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Id
     @Column(name = "teacher_id")
     private String teacherId;
@@ -127,6 +130,9 @@ public class Teacher {
     public String getPhotoUrl() { return photoUrl; }
 
     public void setPhotoUrl(String photoUrl) { this.photoUrl = photoUrl; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;

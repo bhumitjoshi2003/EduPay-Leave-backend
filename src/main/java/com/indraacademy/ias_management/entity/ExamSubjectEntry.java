@@ -15,6 +15,9 @@ public class ExamSubjectEntry {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "exam_config_id", nullable = false)
     private Long examConfigId;
 
@@ -40,4 +43,7 @@ public class ExamSubjectEntry {
     public void setSubjectName(String subjectName) { this.subjectName = subjectName; }
     public void setMaxMarks(Integer maxMarks) { this.maxMarks = maxMarks; }
     public void setExamDate(LocalDate examDate) { this.examDate = examDate; }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }

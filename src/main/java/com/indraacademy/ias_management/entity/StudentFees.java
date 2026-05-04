@@ -14,6 +14,9 @@ public class StudentFees {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(name = "school_id")
+    private Long schoolId;
+
     @Column(name = "student_id")
     private String studentId;
 
@@ -146,4 +149,7 @@ public class StudentFees {
     public void setAmountPaid(BigDecimal amountPaid) {
         this.amountPaid = amountPaid;
     }
+
+    public Long getSchoolId() { return schoolId; }
+    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 }
