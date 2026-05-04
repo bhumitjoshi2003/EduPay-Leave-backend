@@ -182,24 +182,77 @@ public class FeeReminderService {
     // ─── Manual reminder sending ──────────────────────────────────────────────
 
     /**
-     * Sends a fee reminder email to a single student and logs the audit entry.
+     * Sends a fee reminder email to a single student and logs one audit entry.
      * Returns true if the email was sent (student has an email), false otherwise.
      */
     public boolean sendReminder(String studentId, String session, HttpServletRequest request) {
+        String monthList = sendReminderEmail(studentId, session);
+        if (monthList == null) return false;
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "SEND_FEE_REMINDER",
+                "StudentFees",
+                studentId,
+                null,
+                "Reminder sent for session " + session + "; months: " + monthList,
+                request.getRemoteAddr()
+        );
+        return true;
+    }
+
+    /**
+     * Sends reminders to all students in the list and logs a single summary audit entry.
+     * Returns the count of successful sends.
+     */
+    public int sendBulkReminders(List<String> studentIds, String session, HttpServletRequest request) {
+        List<String> reached = new ArrayList<>();
+        int sent = 0;
+        for (String studentId : studentIds) {
+            try {
+                String monthList = sendReminderEmail(studentId, session);
+                if (monthList != null) {
+                    reached.add(studentId);
+                    sent++;
+                }
+            } catch (Exception e) {
+                log.error("Failed to send reminder for student {}: {}", studentId, e.getMessage());
+            }
+        }
+
+        if (!reached.isEmpty()) {
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "SEND_FEE_REMINDER_BULK",
+                    "StudentFees",
+                    null,
+                    null,
+                    "Bulk reminder sent for session " + session + "; " + sent + " student(s): " + String.join(", ", reached),
+                    request.getRemoteAddr()
+            );
+        }
+        return sent;
+    }
+
+    /**
+     * Sends the reminder email for one student. Returns the month list string on success,
+     * or null if the student has no email (caller skips audit logging in that case).
+     */
+    private String sendReminderEmail(String studentId, String session) {
         Student student = studentRepository.findById(studentId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
         String email = student.getEmail();
         if (email == null || email.isBlank()) {
             log.warn("Cannot send reminder: student {} has no email.", studentId);
-            return false;
+            return null;
         }
 
-        // Build list of overdue months for this student
         int[] years = parseSession(session);
-        LocalDate today = LocalDate.now();
+        LocalDate currentMonthStart = LocalDate.now().withDayOfMonth(1);
 
-        LocalDate currentMonthStart = today.withDayOfMonth(1);
         List<StudentFees> overdueMonths = studentFeesRepository.findAllUnpaidBySessionAndClassName(session, student.getClassName())
                 .stream()
                 .filter(sf -> sf.getStudentId().equals(studentId))
@@ -225,35 +278,7 @@ public class FeeReminderService {
 
         emailService.sendEmail(email, subject, body);
         log.info("Fee reminder sent to student {} ({})", studentId, email);
-
-        auditService.log(
-                securityUtil.getUsername(),
-                securityUtil.getRole(),
-                "SEND_FEE_REMINDER",
-                "StudentFees",
-                studentId,
-                null,
-                "Reminder sent for session " + session + "; months: " + monthList,
-                request.getRemoteAddr()
-        );
-
-        return true;
-    }
-
-    /**
-     * Sends reminders to all students in the list. Returns the count of successful sends.
-     */
-    public int sendBulkReminders(List<String> studentIds, String session, HttpServletRequest request) {
-        int sent = 0;
-        for (String studentId : studentIds) {
-            try {
-                boolean ok = sendReminder(studentId, session, request);
-                if (ok) sent++;
-            } catch (Exception e) {
-                log.error("Failed to send reminder for student {}: {}", studentId, e.getMessage());
-            }
-        }
-        return sent;
+        return monthList;
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
