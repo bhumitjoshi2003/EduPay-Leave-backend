@@ -1,15 +1,16 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.razorpay.Order;
 import com.razorpay.RazorpayClient;
 import com.razorpay.RazorpayException;
 import com.razorpay.Utils;
-import jakarta.annotation.PostConstruct;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,29 +33,53 @@ public class RazorpayService {
 
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private StudentRepository studentRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private AttendanceService attendanceService;
     @Autowired private EmailService emailService;
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private NotificationService notificationService;
     @Autowired private SecurityUtil securityUtil;
 
-    @Value("${razorpay.key.id}")
-    private String keyId;
+    /** Global fallback keys from application.properties — used when a school has no own keys configured. */
+    @Value("${razorpay.key.id:}")
+    private String globalKeyId;
 
-    @Value("${razorpay.key.secret}")
-    private String keySecret;
+    @Value("${razorpay.key.secret:}")
+    private String globalKeySecret;
 
-    private RazorpayClient razorpayClient;
-
-    @PostConstruct
-    public void init() {
-        try {
-            this.razorpayClient = new RazorpayClient(keyId, keySecret);
-            log.info("Razorpay Client initialized successfully.");
-        } catch (RazorpayException e) {
-            log.error("Failed to initialize Razorpay Client.", e);
-            throw new RuntimeException("Failed to initialize Razorpay client", e);
+    /**
+     * Returns a RazorpayClient using the current school's own keys if configured,
+     * falling back to the global application.properties keys.
+     */
+    private RazorpayClient getRazorpayClient() throws RazorpayException {
+        String kid = resolveKeyId();
+        String ksecret = resolveKeySecret();
+        if (kid == null || kid.isBlank() || ksecret == null || ksecret.isBlank()) {
+            throw new IllegalStateException("Razorpay keys are not configured for this school.");
         }
+        return new RazorpayClient(kid, ksecret);
+    }
+
+    private String resolveKeyId() {
+        Long schoolId = securityUtil.getSchoolId();
+        if (schoolId != null) {
+            School school = schoolRepository.findById(schoolId).orElse(null);
+            if (school != null && school.getRazorpayKeyId() != null && !school.getRazorpayKeyId().isBlank()) {
+                return school.getRazorpayKeyId();
+            }
+        }
+        return globalKeyId;
+    }
+
+    private String resolveKeySecret() {
+        Long schoolId = securityUtil.getSchoolId();
+        if (schoolId != null) {
+            School school = schoolRepository.findById(schoolId).orElse(null);
+            if (school != null && school.getRazorpayKeySecret() != null && !school.getRazorpayKeySecret().isBlank()) {
+                return school.getRazorpayKeySecret();
+            }
+        }
+        return globalKeySecret;
     }
 
     public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int additionalCharges, int lateFees, int platformFee) {
@@ -74,10 +99,10 @@ public class RazorpayService {
             options.put("receipt", "txn_" + System.currentTimeMillis());
             options.put("payment_capture", 1);
 
-            Order order = razorpayClient.Orders.create(options);
+            Order order = getRazorpayClient().Orders.create(options);
 
             Map<String, Object> response = new HashMap<>();
-            response.put("razorpayKey", this.keyId);
+            response.put("razorpayKey", resolveKeyId());
             response.put("orderId", order.get("id"));
             response.put("amount", order.get("amount")); // Amount in paisa
             response.put("studentId", studentId);
@@ -128,7 +153,7 @@ public class RazorpayService {
         try {
             // 1. Signature Verification
             payload = orderId + "|" + paymentId;
-            boolean isValid = Utils.verifySignature(payload, signature, keySecret);
+            boolean isValid = Utils.verifySignature(payload, signature, resolveKeySecret());
 
             if (!isValid) {
                 log.warn("Signature verification failed for Order ID: {}", orderId);

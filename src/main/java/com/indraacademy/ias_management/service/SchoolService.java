@@ -1,0 +1,237 @@
+package com.indraacademy.ias_management.service;
+
+import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.dto.RazorpayKeysRequest;
+import com.indraacademy.ias_management.dto.SchoolOnboardRequest;
+import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
+import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
+import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.SubscriptionPlan;
+import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.UserRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.NoSuchElementException;
+
+@Service
+public class SchoolService {
+
+    private static final Logger log = LoggerFactory.getLogger(SchoolService.class);
+
+    @Autowired private SchoolRepository schoolRepository;
+    @Autowired private UserRepository userRepository;
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
+    @Autowired private PasswordEncoder passwordEncoder;
+
+    /**
+     * Creates a new school and its first ADMIN user account.
+     * Only callable by SUPER_ADMIN.
+     */
+    @Transactional
+    public SchoolSettingsResponse onboardSchool(SchoolOnboardRequest req, HttpServletRequest request) {
+        if (req.getName() == null || req.getName().isBlank()) {
+            throw new IllegalArgumentException("School name is required.");
+        }
+        if (req.getSlug() == null || req.getSlug().isBlank()) {
+            throw new IllegalArgumentException("School slug is required.");
+        }
+        if (req.getAdminUserId() == null || req.getAdminUserId().isBlank()) {
+            throw new IllegalArgumentException("Admin user ID is required.");
+        }
+        if (req.getAdminEmail() == null || req.getAdminEmail().isBlank()) {
+            throw new IllegalArgumentException("Admin email is required.");
+        }
+        if (req.getAdminPassword() == null || req.getAdminPassword().isBlank()) {
+            throw new IllegalArgumentException("Admin password is required.");
+        }
+        if (schoolRepository.existsBySlug(req.getSlug())) {
+            throw new IllegalArgumentException("A school with slug '" + req.getSlug() + "' already exists.");
+        }
+        if (userRepository.findByUserId(req.getAdminUserId()).isPresent()) {
+            throw new IllegalArgumentException("User ID '" + req.getAdminUserId() + "' is already taken.");
+        }
+
+        // 1. Create the school record
+        School school = new School();
+        school.setName(req.getName());
+        school.setSlug(req.getSlug());
+        school.setBoardType(req.getBoardType());
+        school.setAddress(req.getAddress());
+        school.setCity(req.getCity());
+        school.setState(req.getState());
+        school.setPincode(req.getPincode());
+        school.setEmail(req.getEmail());
+        school.setPhone(req.getPhone());
+        school.setWebsite(req.getWebsite());
+        school.setLogoUrl(req.getLogoUrl());
+        school.setThemeColor(req.getThemeColor());
+        school.setContactPersonName(req.getContactPersonName());
+        school.setPlan(req.getPlan() != null ? req.getPlan() : SubscriptionPlan.TRIAL);
+        school.setMaxStudents(req.getMaxStudents());
+        school.setExpiryDate(req.getExpiryDate());
+        school.setActive(true);
+        school.setOnboardedBy(securityUtil.getUsername());
+        School saved = schoolRepository.save(school);
+        log.info("School onboarded: id={}, slug={}", saved.getId(), saved.getSlug());
+
+        // 2. Create the first ADMIN user for this school
+        User admin = new User();
+        admin.setUserId(req.getAdminUserId());
+        admin.setEmail(req.getAdminEmail());
+        admin.setRole(Role.ADMIN);
+        admin.setPassword(passwordEncoder.encode(req.getAdminPassword()));
+        admin.setSchoolId(saved.getId());
+        userRepository.save(admin);
+        log.info("Admin user created: userId={} for schoolId={}", req.getAdminUserId(), saved.getId());
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "ONBOARD_SCHOOL",
+                "School",
+                String.valueOf(saved.getId()),
+                null,
+                "School '" + saved.getName() + "' onboarded with admin '" + req.getAdminUserId() + "'",
+                request.getRemoteAddr()
+        );
+
+        return SchoolSettingsResponse.from(saved);
+    }
+
+    /**
+     * Returns settings for the calling user's school.
+     */
+    public SchoolSettingsResponse getSettings() {
+        Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+        return SchoolSettingsResponse.from(school);
+    }
+
+    /**
+     * Updates editable school settings. Subscription fields are not touched here.
+     */
+    @Transactional
+    public SchoolSettingsResponse updateSettings(SchoolSettingsUpdateRequest req, HttpServletRequest request) {
+        Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        String oldValue = "name=" + school.getName();
+
+        if (req.getName() != null && !req.getName().isBlank()) school.setName(req.getName());
+        if (req.getBoardType() != null) school.setBoardType(req.getBoardType());
+        if (req.getAddress() != null) school.setAddress(req.getAddress());
+        if (req.getCity() != null) school.setCity(req.getCity());
+        if (req.getState() != null) school.setState(req.getState());
+        if (req.getPincode() != null) school.setPincode(req.getPincode());
+        if (req.getEmail() != null) school.setEmail(req.getEmail());
+        if (req.getPhone() != null) school.setPhone(req.getPhone());
+        if (req.getWebsite() != null) school.setWebsite(req.getWebsite());
+        if (req.getLogoUrl() != null) school.setLogoUrl(req.getLogoUrl());
+        if (req.getThemeColor() != null) school.setThemeColor(req.getThemeColor());
+        if (req.getContactPersonName() != null) school.setContactPersonName(req.getContactPersonName());
+
+        School updated = schoolRepository.save(school);
+        log.info("School settings updated for schoolId={}", schoolId);
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "UPDATE_SCHOOL_SETTINGS",
+                "School",
+                String.valueOf(schoolId),
+                oldValue,
+                "name=" + updated.getName(),
+                request.getRemoteAddr()
+        );
+
+        return SchoolSettingsResponse.from(updated);
+    }
+
+    /**
+     * Stores the school's own Razorpay key ID and secret.
+     * Once set, RazorpayService will use these instead of the global application.properties keys.
+     */
+    @Transactional
+    public void updateRazorpayKeys(RazorpayKeysRequest req, HttpServletRequest request) {
+        if (req.getKeyId() == null || req.getKeyId().isBlank()) {
+            throw new IllegalArgumentException("Razorpay key ID is required.");
+        }
+        if (req.getKeySecret() == null || req.getKeySecret().isBlank()) {
+            throw new IllegalArgumentException("Razorpay key secret is required.");
+        }
+
+        Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        school.setRazorpayKeyId(req.getKeyId());
+        school.setRazorpayKeySecret(req.getKeySecret());
+        schoolRepository.save(school);
+        log.info("Razorpay keys updated for schoolId={}", schoolId);
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "UPDATE_RAZORPAY_KEYS",
+                "School",
+                String.valueOf(schoolId),
+                null,
+                "Razorpay keyId updated (secret redacted)",
+                request.getRemoteAddr()
+        );
+    }
+
+    /**
+     * SUPER_ADMIN: updates subscription plan, maxStudents, expiryDate, and active flag for any school.
+     */
+    @Transactional
+    public SchoolSettingsResponse updateSubscription(Long schoolId, com.indraacademy.ias_management.entity.SubscriptionPlan plan,
+                                                     Integer maxStudents, java.time.LocalDate expiryDate,
+                                                     Boolean active, HttpServletRequest request) {
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        String oldValue = "plan=" + school.getPlan() + ",active=" + school.isActive();
+
+        if (plan != null) school.setPlan(plan);
+        if (maxStudents != null) school.setMaxStudents(maxStudents);
+        if (expiryDate != null) school.setExpiryDate(expiryDate);
+        if (active != null) school.setActive(active);
+
+        School updated = schoolRepository.save(school);
+        log.info("Subscription updated for schoolId={}: plan={}, active={}", schoolId, updated.getPlan(), updated.isActive());
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "UPDATE_SCHOOL_SUBSCRIPTION",
+                "School",
+                String.valueOf(schoolId),
+                oldValue,
+                "plan=" + updated.getPlan() + ",active=" + updated.isActive(),
+                request.getRemoteAddr()
+        );
+
+        return SchoolSettingsResponse.from(updated);
+    }
+
+    /**
+     * SUPER_ADMIN: list all schools.
+     */
+    public java.util.List<SchoolSettingsResponse> listAllSchools() {
+        return schoolRepository.findAll().stream()
+                .map(SchoolSettingsResponse::from)
+                .toList();
+    }
+}
