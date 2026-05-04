@@ -210,8 +210,26 @@ public class RazorpayService {
             response.put("message", "Payment Verified Successfully");
             return response;
 
+        } catch (RazorpayException e) {
+            log.error("Razorpay signature verification failed for Order ID: {}. Payload: {}", orderId, payload, e);
+            response.put("success", false);
+            response.put("message", "Payment Verification Failed due to signature error.");
+            return response;
+        } catch (DataAccessException e) {
+            log.error("Data access error during payment persistence/updates for Order ID: {}", orderId, e);
+            response.put("success", false);
+            response.put("message", "Payment Verified but failed to save/update data.");
+            return response;
+        } catch (Exception e) {
+            log.error("Unexpected error during Payment Verification for Order ID: {}", orderId, e);
+            response.put("success", false);
+            response.put("message", "Error Verifying Payment: " + e.getMessage());
+            return response;
+        }
+    }
+
     private String buildPaymentConfirmationHtml(String studentName, String paymentId,
-                                                   double amount, String session, String month) {
+                                                double amount, String session, String month) {
         String formattedAmount = String.format("%.2f", amount);
         String safeSession = session != null ? session : "—";
         String safeMonth   = month   != null ? month   : "—";
@@ -320,23 +338,5 @@ public class RazorpayService {
                 </body>
                 </html>
                 """.formatted(studentName, formattedAmount, paymentId, safeSession, safeMonth);
-    }
-
-        } catch (RazorpayException e) {
-            log.error("Razorpay signature verification failed for Order ID: {}. Payload: {}", orderId, payload, e);
-            response.put("success", false);
-            response.put("message", "Payment Verification Failed due to signature error.");
-            return response;
-        } catch (DataAccessException e) {
-            log.error("Data access error during payment persistence/updates for Order ID: {}", orderId, e);
-            response.put("success", false);
-            response.put("message", "Payment Verified but failed to save/update data.");
-            return response;
-        } catch (Exception e) {
-            log.error("Unexpected error during Payment Verification for Order ID: {}", orderId, e);
-            response.put("success", false);
-            response.put("message", "Error Verifying Payment: " + e.getMessage());
-            return response;
-        }
     }
 }
