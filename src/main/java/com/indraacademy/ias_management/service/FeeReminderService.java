@@ -77,16 +77,11 @@ public class FeeReminderService {
                 return;
             }
             String monthName = getMonthName(fee.getMonth());
-            String subject = "Fee Payment Reminder - " + monthName;
-            String body = String.format(
-                    "Dear %s,\n\nThis is a friendly reminder from Indra Academy that the fees for the month of %s (%s) is pending.\n"
-                            + "Kindly complete the payment to avoid late fee charges.\n\nThank you,\nIndra Academy Sr. Sec. School",
-                    student.getName() != null ? student.getName() : "Student",
-                    monthName,
-                    fee.getYear()
-            );
+            String subject = "Fee Payment Reminder – " + monthName + " (" + fee.getYear() + ")";
+            String studentName = student.getName() != null ? student.getName() : "Student";
+            String htmlBody = buildFeeReminderHtml(studentName, monthName, fee.getYear());
             log.info("Triggering scheduled reminder email to: {}", email);
-            emailService.sendEmail(email, subject, body);
+            emailService.sendHtmlEmail(email, subject, htmlBody);
         }, () -> log.error("Database Error: Student ID {} not found in Student table.", fee.getStudentId()));
     }
 
@@ -265,20 +260,120 @@ public class FeeReminderService {
                 : overdueMonths.stream().map(sf -> getMonthName(sf.getMonth())).collect(Collectors.joining(", "));
 
         String subject = "Fee Payment Reminder – " + session;
-        String body = String.format(
-                "Dear %s,\n\n"
-                        + "This is a reminder from Indra Academy that school fees for the following month(s) are pending:\n"
-                        + "%s (%s)\n\n"
-                        + "Please complete the payment at your earliest convenience to avoid late fee charges.\n\n"
-                        + "Thank you,\nIndra Academy Sr. Sec. School",
-                student.getName() != null ? student.getName() : "Parent/Guardian",
-                monthList,
-                session
-        );
+        String studentName = student.getName() != null ? student.getName() : "Parent/Guardian";
+        String htmlBody = buildFeeReminderHtml(studentName, monthList, session);
 
-        emailService.sendEmail(email, subject, body);
+        emailService.sendHtmlEmail(email, subject, htmlBody);
         log.info("Fee reminder sent to student {} ({})", studentId, email);
         return monthList;
+    }
+
+    // ─── Email template ───────────────────────────────────────────────────────
+
+    private String buildFeeReminderHtml(String studentName, String monthList, String session) {
+        return """
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Fee Payment Reminder</title>
+            </head>
+            <body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
+              <table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:32px 16px;">
+                <tr>
+                  <td align="center">
+                    <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
+
+                      <!-- ── Header ── -->
+                      <tr>
+                        <td align="center" style="background-color:#991b1b;border-radius:16px 16px 0 0;padding:36px 40px 28px;">
+                          <p style="margin:0 0 12px;font-size:48px;line-height:1;">&#127891;</p>
+                          <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px;">Indra Academy</h1>
+                          <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;letter-spacing:0.3px;">Sr. Sec. School</p>
+                        </td>
+                      </tr>
+
+                      <!-- ── Session band ── -->
+                      <tr>
+                        <td align="center" style="background-color:#dc2626;padding:10px 40px;">
+                          <p style="margin:0;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
+                            Fee Payment Reminder &mdash; %s
+                          </p>
+                        </td>
+                      </tr>
+
+                      <!-- ── Body ── -->
+                      <tr>
+                        <td style="background-color:#ffffff;padding:36px 40px;">
+
+                          <p style="margin:0 0 20px;font-size:16px;color:#111827;line-height:1.5;">
+                            Dear <strong>%s</strong>,
+                          </p>
+
+                          <p style="margin:0 0 28px;font-size:14px;color:#6b7280;line-height:1.8;">
+                            We hope this message finds you well. This is a gentle reminder that the school fee(s) listed below are currently pending for the academic session <strong style="color:#374151;">%s</strong>.
+                          </p>
+
+                          <!-- Pending months box -->
+                          <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                            <tr>
+                              <td style="background-color:#fef2f2;border:2px solid #fecaca;border-radius:12px;padding:22px 26px;">
+                                <p style="margin:0 0 10px;font-size:11px;font-weight:700;color:#dc2626;letter-spacing:1.5px;text-transform:uppercase;">
+                                  Pending Month(s)
+                                </p>
+                                <p style="margin:0 0 6px;font-size:20px;font-weight:800;color:#991b1b;">%s</p>
+                                <p style="margin:0;font-size:12px;color:#b91c1c;">Academic Session: %s</p>
+                              </td>
+                            </tr>
+                          </table>
+
+                          <!-- EduPay tip -->
+                          <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                            <tr>
+                              <td style="background-color:#f0fdf4;border-left:4px solid #16a34a;padding:16px 18px;border-radius:0 8px 8px 0;">
+                                <p style="margin:0;font-size:13px;color:#166534;line-height:1.7;">
+                                  &#128161; <strong>Quick pay:</strong> You can clear dues instantly through the
+                                  <strong>Indra Academy EduPay</strong> app. Early payment avoids late fee charges.
+                                </p>
+                              </td>
+                            </tr>
+                          </table>
+
+                          <p style="margin:0 0 32px;font-size:13.5px;color:#6b7280;line-height:1.8;">
+                            If you have already made the payment, please disregard this message.
+                            For any queries, feel free to contact the school office during working hours.
+                          </p>
+
+                          <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
+
+                          <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
+                            With regards,<br>
+                            <strong>Indra Academy Sr. Sec. School</strong><br>
+                            <span style="font-size:12px;color:#9ca3af;">Fee Management Team</span>
+                          </p>
+                        </td>
+                      </tr>
+
+                      <!-- ── Footer ── -->
+                      <tr>
+                        <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:22px 40px;">
+                          <p style="margin:0 0 6px;font-size:12px;color:rgba(255,255,255,0.55);">
+                            This is an automated message. Please do not reply to this email.
+                          </p>
+                          <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">
+                            &copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.
+                          </p>
+                        </td>
+                      </tr>
+
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </body>
+            </html>
+            """.formatted(session, studentName, session, monthList, session);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────

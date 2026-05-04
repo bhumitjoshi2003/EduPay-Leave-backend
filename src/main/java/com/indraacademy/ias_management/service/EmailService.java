@@ -4,12 +4,15 @@ import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
@@ -56,6 +59,31 @@ public class EmailService {
             // but logging is critical.
         } catch (Exception e) {
             log.error("Unexpected error occurred while sending async email to: {} with subject: {}", to, subject, e);
+        }
+    }
+
+    @Async
+    public void sendHtmlEmail(String to, String subject, String htmlBody) {
+        if (to == null || to.trim().isEmpty() || subject == null || htmlBody == null) {
+            log.warn("Attempted to send HTML email with missing required field (To: {}, Subject: {}). Aborting.", to, subject);
+            return;
+        }
+        log.info("Attempting to send async HTML email to: {} with subject: {}", to, subject);
+        try {
+            MimeMessage message = javaMailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(emailSender);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(htmlBody, true);
+            javaMailSender.send(message);
+            log.info("Successfully sent async HTML email to: {}", to);
+        } catch (MessagingException e) {
+            log.error("MessagingException while sending HTML email to: {}", to, e);
+        } catch (MailException e) {
+            log.error("MailException while sending HTML email to: {}", to, e);
+        } catch (Exception e) {
+            log.error("Unexpected error while sending HTML email to: {}", to, e);
         }
     }
 
