@@ -10,4 +10,5 @@ import java.util.Optional;
 public interface SchoolRepository extends JpaRepository<School, Long> {
     Optional<School> findBySlug(String slug);
     boolean existsBySlug(String slug);
+    long countByActiveTrue();
 }

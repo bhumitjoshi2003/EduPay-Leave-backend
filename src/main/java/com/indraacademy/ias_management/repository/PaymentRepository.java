@@ -59,4 +59,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     long sumAmountCollectedBySchoolIdAndMonthAndYear(@Param("schoolId") Long schoolId, @Param("month") int month, @Param("year") int year);
 
     List<Payment> findBySchoolIdAndPaymentDateAfter(Long schoolId, LocalDateTime since);
+
+    // Platform-wide (SUPER_ADMIN dashboard — across all schools)
+    @Query("SELECT COALESCE(SUM(p.amountPaid - p.platformFee), 0) FROM Payment p WHERE EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
+    long sumAmountCollectedByMonthAndYear(@Param("month") int month, @Param("year") int year);
 }

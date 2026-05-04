@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.dto.RazorpayKeysRequest;
 import com.indraacademy.ias_management.dto.SchoolOnboardRequest;
 import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
 import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
+import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.service.SchoolService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -132,5 +133,28 @@ public class SchoolController {
         } catch (java.util.NoSuchElementException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
         }
+    }
+
+    /**
+     * GET /api/school/classes
+     * Returns the list of distinct active class names for the current school.
+     * Used by frontend dropdowns wherever classes are selected.
+     */
+    @GetMapping("/api/school/classes")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', 'TEACHER')")
+    public ResponseEntity<List<String>> getClassNames() {
+        log.info("GET /api/school/classes");
+        return ResponseEntity.ok(schoolService.getClassNames());
+    }
+
+    /**
+     * GET /api/super-admin/dashboard
+     * Platform-wide stats: total schools, students, teachers, revenue this month.
+     */
+    @GetMapping("/api/super-admin/dashboard")
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
+    public ResponseEntity<SuperAdminDashboardDto> getSuperAdminDashboard() {
+        log.info("GET /api/super-admin/dashboard");
+        return ResponseEntity.ok(schoolService.getSuperAdminDashboard());
     }
 }

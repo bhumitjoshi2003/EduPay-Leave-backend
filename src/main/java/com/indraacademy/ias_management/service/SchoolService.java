@@ -5,10 +5,14 @@ import com.indraacademy.ias_management.dto.RazorpayKeysRequest;
 import com.indraacademy.ias_management.dto.SchoolOnboardRequest;
 import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
 import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
+import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,6 +23,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.NoSuchElementException;
 
 @Service
@@ -28,6 +34,9 @@ public class SchoolService {
 
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private TeacherRepository teacherRepository;
+    @Autowired private PaymentRepository paymentRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private PasswordEncoder passwordEncoder;
@@ -229,9 +238,41 @@ public class SchoolService {
     /**
      * SUPER_ADMIN: list all schools.
      */
-    public java.util.List<SchoolSettingsResponse> listAllSchools() {
+    public List<SchoolSettingsResponse> listAllSchools() {
         return schoolRepository.findAll().stream()
                 .map(SchoolSettingsResponse::from)
                 .toList();
+    }
+
+    /**
+     * SUPER_ADMIN: platform-wide stats across all schools.
+     */
+    public SuperAdminDashboardDto getSuperAdminDashboard() {
+        LocalDate today = LocalDate.now();
+        long totalSchools   = schoolRepository.count();
+        long activeSchools  = schoolRepository.countByActiveTrue();
+        long totalStudents  = studentRepository.count();
+        long totalTeachers  = teacherRepository.count();
+        long revenueThisMonth = paymentRepository
+                .sumAmountCollectedByMonthAndYear(today.getMonthValue(), today.getYear());
+        return new SuperAdminDashboardDto(totalSchools, activeSchools, totalStudents, totalTeachers, revenueThisMonth);
+    }
+
+    /**
+     * Returns the distinct active class names for the current school (used by frontend dropdowns).
+     */
+    public List<String> getClassNames() {
+        return studentRepository.findDistinctActiveClassNamesBySchoolId(securityUtil.getSchoolId());
+    }
+
+    /**
+     * Looks up a school name by its ID, returning a safe fallback if not found.
+     * Used by email/PDF templates to replace hardcoded school name.
+     */
+    public String resolveSchoolName(Long schoolId) {
+        if (schoolId == null) return "School";
+        return schoolRepository.findById(schoolId)
+                .map(School::getName)
+                .orElse("School");
     }
 }

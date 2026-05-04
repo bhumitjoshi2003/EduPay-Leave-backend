@@ -1,8 +1,10 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
@@ -23,6 +25,7 @@ public class AttendanceEmailScheduler {
 
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private StudentRepository studentRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private EmailService emailService;
 
     @Scheduled(cron = "0 15 12 * * *")
@@ -68,7 +71,9 @@ public class AttendanceEmailScheduler {
                         String studentName = student.getName() != null ? student.getName() : "your child";
                         String dateStr    = today.format(DateTimeFormatter.ofPattern("dd MMMM yyyy"));
                         String subject    = "Absence Notification – " + studentName;
-                        String htmlBody   = buildAbsenceHtml(studentName, dateStr);
+                        String schoolName = schoolRepository.findById(student.getSchoolId() != null ? student.getSchoolId() : -1L)
+                                .map(School::getName).orElse("School");
+                        String htmlBody   = buildAbsenceHtml(studentName, dateStr, schoolName);
 
                         emailService.sendHtmlEmail(parentEmail, subject, htmlBody);
                         log.info("Successfully sent absence email to parent of student ID: {} ({})", studentId, parentEmail);
@@ -85,7 +90,8 @@ public class AttendanceEmailScheduler {
         log.info("Finished scheduled job: sendAttendanceEmails");
     }
 
-    private String buildAbsenceHtml(String studentName, String dateStr) {
+    private String buildAbsenceHtml(String studentName, String dateStr, String schoolName) {
+        String safeSchool = (schoolName != null && !schoolName.isBlank()) ? schoolName : "School";
         int year = LocalDate.now().getYear();
         return """
                 <!DOCTYPE html>
@@ -104,8 +110,7 @@ public class AttendanceEmailScheduler {
                         <tr>
                           <td align="center" style="background-color:#92400e;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
                             <p style="margin:0 0 10px;font-size:44px;line-height:1;">&#128197;</p>
-                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
-                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">%s</h1>
                           </td>
                         </tr>
 
@@ -165,7 +170,7 @@ public class AttendanceEmailScheduler {
                             <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
                             <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
                               With regards,<br>
-                              <strong>Indra Academy Sr. Sec. School</strong><br>
+                              <strong>%s</strong><br>
                               <span style="font-size:12px;color:#9ca3af;">Attendance &amp; Administration</span>
                             </p>
                           </td>
@@ -175,7 +180,7 @@ public class AttendanceEmailScheduler {
                         <tr>
                           <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
                             <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Indra Academy Sr. Sec. School. All rights reserved.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d %s. All rights reserved.</p>
                           </td>
                         </tr>
 
@@ -184,6 +189,6 @@ public class AttendanceEmailScheduler {
                   </table>
                 </body>
                 </html>
-                """.formatted(studentName, dateStr, studentName, dateStr, year);
+                """.formatted(safeSchool, studentName, dateStr, studentName, dateStr, safeSchool, year, safeSchool);
     }
 }

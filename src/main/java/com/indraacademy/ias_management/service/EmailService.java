@@ -60,7 +60,7 @@ public class EmailService {
     }
 
     @Async
-    public void sendBulkEmail(List<String> toEmails, String subject, String body) {
+    public void sendBulkEmail(List<String> toEmails, String subject, String body, String schoolName) {
         if (toEmails == null || toEmails.isEmpty() || subject == null || body == null) {
             log.warn("Attempted to send bulk email with missing required fields. Aborting.");
             return;
@@ -78,7 +78,7 @@ public class EmailService {
         log.info("Attempting to send bulk HTML email to {} unique recipients with subject: {}", validEmails.size(), subject);
 
         try {
-            String htmlBody = buildAnnouncementHtml(subject, body);
+            String htmlBody = buildAnnouncementHtml(subject, body, schoolName);
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(emailSender);
@@ -97,7 +97,8 @@ public class EmailService {
     }
 
     /** Wraps a plain-text notice body in the branded school announcement HTML template. */
-    String buildAnnouncementHtml(String subject, String body) {
+    String buildAnnouncementHtml(String subject, String body, String schoolName) {
+        String safeSchool  = (schoolName != null && !schoolName.isBlank()) ? schoolName : "School";
         String safeSubject = subject == null ? "" : subject;
         String safeBody    = body    == null ? "" : body.replace("&", "&amp;")
                                                         .replace("<", "&lt;")
@@ -121,8 +122,7 @@ public class EmailService {
                         <tr>
                           <td align="center" style="background-color:#1e3a5f;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
                             <p style="margin:0 0 10px;font-size:40px;line-height:1;">&#127978;</p>
-                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
-                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">%s</h1>
                           </td>
                         </tr>
 
@@ -145,7 +145,7 @@ public class EmailService {
                             <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
                             <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
                               With regards,<br>
-                              <strong>Indra Academy Sr. Sec. School</strong><br>
+                              <strong>%s</strong><br>
                               <span style="font-size:12px;color:#9ca3af;">Administration</span>
                             </p>
                           </td>
@@ -155,7 +155,7 @@ public class EmailService {
                         <tr>
                           <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
                             <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Indra Academy Sr. Sec. School. All rights reserved.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d %s. All rights reserved.</p>
                           </td>
                         </tr>
 
@@ -164,11 +164,11 @@ public class EmailService {
                   </table>
                 </body>
                 </html>
-                """.formatted(safeSubject, safeSubject, safeBody, year);
+                """.formatted(safeSubject, safeSchool, safeSubject, safeBody, safeSchool, year, safeSchool);
     }
 
     @Async
-    public void sendBulkEmailToClass(String subject, String body, String selectedClass) {
+    public void sendBulkEmailToClass(String subject, String body, String selectedClass, String schoolName) {
         if (subject == null || body == null || selectedClass == null || selectedClass.trim().isEmpty()) {
             log.warn("Attempted to send bulk email to class with missing required fields. Class: {}. Aborting.", selectedClass);
             return;
@@ -201,11 +201,11 @@ public class EmailService {
         }
 
         log.info("Found {} unique email addresses for class: {}", toEmails.size(), selectedClass);
-        sendBulkEmail(toEmails, subject, body);
+        sendBulkEmail(toEmails, subject, body, schoolName);
     }
 
     @Async
-    public void sendBulkEmailToTeachers(String subject, String body) {
+    public void sendBulkEmailToTeachers(String subject, String body, String schoolName) {
         if (subject == null || body == null) {
             log.warn("Attempted to send bulk email to teachers with missing fields. Aborting.");
             return;
@@ -222,14 +222,14 @@ public class EmailService {
                 return;
             }
             log.info("Sending bulk email to {} teachers.", emails.size());
-            sendBulkEmail(emails, subject, body);
+            sendBulkEmail(emails, subject, body, schoolName);
         } catch (DataAccessException e) {
             log.error("Data access error fetching teachers for bulk email.", e);
         }
     }
 
     @Async
-    public void sendBulkEmailToClassWithTeacher(String subject, String body, String className) {
+    public void sendBulkEmailToClassWithTeacher(String subject, String body, String className, String schoolName) {
         if (subject == null || body == null || className == null) {
             log.warn("Attempted to send class+teacher email with missing fields. Aborting.");
             return;
@@ -253,7 +253,7 @@ public class EmailService {
                 return;
             }
             log.info("Sending bulk email to {} recipients (class {} + teacher).", distinct.size(), className);
-            sendBulkEmail(distinct, subject, body);
+            sendBulkEmail(distinct, subject, body, schoolName);
         } catch (DataAccessException e) {
             log.error("Data access error fetching recipients for class+teacher email.", e);
         }

@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.service.NotificationService;
+import com.indraacademy.ias_management.service.SchoolService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ public class NoticeController {
 
     @Autowired private EmailService emailService;
     @Autowired private NotificationService notificationService;
+    @Autowired private SchoolService schoolService;
 
     /**
      * POST /api/admin/notice
@@ -70,16 +72,17 @@ public class NoticeController {
 
         // --- Email dispatch ---
         if (sendEmail) {
+            String schoolName = schoolService.getSettings().getName();
             if ("ALL_TEACHERS".equalsIgnoreCase(targetClass)) {
-                emailService.sendBulkEmailToTeachers(subject, body);
+                emailService.sendBulkEmailToTeachers(subject, body, schoolName);
                 log.info("Bulk email sent to all teachers.");
             } else if (targetClass.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
                 String className = targetClass.substring("CLASS_WITH_TEACHER:".length()).trim();
-                emailService.sendBulkEmailToClassWithTeacher(subject, body, className);
+                emailService.sendBulkEmailToClassWithTeacher(subject, body, className, schoolName);
                 log.info("Bulk email sent to class {} and their class teacher.", className);
             } else {
                 // "All" or a specific class name → students only
-                emailService.sendBulkEmailToClass(subject, body, targetClass);
+                emailService.sendBulkEmailToClass(subject, body, targetClass, schoolName);
                 log.info("Bulk email sent to class: {}", targetClass);
             }
         }

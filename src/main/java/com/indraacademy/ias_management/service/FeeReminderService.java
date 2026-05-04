@@ -6,9 +6,11 @@ import com.indraacademy.ias_management.entity.FeeStructure;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.repository.BusFeesRepository;
 import com.indraacademy.ias_management.repository.FeeStructureRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -41,6 +43,7 @@ public class FeeReminderService {
 
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private StudentRepository studentRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private FeeStructureRepository feeStructureRepository;
     @Autowired private BusFeesRepository busFeesRepository;
     @Autowired private PaymentRepository paymentRepository;
@@ -77,10 +80,12 @@ public class FeeReminderService {
                 log.warn("Skipping: Student {} has no email address.", student.getStudentId());
                 return;
             }
+            String schoolName = schoolRepository.findById(student.getSchoolId() != null ? student.getSchoolId() : -1L)
+                    .map(School::getName).orElse("School");
             String monthName = getMonthName(fee.getMonth());
             String subject = "Fee Payment Reminder – " + monthName + " (" + fee.getYear() + ")";
             String studentName = student.getName() != null ? student.getName() : "Student";
-            String htmlBody = buildFeeReminderHtml(studentName, monthName, fee.getYear());
+            String htmlBody = buildFeeReminderHtml(studentName, monthName, fee.getYear(), schoolName);
             log.info("Triggering scheduled reminder email to: {}", email);
             emailService.sendHtmlEmail(email, subject, htmlBody);
         }, () -> log.error("Database Error: Student ID {} not found in Student table.", fee.getStudentId()));
@@ -263,7 +268,9 @@ public class FeeReminderService {
 
         String subject = "Fee Payment Reminder – " + session;
         String studentName = student.getName() != null ? student.getName() : "Parent/Guardian";
-        String htmlBody = buildFeeReminderHtml(studentName, monthList, session);
+        String schoolName = schoolRepository.findById(securityUtil.getSchoolId())
+                .map(School::getName).orElse("School");
+        String htmlBody = buildFeeReminderHtml(studentName, monthList, session, schoolName);
 
         emailService.sendHtmlEmail(email, subject, htmlBody);
         log.info("Fee reminder sent to student {} ({})", studentId, email);
@@ -272,7 +279,8 @@ public class FeeReminderService {
 
     // ─── Email template ───────────────────────────────────────────────────────
 
-    private String buildFeeReminderHtml(String studentName, String monthList, String session) {
+    private String buildFeeReminderHtml(String studentName, String monthList, String session, String schoolName) {
+        String safeSchool = (schoolName != null && !schoolName.isBlank()) ? schoolName : "School";
         int year = LocalDate.now().getYear();
         return """
             <!DOCTYPE html>
@@ -292,8 +300,7 @@ public class FeeReminderService {
                       <tr>
                         <td align="center" style="background-color:#991b1b;border-radius:16px 16px 0 0;padding:36px 40px 28px;">
                           <p style="margin:0 0 12px;font-size:48px;line-height:1;">&#127891;</p>
-                          <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px;">Indra Academy</h1>
-                          <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;letter-spacing:0.3px;">Sr. Sec. School</p>
+                          <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:800;letter-spacing:-0.5px;">%s</h1>
                         </td>
                       </tr>
 
@@ -352,7 +359,7 @@ public class FeeReminderService {
 
                           <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
                             With regards,<br>
-                            <strong>Indra Academy Sr. Sec. School</strong><br>
+                            <strong>%s</strong><br>
                             <span style="font-size:12px;color:#9ca3af;">Fee Management Team</span>
                           </p>
                         </td>
@@ -365,7 +372,7 @@ public class FeeReminderService {
                             This is an automated message. Please do not reply to this email.
                           </p>
                           <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">
-                            &copy; %d Indra Academy Sr. Sec. School. All rights reserved.
+                            &copy; %d %s. All rights reserved.
                           </p>
                         </td>
                       </tr>
@@ -376,7 +383,7 @@ public class FeeReminderService {
               </table>
             </body>
             </html>
-            """.formatted(session, studentName, session, monthList, session, year);
+            """.formatted(safeSchool, session, studentName, session, monthList, session, safeSchool, year, safeSchool);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────

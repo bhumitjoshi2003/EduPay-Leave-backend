@@ -2,7 +2,9 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
 import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +33,7 @@ public class PaymentService {
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private ModelMapper modelMapper; // Retained, though not used in DTO mapping below
     @Autowired private SecurityUtil securityUtil;
 
@@ -178,6 +181,10 @@ public class PaymentService {
     }
 
     private String buildReceiptHtml(Payment payment) {
+        // Resolve school name dynamically
+        String schoolName = schoolRepository.findById(payment.getSchoolId() != null ? payment.getSchoolId() : -1L)
+                .map(School::getName).orElse("School");
+
         // Embed logo as base64 data URI so Flying Saucer can render it without filesystem access
         String logoDataUri = "";
         try {
@@ -285,7 +292,7 @@ public class PaymentService {
              /* ── Header ─────────────────────────────────────────── */
              + "  <div class=\"header\">\n"
              + "    " + logoHtml + "\n"
-             + "    <p class=\"school-name\">Indra Academy Sr. Sec. School</p>\n"
+             + "    <p class=\"school-name\">" + esc(schoolName) + "</p>\n"
              + "    <p class=\"school-sub\">Vill. Dumkabangar Halduchaur, Haldwani &#8211; 263139"
              + " &#160;|&#160; Affiliated to CBSE</p>\n"
              + "  </div>\n"
@@ -345,7 +352,7 @@ public class PaymentService {
              + "  <div class=\"sig-area\">\n"
              + "    <p>Authorised Signatory</p>\n"
              + "    <p>_________________________</p>\n"
-             + "    <p>For Indra Academy</p>\n"
+             + "    <p>For " + esc(schoolName) + "</p>\n"
              + "  </div>\n"
              /* ── Footer ─────────────────────────────────────────── */
              + "  <div class=\"footer\">\n"

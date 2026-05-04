@@ -226,7 +226,9 @@ public class RazorpayService {
                     String session     = (String) orderDetails.get("session");
                     String monthBitmask = (String) orderDetails.get("month");
                     String monthNames  = convertMonthBitmask(monthBitmask);
-                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, amountInRupees, session, monthNames);
+                    String schoolName = schoolRepository.findById(securityUtil.getSchoolId())
+                            .map(com.indraacademy.ias_management.entity.School::getName).orElse("School");
+                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, amountInRupees, session, monthNames, schoolName);
 
                     log.info("Initiating asynchronous HTML email send to {} for payment verification.", studentEmail);
                     emailService.sendHtmlEmail(studentEmail, subject, htmlBody);
@@ -275,7 +277,8 @@ public class RazorpayService {
     }
 
     private String buildPaymentConfirmationHtml(String studentName, String paymentId,
-                                                double amount, String session, String month) {
+                                                double amount, String session, String month, String schoolName) {
+        String safeSchool = (schoolName != null && !schoolName.isBlank()) ? schoolName : "School";
         String formattedAmount = String.format("%.2f", amount);
         String safeSession = session != null ? session : "—";
         String safeMonth   = month   != null ? month   : "—";
@@ -297,8 +300,7 @@ public class RazorpayService {
                         <tr>
                           <td align="center" style="background-color:#065f46;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
                             <p style="margin:0 0 10px;font-size:48px;line-height:1;">&#10003;</p>
-                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
-                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">%s</h1>
                           </td>
                         </tr>
 
@@ -365,7 +367,7 @@ public class RazorpayService {
                             <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
                             <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
                               Thank you,<br>
-                              <strong>Indra Academy Sr. Sec. School</strong><br>
+                              <strong>%s</strong><br>
                               <span style="font-size:12px;color:#9ca3af;">Fee Management Team</span>
                             </p>
                           </td>
@@ -375,7 +377,7 @@ public class RazorpayService {
                         <tr>
                           <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
                             <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Indra Academy Sr. Sec. School. All rights reserved.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d %s. All rights reserved.</p>
                           </td>
                         </tr>
 
@@ -384,6 +386,6 @@ public class RazorpayService {
                   </table>
                 </body>
                 </html>
-                """.formatted(studentName, formattedAmount, paymentId, safeSession, safeMonth, year);
+                """.formatted(safeSchool, studentName, formattedAmount, paymentId, safeSession, safeMonth, safeSchool, year, safeSchool);
     }
 }
