@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
@@ -86,6 +87,7 @@ public class DemoRequestService {
     }
 
     private String buildEmailHtml(DemoRequestDTO dto) {
+        int year = LocalDate.now().getYear();
         String na = "N/A";
         String students  = dto.getNumberOfStudents() != null ? String.valueOf(dto.getNumberOfStudents()) : na;
         String city      = dto.getCity()    != null && !dto.getCity().isBlank()    ? dto.getCity()    : na;
@@ -176,7 +178,7 @@ public class DemoRequestService {
                         <tr>
                           <td align="center" style="background-color:#0f172a;border-radius:0 0 16px 16px;padding:20px 40px;">
                             <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.5);">This is an automated internal notification from EduNexify.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.3);">&copy; 2026 EduNexify. All rights reserved.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.3);">&copy; %d EduNexify. All rights reserved.</p>
                           </td>
                         </tr>
 
@@ -186,6 +188,6 @@ public class DemoRequestService {
                 </body>
                 </html>
                 """.formatted(dto.getSchoolName(), dto.getContactName(), dto.getEmail(),
-                              dto.getPhone(), students, city, message);
+                              dto.getPhone(), students, city, message, year);
     }
 }

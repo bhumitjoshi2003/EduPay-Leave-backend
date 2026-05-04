@@ -271,6 +271,7 @@ public class FeeReminderService {
     // ─── Email template ───────────────────────────────────────────────────────
 
     private String buildFeeReminderHtml(String studentName, String monthList, String session) {
+        int year = LocalDate.now().getYear();
         return """
             <!DOCTYPE html>
             <html lang="en">
@@ -362,7 +363,7 @@ public class FeeReminderService {
                             This is an automated message. Please do not reply to this email.
                           </p>
                           <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">
-                            &copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.
+                            &copy; %d Indra Academy Sr. Sec. School. All rights reserved.
                           </p>
                         </td>
                       </tr>
@@ -373,7 +374,7 @@ public class FeeReminderService {
               </table>
             </body>
             </html>
-            """.formatted(session, studentName, session, monthList, session);
+            """.formatted(session, studentName, session, monthList, session, year);
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────

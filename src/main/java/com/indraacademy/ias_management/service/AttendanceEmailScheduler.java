@@ -86,6 +86,7 @@ public class AttendanceEmailScheduler {
     }
 
     private String buildAbsenceHtml(String studentName, String dateStr) {
+        int year = LocalDate.now().getYear();
         return """
                 <!DOCTYPE html>
                 <html lang="en">
@@ -174,7 +175,7 @@ public class AttendanceEmailScheduler {
                         <tr>
                           <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
                             <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Indra Academy Sr. Sec. School. All rights reserved.</p>
                           </td>
                         </tr>
 
@@ -183,6 +184,6 @@ public class AttendanceEmailScheduler {
                   </table>
                 </body>
                 </html>
-                """.formatted(studentName, dateStr, studentName, dateStr);
+                """.formatted(studentName, dateStr, studentName, dateStr, year);
     }
 }

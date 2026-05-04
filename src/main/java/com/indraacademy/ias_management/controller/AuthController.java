@@ -31,6 +31,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.WebUtils;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -337,7 +338,7 @@ public class AuthController {
             userRepository.save(user);
 
             String resetLink = frontendUrl + "/reset-password?token=" + resetToken;
-            String subject   = "Password Reset Request – Indra Academy";
+            String subject   = "Password Reset Request – Edunexify";
             String htmlBody  = buildPasswordResetHtml(resetLink);
             emailService.sendHtmlEmail(user.getEmail(), subject, htmlBody);
 
@@ -389,6 +390,7 @@ public class AuthController {
     }
 
     private String buildPasswordResetHtml(String resetLink) {
+        int year = LocalDate.now().getYear();
         return """
                 <!DOCTYPE html>
                 <html lang="en">
@@ -406,8 +408,8 @@ public class AuthController {
                         <tr>
                           <td align="center" style="background-color:#3730a3;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
                             <p style="margin:0 0 10px;font-size:44px;line-height:1;">&#128274;</p>
-                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Indra Academy</h1>
-                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">Sr. Sec. School</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Edunexify</h1>
+                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">School Management Platform</p>
                           </td>
                         </tr>
 
@@ -425,7 +427,7 @@ public class AuthController {
                           <td style="background-color:#ffffff;padding:36px 40px;">
                             <p style="margin:0 0 16px;font-size:16px;color:#111827;">Hello,</p>
                             <p style="margin:0 0 28px;font-size:14px;color:#6b7280;line-height:1.8;">
-                              We received a request to reset the password for your Indra Academy account.
+                              We received a request to reset the password for your Edunexify account.
                               Click the button below to set a new password. This link will expire in
                               <strong style="color:#111827;">1 hour</strong>.
                             </p>
@@ -462,8 +464,8 @@ public class AuthController {
                             <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
                             <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
                               With regards,<br>
-                              <strong>Indra Academy Sr. Sec. School</strong><br>
-                              <span style="font-size:12px;color:#9ca3af;">IT &amp; Administration</span>
+                              <strong>Edunexify</strong><br>
+                              <span style="font-size:12px;color:#9ca3af;">IT &amp; Support</span>
                             </p>
                           </td>
                         </tr>
@@ -472,7 +474,7 @@ public class AuthController {
                         <tr>
                           <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
                             <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Edunexify. All rights reserved.</p>
                           </td>
                         </tr>
 
@@ -481,6 +483,6 @@ public class AuthController {
                   </table>
                 </body>
                 </html>
-                """.formatted(resetLink, resetLink);
+                """.formatted(resetLink, resetLink, year);
     }
 }

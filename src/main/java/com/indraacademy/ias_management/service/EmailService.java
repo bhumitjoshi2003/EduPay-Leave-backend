@@ -10,7 +10,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.mail.MailException;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
@@ -18,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
 
@@ -33,34 +33,6 @@ public class EmailService {
 
     @Value("${app.mail.from:noreply@edunexify.co.in}")
     private String emailSender;
-
-    @Async
-    public void sendEmail(String to, String subject, String body) {
-        if (to == null || to.trim().isEmpty() || subject == null || body == null) {
-            log.warn("Attempted to send email with missing required field (To: {}, Subject: {}). Aborting.", to, subject);
-            return;
-        }
-
-        log.info("Attempting to send async email to: {} with subject: {}", to, subject);
-        System.out.println("Sending");
-        try {
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom(emailSender);
-            message.setTo(to);
-            message.setSubject(subject);
-            message.setText(body);
-
-            javaMailSender.send(message);
-            System.out.println("Sent");
-            log.info("Successfully sent async email to: {}", to);
-        } catch (MailException e) {
-            log.error("MailException occurred while sending async email to: {} with subject: {}", to, subject, e);
-            // Since this is @Async, re-throwing may not be effective for the caller,
-            // but logging is critical.
-        } catch (Exception e) {
-            log.error("Unexpected error occurred while sending async email to: {} with subject: {}", to, subject, e);
-        }
-    }
 
     @Async
     public void sendHtmlEmail(String to, String subject, String htmlBody) {
@@ -131,6 +103,7 @@ public class EmailService {
                                                         .replace("<", "&lt;")
                                                         .replace(">", "&gt;")
                                                         .replace("\n", "<br>");
+        int year = LocalDate.now().getYear();
         return """
                 <!DOCTYPE html>
                 <html lang="en">
@@ -182,7 +155,7 @@ public class EmailService {
                         <tr>
                           <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
                             <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; 2026 Indra Academy Sr. Sec. School. All rights reserved.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Indra Academy Sr. Sec. School. All rights reserved.</p>
                           </td>
                         </tr>
 
@@ -191,7 +164,7 @@ public class EmailService {
                   </table>
                 </body>
                 </html>
-                """.formatted(safeSubject, safeSubject, safeBody);
+                """.formatted(safeSubject, safeSubject, safeBody, year);
     }
 
     @Async
