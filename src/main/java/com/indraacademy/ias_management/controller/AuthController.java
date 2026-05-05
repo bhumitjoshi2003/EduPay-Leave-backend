@@ -6,7 +6,9 @@ import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.repository.AdminRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
@@ -48,6 +50,7 @@ public class AuthController {
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     @Autowired private UserRepository userRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtUtil jwtUtil;
     @Autowired private EmailService emailService;
@@ -132,6 +135,16 @@ public class AuthController {
         }
 
         User loggedIn = found.get();
+
+        // Reject login if the school has been deactivated (SUPER_ADMIN has no schoolId — skip for them)
+        if (loggedIn.getSchoolId() != null) {
+            School school = schoolRepository.findById(loggedIn.getSchoolId()).orElse(null);
+            if (school == null || !school.isActive()) {
+                log.warn("Login rejected for userId={}: school {} is inactive", loggedIn.getUserId(), loggedIn.getSchoolId());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Your school account has been deactivated. Please contact Edunexify support.");
+            }
+        }
 
         String accessToken = Jwts.builder()
                 .setSubject(loggedIn.getUserId())
@@ -226,6 +239,20 @@ public class AuthController {
             }
 
             User loggedIn = userOptional.get();
+
+            // Reject token refresh if the school has been deactivated
+            if (loggedIn.getSchoolId() != null) {
+                School school = schoolRepository.findById(loggedIn.getSchoolId()).orElse(null);
+                if (school == null || !school.isActive()) {
+                    log.warn("Token refresh rejected for userId={}: school {} is inactive", userId, loggedIn.getSchoolId());
+                    // Clear cookies so the client is fully logged out
+                    response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", "", Duration.ZERO).toString());
+                    response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                            .body("Your school account has been deactivated. Please contact Edunexify support.");
+                }
+            }
+
             String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole(), loggedIn.getSchoolId());
 
             response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", newAccessToken, Duration.ofHours(1)).toString());

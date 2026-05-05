@@ -34,6 +34,7 @@ public interface StudentRepository extends JpaRepository<Student, String> {
     Optional<Student> findByStudentIdAndSchoolId(String studentId, Long schoolId);
 
     long countByStatusAndSchoolId(StudentStatus status, Long schoolId);
+    long countByClassNameAndSchoolId(String className, Long schoolId);
 
     @Query("SELECT DISTINCT s.className FROM Student s WHERE s.status = 'ACTIVE' AND s.schoolId = :schoolId ORDER BY s.className")
     List<String> findDistinctActiveClassNamesBySchoolId(@Param("schoolId") Long schoolId);

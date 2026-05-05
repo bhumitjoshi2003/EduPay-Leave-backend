@@ -332,25 +332,26 @@ public class SchoolService {
     }
 
     /**
-     * SUPER_ADMIN: deactivate a school (soft delete — sets active=false for the school and all its users).
+     * SUPER_ADMIN: toggle a school's active state (deactivate if active, activate if inactive).
      */
     @Transactional
     public void deleteSchool(Long schoolId, HttpServletRequest request) {
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
 
-        school.setActive(false);
+        boolean wasActive = school.isActive();
+        school.setActive(!wasActive);
         schoolRepository.save(school);
-        log.info("Super admin deactivated schoolId={}", schoolId);
+        log.info("Super admin {} schoolId={}", wasActive ? "deactivated" : "activated", schoolId);
 
         auditService.log(
                 securityUtil.getUsername(),
                 securityUtil.getRole(),
-                "DEACTIVATE_SCHOOL",
+                wasActive ? "DEACTIVATE_SCHOOL" : "ACTIVATE_SCHOOL",
                 "School",
                 String.valueOf(schoolId),
-                "active=true",
-                "active=false (deactivated by super admin)",
+                "active=" + wasActive,
+                "active=" + !wasActive,
                 request.getRemoteAddr()
         );
     }
@@ -390,17 +391,38 @@ public class SchoolService {
 
     /**
      * Adds a new class at the end of the current school's class list.
+     * If a soft-deleted class with the same name exists, it is re-activated instead of
+     * creating a new row (which would violate the unique constraint on school_id + name).
      */
     @Transactional
     public SchoolClass addClass(String name) {
         Long schoolId = securityUtil.getSchoolId();
-        List<SchoolClass> existing = schoolClassRepository.findBySchoolIdOrderByDisplayOrderAsc(schoolId);
-        int nextOrder = existing.stream()
+        List<SchoolClass> all = schoolClassRepository.findBySchoolIdOrderByDisplayOrderAsc(schoolId);
+
+        // If a soft-deleted class with the same name exists, reactivate it
+        String trimmed = name.trim();
+        for (SchoolClass existing : all) {
+            if (existing.getName().equalsIgnoreCase(trimmed) && !existing.isActive()) {
+                int nextOrder = all.stream()
+                        .filter(SchoolClass::isActive)
+                        .mapToInt(c -> c.getDisplayOrder() == null ? 0 : c.getDisplayOrder())
+                        .max().orElse(0) + 1;
+                existing.setActive(true);
+                existing.setDisplayOrder(nextOrder);
+                return schoolClassRepository.save(existing);
+            }
+            if (existing.getName().equalsIgnoreCase(trimmed) && existing.isActive()) {
+                throw new IllegalArgumentException("Class '" + trimmed + "' already exists.");
+            }
+        }
+
+        int nextOrder = all.stream()
+                .filter(SchoolClass::isActive)
                 .mapToInt(c -> c.getDisplayOrder() == null ? 0 : c.getDisplayOrder())
                 .max().orElse(0) + 1;
         SchoolClass sc = new SchoolClass();
         sc.setSchoolId(schoolId);
-        sc.setName(name.trim());
+        sc.setName(trimmed);
         sc.setDisplayOrder(nextOrder);
         sc.setActive(true);
         return schoolClassRepository.save(sc);
@@ -408,6 +430,7 @@ public class SchoolService {
 
     /**
      * Soft-deletes a class. Validates it belongs to the current school.
+     * Refuses if any students are enrolled in this class.
      */
     @Transactional
     public void deleteClass(Long classId) {
@@ -416,6 +439,14 @@ public class SchoolService {
                 .orElseThrow(() -> new NoSuchElementException("Class not found: " + classId));
         if (!schoolId.equals(sc.getSchoolId())) {
             throw new SecurityException("Class does not belong to your school.");
+        }
+        long studentCount = studentRepository.countByClassNameAndSchoolId(sc.getName(), schoolId);
+        if (studentCount > 0) {
+            throw new IllegalArgumentException(
+                    "Cannot delete \"" + sc.getName() + "\" — " + studentCount +
+                    " student" + (studentCount == 1 ? " is" : "s are") +
+                    " currently enrolled in this class. Please move or remove them first."
+            );
         }
         sc.setActive(false);
         schoolClassRepository.save(sc);
