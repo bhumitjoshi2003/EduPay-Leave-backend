@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.dto.SchoolOnboardRequest;
 import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
 import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
 import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.service.SchoolService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,6 +19,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.List;
 import java.util.Map;
 
@@ -137,14 +139,74 @@ public class SchoolController {
 
     /**
      * GET /api/school/classes
-     * Returns the list of distinct active class names for the current school.
-     * Used by frontend dropdowns wherever classes are selected.
+     * Returns ordered active class names for the current school (for dropdowns).
      */
     @GetMapping("/api/school/classes")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', 'TEACHER', 'STUDENT', 'SUB_ADMIN')")
     public ResponseEntity<List<String>> getClassNames() {
         log.info("GET /api/school/classes");
         return ResponseEntity.ok(schoolService.getClassNames());
+    }
+
+    /**
+     * GET /api/school/classes/manage
+     * Returns full SchoolClass records (id + name + order) for the management UI.
+     */
+    @GetMapping("/api/school/classes/manage")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUB_ADMIN + "')")
+    public ResponseEntity<List<SchoolClass>> getManagedClasses() {
+        return ResponseEntity.ok(schoolService.getManagedClasses());
+    }
+
+    /**
+     * POST /api/school/classes
+     * Adds a new class to the current school's list.
+     */
+    @PostMapping("/api/school/classes")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> addClass(@RequestBody java.util.Map<String, String> body) {
+        String name = body.get("name");
+        if (name == null || name.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Class name is required."));
+        }
+        try {
+            SchoolClass created = schoolService.addClass(name);
+            return ResponseEntity.ok(created);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * DELETE /api/school/classes/{id}
+     * Soft-deletes a class from the current school's list.
+     */
+    @DeleteMapping("/api/school/classes/{id}")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> deleteClass(@PathVariable Long id) {
+        try {
+            schoolService.deleteClass(id);
+            return ResponseEntity.noContent().build();
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * PATCH /api/school/classes/reorder
+     * Accepts an ordered list of class IDs and updates displayOrder accordingly.
+     */
+    @PatchMapping("/api/school/classes/reorder")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> reorderClasses(@RequestBody List<Long> orderedIds) {
+        try {
+            schoolService.reorderClasses(orderedIds);
+            return ResponseEntity.ok(Map.of("message", "Reordered successfully."));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     /**

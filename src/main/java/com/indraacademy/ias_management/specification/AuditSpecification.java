@@ -57,6 +57,10 @@ public class AuditSpecification {
                 );
             }
 
+            if (filter.getSchoolId() != null) {
+                predicates.add(cb.equal(root.get("schoolId"), filter.getSchoolId()));
+            }
+
             query.orderBy(cb.desc(root.get("timestamp")));
             return cb.and(predicates.toArray(new Predicate[0]));
         };

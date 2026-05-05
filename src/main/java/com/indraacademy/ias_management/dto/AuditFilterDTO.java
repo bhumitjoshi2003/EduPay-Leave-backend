@@ -12,6 +12,7 @@ public class AuditFilterDTO {
     private String role;
     private String action;
     private String entityName;
+    private Long schoolId;
 
     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
     private LocalDate startDate;
@@ -65,5 +66,13 @@ public class AuditFilterDTO {
 
     public void setEndDate(LocalDate endDate) {
         this.endDate = endDate;
+    }
+
+    public Long getSchoolId() {
+        return schoolId;
+    }
+
+    public void setSchoolId(Long schoolId) {
+        this.schoolId = schoolId;
     }
 }

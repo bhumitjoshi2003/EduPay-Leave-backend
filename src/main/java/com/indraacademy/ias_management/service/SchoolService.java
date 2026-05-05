@@ -9,7 +9,9 @@ import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
@@ -33,6 +35,7 @@ public class SchoolService {
     private static final Logger log = LoggerFactory.getLogger(SchoolService.class);
 
     @Autowired private SchoolRepository schoolRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
@@ -259,10 +262,73 @@ public class SchoolService {
     }
 
     /**
-     * Returns the distinct active class names for the current school (used by frontend dropdowns).
+     * Returns the ordered active class names for the current school (used by frontend dropdowns).
+     * Source: school_class table, ordered by display_order.
      */
     public List<String> getClassNames() {
-        return studentRepository.findDistinctActiveClassNamesBySchoolId(securityUtil.getSchoolId());
+        Long schoolId = securityUtil.getSchoolId();
+        return schoolClassRepository.findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
+                .stream()
+                .map(SchoolClass::getName)
+                .toList();
+    }
+
+    /**
+     * Returns the full SchoolClass records for the current school (for the management UI).
+     */
+    public List<SchoolClass> getManagedClasses() {
+        return schoolClassRepository.findBySchoolIdAndActiveOrderByDisplayOrderAsc(securityUtil.getSchoolId(), true);
+    }
+
+    /**
+     * Adds a new class at the end of the current school's class list.
+     */
+    @Transactional
+    public SchoolClass addClass(String name) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<SchoolClass> existing = schoolClassRepository.findBySchoolIdOrderByDisplayOrderAsc(schoolId);
+        int nextOrder = existing.stream()
+                .mapToInt(c -> c.getDisplayOrder() == null ? 0 : c.getDisplayOrder())
+                .max().orElse(0) + 1;
+        SchoolClass sc = new SchoolClass();
+        sc.setSchoolId(schoolId);
+        sc.setName(name.trim());
+        sc.setDisplayOrder(nextOrder);
+        sc.setActive(true);
+        return schoolClassRepository.save(sc);
+    }
+
+    /**
+     * Soft-deletes a class. Validates it belongs to the current school.
+     */
+    @Transactional
+    public void deleteClass(Long classId) {
+        Long schoolId = securityUtil.getSchoolId();
+        SchoolClass sc = schoolClassRepository.findById(classId)
+                .orElseThrow(() -> new NoSuchElementException("Class not found: " + classId));
+        if (!schoolId.equals(sc.getSchoolId())) {
+            throw new SecurityException("Class does not belong to your school.");
+        }
+        sc.setActive(false);
+        schoolClassRepository.save(sc);
+    }
+
+    /**
+     * Reorders classes by accepting an ordered list of class IDs.
+     * Validates all IDs belong to the current school.
+     */
+    @Transactional
+    public void reorderClasses(List<Long> orderedIds) {
+        Long schoolId = securityUtil.getSchoolId();
+        for (int i = 0; i < orderedIds.size(); i++) {
+            SchoolClass sc = schoolClassRepository.findById(orderedIds.get(i))
+                    .orElseThrow(() -> new NoSuchElementException("Class not found"));
+            if (!schoolId.equals(sc.getSchoolId())) {
+                throw new SecurityException("Class does not belong to your school.");
+            }
+            sc.setDisplayOrder(i + 1);
+            schoolClassRepository.save(sc);
+        }
     }
 
     /**
