@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.service.NotificationService;
 import com.indraacademy.ias_management.service.SchoolService;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +25,7 @@ public class NoticeController {
     @Autowired private EmailService emailService;
     @Autowired private NotificationService notificationService;
     @Autowired private SchoolService schoolService;
+    @Autowired private SecurityUtil securityUtil;
 
     /**
      * POST /api/admin/notice
@@ -73,17 +75,18 @@ public class NoticeController {
         // --- Email dispatch ---
         if (sendEmail) {
             String schoolName = schoolService.getSettings().getName();
+            Long schoolId = securityUtil.getSchoolId();
             if ("ALL_TEACHERS".equalsIgnoreCase(targetClass)) {
-                emailService.sendBulkEmailToTeachers(subject, body, schoolName);
-                log.info("Bulk email sent to all teachers.");
+                emailService.sendBulkEmailToTeachers(subject, body, schoolName, schoolId);
+                log.info("Bulk email sent to all teachers of school {}.", schoolId);
             } else if (targetClass.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
                 String className = targetClass.substring("CLASS_WITH_TEACHER:".length()).trim();
-                emailService.sendBulkEmailToClassWithTeacher(subject, body, className, schoolName);
-                log.info("Bulk email sent to class {} and their class teacher.", className);
+                emailService.sendBulkEmailToClassWithTeacher(subject, body, className, schoolName, schoolId);
+                log.info("Bulk email sent to class {} and their class teacher (school {}).", className, schoolId);
             } else {
                 // "All" or a specific class name → students only
-                emailService.sendBulkEmailToClass(subject, body, targetClass, schoolName);
-                log.info("Bulk email sent to class: {}", targetClass);
+                emailService.sendBulkEmailToClass(subject, body, targetClass, schoolName, schoolId);
+                log.info("Bulk email sent to class: {} (school {}).", targetClass, schoolId);
             }
         }
 

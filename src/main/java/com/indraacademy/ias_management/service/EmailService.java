@@ -168,21 +168,21 @@ public class EmailService {
     }
 
     @Async
-    public void sendBulkEmailToClass(String subject, String body, String selectedClass, String schoolName) {
+    public void sendBulkEmailToClass(String subject, String body, String selectedClass, String schoolName, Long schoolId) {
         if (subject == null || body == null || selectedClass == null || selectedClass.trim().isEmpty()) {
             log.warn("Attempted to send bulk email to class with missing required fields. Class: {}. Aborting.", selectedClass);
             return;
         }
-        log.info("Fetching student list to send email to class: {} with subject: {}", selectedClass, subject);
+        log.info("Fetching student list to send email to class: {} (schoolId: {}) with subject: {}", selectedClass, schoolId, subject);
 
         List<Student> students = Collections.emptyList();
         try {
             if ("All".equalsIgnoreCase(selectedClass)) {
-                students = studentRepository.findAll();
-                log.debug("Fetched all students for bulk email.");
+                students = studentRepository.findBySchoolId(schoolId);
+                log.debug("Fetched {} students for school {} bulk email.", students.size(), schoolId);
             } else {
-                students  = studentRepository.findByClassName(selectedClass);
-                log.debug("Fetched {} students for class: {}", students.size(), selectedClass);
+                students = studentRepository.findByClassNameAndSchoolId(selectedClass, schoolId);
+                log.debug("Fetched {} students for class: {} (schoolId: {})", students.size(), selectedClass, schoolId);
             }
         } catch (DataAccessException e) {
             log.error("Data access error occurred while fetching students for class: {}. Aborting email send.", selectedClass, e);
@@ -205,14 +205,14 @@ public class EmailService {
     }
 
     @Async
-    public void sendBulkEmailToTeachers(String subject, String body, String schoolName) {
+    public void sendBulkEmailToTeachers(String subject, String body, String schoolName, Long schoolId) {
         if (subject == null || body == null) {
             log.warn("Attempted to send bulk email to teachers with missing fields. Aborting.");
             return;
         }
-        log.info("Fetching all teachers for bulk email with subject: {}", subject);
+        log.info("Fetching teachers for school {} for bulk email with subject: {}", schoolId, subject);
         try {
-            List<String> emails = teacherRepository.findAll().stream()
+            List<String> emails = teacherRepository.findBySchoolId(schoolId).stream()
                     .map(Teacher::getEmail)
                     .filter(email -> email != null && !email.trim().isEmpty())
                     .distinct()
@@ -229,20 +229,20 @@ public class EmailService {
     }
 
     @Async
-    public void sendBulkEmailToClassWithTeacher(String subject, String body, String className, String schoolName) {
+    public void sendBulkEmailToClassWithTeacher(String subject, String body, String className, String schoolName, Long schoolId) {
         if (subject == null || body == null || className == null) {
             log.warn("Attempted to send class+teacher email with missing fields. Aborting.");
             return;
         }
-        log.info("Sending bulk email to students of class {} and their class teacher.", className);
+        log.info("Sending bulk email to students of class {} (schoolId: {}) and their class teacher.", className, schoolId);
         try {
             List<String> emails = new java.util.ArrayList<>(
-                    studentRepository.findByClassName(className).stream()
+                    studentRepository.findByClassNameAndSchoolId(className, schoolId).stream()
                             .map(Student::getEmail)
                             .filter(email -> email != null && !email.trim().isEmpty())
                             .toList()
             );
-            teacherRepository.findByClassTeacher(className)
+            teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
                     .map(Teacher::getEmail)
                     .filter(email -> email != null && !email.trim().isEmpty())
                     .ifPresent(emails::add);

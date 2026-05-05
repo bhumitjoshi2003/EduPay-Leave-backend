@@ -71,10 +71,6 @@ public class TeacherController {
     public ResponseEntity<List<Teacher>> getAllTeachers() {
         log.info("Request to get all teachers.");
         List<Teacher> teachers = teacherService.getAllTeachers();
-        if (teachers.isEmpty()) {
-            log.info("No teachers found.");
-            return ResponseEntity.noContent().build();
-        }
         log.info("Successfully returned {} teachers.", teachers.size());
         return ResponseEntity.ok(teachers);
     }
