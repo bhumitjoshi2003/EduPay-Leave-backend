@@ -52,8 +52,10 @@ public class PaymentService {
                 return null;
             }
 
-            // Using DTO constructor as in original code
-            return new PaymentResponseDTO(
+            String sName = schoolRepository.findById(payment.getSchoolId() != null ? payment.getSchoolId() : -1L)
+                    .map(School::getName).orElse("School");
+
+            PaymentResponseDTO dto = new PaymentResponseDTO(
                     payment.getStudentId(),
                     payment.getStudentName(),
                     payment.getClassName(),
@@ -75,6 +77,8 @@ public class PaymentService {
                     payment.getLateFees(),
                     payment.getPlatformFee()
             );
+            dto.setSchoolName(sName);
+            return dto;
         } catch (DataAccessException e) {
             log.error("Data access error fetching payment details for ID: {}", paymentId, e);
             throw new RuntimeException("Could not retrieve payment details due to data access issue", e);
@@ -181,9 +185,10 @@ public class PaymentService {
     }
 
     private String buildReceiptHtml(Payment payment) {
-        // Resolve school name dynamically
-        String schoolName = schoolRepository.findById(payment.getSchoolId() != null ? payment.getSchoolId() : -1L)
-                .map(School::getName).orElse("School");
+        // Resolve school info dynamically
+        School school = schoolRepository.findById(payment.getSchoolId() != null ? payment.getSchoolId() : -1L).orElse(null);
+        String schoolName = school != null ? school.getName() : "School";
+        String schoolSubLine = buildSchoolSubLine(school);
 
         // Embed logo as base64 data URI so Flying Saucer can render it without filesystem access
         String logoDataUri = "";
@@ -293,8 +298,7 @@ public class PaymentService {
              + "  <div class=\"header\">\n"
              + "    " + logoHtml + "\n"
              + "    <p class=\"school-name\">" + esc(schoolName) + "</p>\n"
-             + "    <p class=\"school-sub\">Vill. Dumkabangar Halduchaur, Haldwani &#8211; 263139"
-             + " &#160;|&#160; Affiliated to CBSE</p>\n"
+             + "    <p class=\"school-sub\">" + esc(schoolSubLine) + "</p>\n"
              + "  </div>\n"
              /* ── Title bar ──────────────────────────────────────── */
              + "  <div class=\"title-bar\">\n"
@@ -361,6 +365,23 @@ public class PaymentService {
              + "  </div>\n"
              + "</body>\n"
              + "</html>";
+    }
+
+    /**
+     * Builds the sub-header line for the PDF receipt using dynamic school fields.
+     * Falls back gracefully when fields are absent.
+     */
+    private String buildSchoolSubLine(School school) {
+        if (school == null) return "";
+        StringBuilder sb = new StringBuilder();
+        if (school.getAddress() != null && !school.getAddress().isBlank()) {
+            sb.append(school.getAddress().trim());
+        }
+        if (school.getBoardType() != null) {
+            if (sb.length() > 0) sb.append(" \u00a0|\u00a0 ");
+            sb.append("Affiliated to ").append(school.getBoardType().name());
+        }
+        return sb.toString();
     }
 
     /** Appends a fee row only when amount &gt; 0. Returns the incremented row index. */

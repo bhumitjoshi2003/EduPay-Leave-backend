@@ -101,10 +101,14 @@ public class RazorpayService {
 
             Order order = getRazorpayClient().Orders.create(options);
 
+            String schoolName = schoolRepository.findById(securityUtil.getSchoolId() != null ? securityUtil.getSchoolId() : -1L)
+                    .map(School::getName).orElse("School");
+
             Map<String, Object> response = new HashMap<>();
             response.put("razorpayKey", resolveKeyId());
             response.put("orderId", order.get("id"));
             response.put("amount", order.get("amount")); // Amount in paisa
+            response.put("schoolName", schoolName);
             response.put("studentId", studentId);
             response.put("studentName", studentName);
             response.put("className", className);

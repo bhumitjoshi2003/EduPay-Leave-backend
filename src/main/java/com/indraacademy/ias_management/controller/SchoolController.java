@@ -141,7 +141,7 @@ public class SchoolController {
      * Used by frontend dropdowns wherever classes are selected.
      */
     @GetMapping("/api/school/classes")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', 'TEACHER')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', 'TEACHER', 'STUDENT', 'SUB_ADMIN')")
     public ResponseEntity<List<String>> getClassNames() {
         log.info("GET /api/school/classes");
         return ResponseEntity.ok(schoolService.getClassNames());

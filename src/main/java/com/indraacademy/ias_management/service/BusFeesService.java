@@ -33,7 +33,6 @@ public class BusFeesService {
     @Transactional(readOnly = true)
     public List<BusFees> getAllRecords() {
         log.info("Attempting to fetch all bus fees records.");
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
             List<BusFees> fees = busFeesRepository.findBySchoolId(securityUtil.getSchoolId());
             log.info("Successfully fetched {} bus fees records.", fees.size());
@@ -44,7 +43,7 @@ public class BusFeesService {
         }
     }
 
-    @Cacheable(value = "bus-fees", key = "#academicYear + '-' + #distance")
+    @Cacheable(value = "bus-fees", key = "@securityUtil.getSchoolId() + ':' + #academicYear + '-' + #distance")
     @Transactional(readOnly = true)
     public BigDecimal getBusFeesOfDistance(Double distance, String academicYear) {
         if (distance == null || academicYear == null || academicYear.trim().isEmpty()) {
@@ -52,8 +51,6 @@ public class BusFeesService {
             return null;
         }
         log.info("Fetching bus fees for distance: {} and academic year: {}", distance, academicYear);
-
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
             BigDecimal fees = busFeesRepository.findFeesByDistanceAndAcademicYearAndSchoolId(distance, academicYear, securityUtil.getSchoolId());
             if (fees != null) {
@@ -68,7 +65,7 @@ public class BusFeesService {
         }
     }
 
-    @Cacheable(value = "bus-fees", key = "#academicYear")
+    @Cacheable(value = "bus-fees", key = "@securityUtil.getSchoolId() + ':' + #academicYear")
     @Transactional(readOnly = true)
     public List<BusFees> getBusFeesByAcademicYear(String academicYear) {
         if (academicYear == null || academicYear.trim().isEmpty()) {
@@ -76,8 +73,6 @@ public class BusFeesService {
             return Collections.emptyList();
         }
         log.info("Fetching bus fees for academic year: {}", academicYear);
-
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
             List<BusFees> fees = busFeesRepository.findByAcademicYearAndSchoolId(academicYear, securityUtil.getSchoolId());
             log.info("Found {} bus fees records for academic year: {}", fees.size(), academicYear);

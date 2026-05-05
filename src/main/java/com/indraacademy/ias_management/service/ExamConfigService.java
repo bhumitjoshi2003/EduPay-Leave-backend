@@ -38,10 +38,9 @@ public class ExamConfigService {
 
     // ─── ExamConfig ───────────────────────────────────────────────────────────
 
-    @Cacheable(value = "exam-config", key = "#session + '-' + #className")
+    @Cacheable(value = "exam-config", key = "@securityUtil.getSchoolId() + ':' + #session + '-' + #className")
     @Transactional(readOnly = true)
     public List<ExamConfig> getExams(String session, String className) {
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         Long schoolId = securityUtil.getSchoolId();
         if (session != null && !session.isBlank() && className != null && !className.isBlank()) {
             return examConfigRepository.findBySessionAndClassNameAndSchoolId(session, className, schoolId);
@@ -89,7 +88,7 @@ public class ExamConfigService {
 
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
 
-    @Cacheable(value = "exam-config", key = "'subjects-' + #examId")
+    @Cacheable(value = "exam-config", key = "@securityUtil.getSchoolId() + ':subjects-' + #examId")
     @Transactional(readOnly = true)
     public List<ExamSubjectEntry> getExamSubjects(Long examId) {
         if (!examConfigRepository.existsById(examId)) {

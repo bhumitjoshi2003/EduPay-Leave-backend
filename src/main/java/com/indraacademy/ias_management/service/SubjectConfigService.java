@@ -31,11 +31,10 @@ public class SubjectConfigService {
 
     // ─── ClassSubject ─────────────────────────────────────────────────────────
 
-    @Cacheable(value = "subject-config", key = "'class-' + #className")
+    @Cacheable(value = "subject-config", key = "@securityUtil.getSchoolId() + ':class-' + #className")
     @Transactional(readOnly = true)
     public List<ClassSubject> getClassSubjects(String className) {
         log.info("Fetching subjects for class {}", className);
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         return classSubjectRepository.findByClassNameAndSchoolId(className, securityUtil.getSchoolId());
     }
 
@@ -70,11 +69,10 @@ public class SubjectConfigService {
 
     // ─── AcademicStream ───────────────────────────────────────────────────────
 
-    @Cacheable(value = "subject-config", key = "'all-streams'")
+    @Cacheable(value = "subject-config", key = "@securityUtil.getSchoolId() + ':all-streams'")
     @Transactional(readOnly = true)
     public List<StreamResponseDTO> getAllStreams() {
         log.info("Fetching all streams with core subjects");
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         Long schoolId = securityUtil.getSchoolId();
         return academicStreamRepository.findBySchoolId(schoolId).stream()
                 .map(stream -> {
@@ -152,11 +150,10 @@ public class SubjectConfigService {
 
     // ─── OptionalSubjectGroup ─────────────────────────────────────────────────
 
-    @Cacheable(value = "subject-config", key = "'all-optional-groups'")
+    @Cacheable(value = "subject-config", key = "@securityUtil.getSchoolId() + ':all-optional-groups'")
     @Transactional(readOnly = true)
     public List<OptionalGroupResponseDTO> getAllOptionalGroups() {
         log.info("Fetching all optional subject groups");
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         Long schoolId = securityUtil.getSchoolId();
         return optionalSubjectGroupRepository.findBySchoolId(schoolId).stream()
                 .map(group -> {

@@ -34,7 +34,6 @@ public class FeeStructureService {
     @Transactional(readOnly = true)
     public List<FeeStructure> getAllRecords() {
         log.info("Attempting to fetch all fee structure records.");
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
             List<FeeStructure> fees = feeStructureRepository.findBySchoolId(securityUtil.getSchoolId());
             log.info("Successfully fetched {} fee structure records.", fees.size());
@@ -45,7 +44,7 @@ public class FeeStructureService {
         }
     }
 
-    @Cacheable(value = "fee-structures", key = "#academicYear")
+    @Cacheable(value = "fee-structures", key = "@securityUtil.getSchoolId() + ':' + #academicYear")
     @Transactional(readOnly = true)
     public List<FeeStructure> getFeeStructuresByAcademicYear(String academicYear) {
         if (academicYear == null || academicYear.trim().isEmpty()) {
@@ -53,7 +52,6 @@ public class FeeStructureService {
             return Collections.emptyList();
         }
         log.info("Fetching fee structures for academic year: {}", academicYear);
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
             List<FeeStructure> fees = feeStructureRepository.findByAcademicYearAndSchoolId(academicYear, securityUtil.getSchoolId());
             log.info("Found {} fee structure records for academic year: {}", fees.size(), academicYear);
@@ -64,7 +62,7 @@ public class FeeStructureService {
         }
     }
 
-    @Cacheable(value = "fee-structures", key = "#academicYear + '-' + #className")
+    @Cacheable(value = "fee-structures", key = "@securityUtil.getSchoolId() + ':' + #academicYear + '-' + #className")
     @Transactional(readOnly = true)
     public FeeStructure getFeeStructuresByAcademicYearAndClassName(String academicYear, String className) {
         if (academicYear == null || academicYear.trim().isEmpty() || className == null || className.trim().isEmpty()) {
@@ -72,7 +70,6 @@ public class FeeStructureService {
             return null;
         }
         log.info("Fetching fee structure for academic year: {} and class: {}", academicYear, className);
-        // TODO: cache key should incorporate schoolId for multi-tenancy
         try {
             FeeStructure fee = feeStructureRepository.findByAcademicYearAndClassNameAndSchoolId(academicYear, className, securityUtil.getSchoolId());
             if (fee == null) {

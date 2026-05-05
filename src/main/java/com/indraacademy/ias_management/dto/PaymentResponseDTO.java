@@ -24,6 +24,7 @@ public class PaymentResponseDTO {
     private int additionalCharges;
     private int lateFees;
     private int platformFee;
+    private String schoolName;
 
     public PaymentResponseDTO() {}
 
@@ -209,4 +210,8 @@ public class PaymentResponseDTO {
     public int getPlatformFee() { return platformFee; }
 
     public void setPlatformFee(int platformFee) { this.platformFee = platformFee; }
+
+    public String getSchoolName() { return schoolName; }
+
+    public void setSchoolName(String schoolName) { this.schoolName = schoolName; }
 }
