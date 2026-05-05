@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.dto.StudentStreamDTO;
 import com.indraacademy.ias_management.entity.*;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.service.SchoolService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,7 @@ public class StudentStreamService {
     @Autowired private OptionalSubjectRepository optionalSubjectRepository;
     @Autowired private StudentService studentService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private SchoolService schoolService;
 
     @Transactional(readOnly = true)
     public Optional<StudentStreamSelection> getSelection(String studentId) {
@@ -89,7 +91,7 @@ public class StudentStreamService {
             Optional<StudentStreamSelection> sel = selectionRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
 
             if (sel.isEmpty()) {
-                return new StudentStreamDTO(student.getStudentId(), student.getName(),
+                return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
                         null, null, null, null);
             }
 
@@ -102,9 +104,45 @@ public class StudentStreamService {
                         .map(OptionalSubject::getSubjectName).orElse(null);
             }
 
-            return new StudentStreamDTO(student.getStudentId(), student.getName(),
+            return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
                     s.getStreamId(), streamName, s.getOptionalSubjectId(), optSubjectName);
         }).collect(Collectors.toList());
+    }
+
+    public record EligibleStudentsResult(int eligibleClassCount, List<StudentStreamDTO> students) {}
+
+    /**
+     * Returns all active students from stream-eligible classes with their stream selections.
+     * Also carries the count of eligible classes so callers can distinguish
+     * "no classes configured" from "classes configured but no students".
+     */
+    @Transactional(readOnly = true)
+    public EligibleStudentsResult getStreamEligibleStudents() {
+        List<String> eligibleClassNames = schoolService.getStreamEligibleClassNames();
+        Long schoolId = securityUtil.getSchoolId();
+
+        List<StudentStreamDTO> students = eligibleClassNames.stream()
+                .flatMap(className -> studentService.getActiveStudentsByClass(className).stream())
+                .map(student -> {
+                    Optional<StudentStreamSelection> sel = selectionRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
+                    if (sel.isEmpty()) {
+                        return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
+                                null, null, null, null);
+                    }
+                    StudentStreamSelection s = sel.get();
+                    String streamName = streamRepository.findById(s.getStreamId())
+                            .map(AcademicStream::getStreamName).orElse(null);
+                    String optSubjectName = null;
+                    if (s.getOptionalSubjectId() != null) {
+                        optSubjectName = optionalSubjectRepository.findById(s.getOptionalSubjectId())
+                                .map(OptionalSubject::getSubjectName).orElse(null);
+                    }
+                    return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
+                            s.getStreamId(), streamName, s.getOptionalSubjectId(), optSubjectName);
+                })
+                .collect(Collectors.toList());
+
+        return new EligibleStudentsResult(eligibleClassNames.size(), students);
     }
 
     private void validateIds(String studentId, Long streamId, Long optionalSubjectId) {

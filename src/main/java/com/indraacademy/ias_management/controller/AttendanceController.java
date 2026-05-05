@@ -27,6 +27,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/attendance")
 @CrossOrigin(origins = "http://localhost:4200")
+@PreAuthorize("isAuthenticated()")
 public class AttendanceController {
 
     private static final Logger log = LoggerFactory.getLogger(AttendanceController.class);

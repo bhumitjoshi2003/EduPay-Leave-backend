@@ -149,8 +149,13 @@ public class LeaveService {
         }
 
         try {
+            Long schoolId = securityUtil.getSchoolId();
             Leave leave = leaveRepository.findById(leaveId)
                     .orElseThrow(() -> new IllegalArgumentException("Leave not found with ID " + leaveId));
+
+            if (!schoolId.equals(leave.getSchoolId())) {
+                throw new SecurityException("Access denied: leave does not belong to your school.");
+            }
 
             String oldValue = objectMapper.writeValueAsString(leave);
 
@@ -197,7 +202,9 @@ public class LeaveService {
         }
         log.info("Fetching leave by ID: {}", leaveId);
         try {
-            return leaveRepository.findById(leaveId);
+            Long schoolId = securityUtil.getSchoolId();
+            return leaveRepository.findById(leaveId)
+                    .filter(l -> schoolId.equals(l.getSchoolId()));
         } catch (DataAccessException e) {
             log.error("Data access error fetching leave ID: {}", leaveId, e);
             throw new RuntimeException("Could not retrieve leave due to data access issue", e);
@@ -215,8 +222,13 @@ public class LeaveService {
         }
 
         try {
+            Long schoolId = securityUtil.getSchoolId();
             Leave leave = leaveRepository.findById(leaveId)
                     .orElseThrow(() -> new NoSuchElementException("Leave not found with ID " + leaveId));
+
+            if (!schoolId.equals(leave.getSchoolId())) {
+                throw new SecurityException("Access denied: leave does not belong to your school.");
+            }
 
             String oldValue = objectMapper.writeValueAsString(leave);
             leave.setStatus(status);

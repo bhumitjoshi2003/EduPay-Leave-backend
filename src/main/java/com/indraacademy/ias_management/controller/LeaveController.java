@@ -58,6 +58,7 @@ public class LeaveController {
     }
 
     @GetMapping("/student")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.SUB_ADMIN + "')")
     public ResponseEntity<Page<Leave>> getLeaves(
             @RequestParam(required = false)  String className,
             @RequestParam(required = false) String studentId,
@@ -71,6 +72,7 @@ public class LeaveController {
     }
 
     @GetMapping("/student/{studentId}")
+    @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.ADMIN + "')")
     public ResponseEntity<Page<Leave>> getLeavesOfStudent(
             @PathVariable String studentId,
             Pageable pageable) {
@@ -83,6 +85,7 @@ public class LeaveController {
     }
 
     @GetMapping("/date/{date}/class/{className}")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.SUB_ADMIN + "')")
     public ResponseEntity<List<String>> getLeavesByDateAndClass(@PathVariable String date, @PathVariable String className) {
         log.info("Request to get leaves by Date: {} and Class: {}", date, className);
         List<String> leaves = leaveService.getLeavesByDateAndClass(date, className);
@@ -106,15 +109,23 @@ public class LeaveController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body("Invalid status value: " + statusValue);
         }
-        Leave updated = leaveService.updateLeaveStatus(leaveId, status, request);
-        return ResponseEntity.ok(updated);
+        try {
+            Leave updated = leaveService.updateLeaveStatus(leaveId, status, request);
+            return ResponseEntity.ok(updated);
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{leaveId}")
     public ResponseEntity<String> deleteLeaveById(@PathVariable Long leaveId, HttpServletRequest request) {
         log.warn("Request to delete leave by ID: {}", leaveId);
-        leaveService.deleteLeaveById(leaveId, request);
+        try {
+            leaveService.deleteLeaveById(leaveId, request);
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
+        }
         log.info("Leave application deleted successfully by ID: {}", leaveId);
         return new ResponseEntity<>("Leave application deleted successfully", HttpStatus.OK);
     }

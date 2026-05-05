@@ -46,9 +46,10 @@ public class PaymentService {
         log.info("Fetching payment history details for payment ID: {}", paymentId);
 
         try {
-            Payment payment = paymentRepository.findByPaymentId(paymentId);
+            Long schoolId = securityUtil.getSchoolId();
+            Payment payment = paymentRepository.findByPaymentIdAndSchoolId(paymentId, schoolId).orElse(null);
             if (payment == null) {
-                log.warn("Payment not found with ID: {}", paymentId);
+                log.warn("Payment not found with ID: {} for schoolId: {}", paymentId, schoolId);
                 return null;
             }
 
@@ -138,14 +139,15 @@ public class PaymentService {
 
         Payment payment;
         try {
-            payment = paymentRepository.findByPaymentId(paymentId);
+            Long schoolId = securityUtil.getSchoolId();
+            payment = paymentRepository.findByPaymentIdAndSchoolId(paymentId, schoolId).orElse(null);
         } catch (DataAccessException e) {
             log.error("Data access error fetching payment for PDF generation ID: {}", paymentId, e);
             throw new RuntimeException("Could not retrieve payment data for PDF due to data access issue", e);
         }
 
         if (payment == null) {
-            log.warn("Payment not found for PDF generation ID: {}", paymentId);
+            log.warn("Payment not found for PDF generation ID: {} for current school", paymentId);
             return null;
         }
 

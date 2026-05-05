@@ -91,8 +91,11 @@ public class ExamConfigService {
     @Cacheable(value = "exam-config", key = "@securityUtil.getSchoolId() + ':subjects-' + #examId")
     @Transactional(readOnly = true)
     public List<ExamSubjectEntry> getExamSubjects(Long examId) {
-        if (!examConfigRepository.existsById(examId)) {
-            throw new NoSuchElementException("ExamConfig not found: " + examId);
+        Long schoolId = securityUtil.getSchoolId();
+        ExamConfig exam = examConfigRepository.findById(examId)
+                .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + examId));
+        if (!schoolId.equals(exam.getSchoolId())) {
+            throw new SecurityException("Access denied: exam does not belong to your school.");
         }
         return examSubjectEntryRepository.findByExamConfigId(examId);
     }
@@ -100,8 +103,12 @@ public class ExamConfigService {
     @CacheEvict(value = "exam-config", allEntries = true)
     public ExamSubjectEntry addExamSubject(Long examId, String subjectName,
                                            Integer maxMarks, LocalDate examDate) {
+        Long schoolId = securityUtil.getSchoolId();
         ExamConfig exam = examConfigRepository.findById(examId)
                 .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + examId));
+        if (!schoolId.equals(exam.getSchoolId())) {
+            throw new SecurityException("Access denied: exam does not belong to your school.");
+        }
 
         if (subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("subjectName is required.");
@@ -135,8 +142,12 @@ public class ExamConfigService {
 
     @CacheEvict(value = "exam-config", allEntries = true)
     public ExamSubjectEntry updateExamSubject(Long entryId, Integer maxMarks, LocalDate examDate) {
+        Long schoolId = securityUtil.getSchoolId();
         ExamSubjectEntry entry = examSubjectEntryRepository.findById(entryId)
                 .orElseThrow(() -> new NoSuchElementException("ExamSubjectEntry not found: " + entryId));
+        if (!schoolId.equals(entry.getSchoolId())) {
+            throw new SecurityException("Access denied: exam subject does not belong to your school.");
+        }
 
         if (maxMarks != null) {
             if (maxMarks <= 0) throw new IllegalArgumentException("maxMarks must be positive.");
@@ -153,8 +164,11 @@ public class ExamConfigService {
     @CacheEvict(value = "exam-config", allEntries = true)
     @Transactional
     public void deleteExamSubject(Long entryId) {
-        if (!examSubjectEntryRepository.existsById(entryId)) {
-            throw new NoSuchElementException("ExamSubjectEntry not found: " + entryId);
+        Long schoolId = securityUtil.getSchoolId();
+        ExamSubjectEntry entry = examSubjectEntryRepository.findById(entryId)
+                .orElseThrow(() -> new NoSuchElementException("ExamSubjectEntry not found: " + entryId));
+        if (!schoolId.equals(entry.getSchoolId())) {
+            throw new SecurityException("Access denied: exam subject does not belong to your school.");
         }
         examSubjectEntryRepository.deleteById(entryId);
         log.info("Deleted ExamSubjectEntry id={}", entryId);

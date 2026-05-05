@@ -27,13 +27,13 @@ public class DemoRequestController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<List<DemoRequestResponseDTO>> getAllDemoRequests() {
         return ResponseEntity.ok(demoRequestService.getAll());
     }
 
     @PatchMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     public ResponseEntity<DemoRequestResponseDTO> updateStatus(
             @PathVariable Long id,
             @Valid @RequestBody DemoStatusUpdateDTO dto) {

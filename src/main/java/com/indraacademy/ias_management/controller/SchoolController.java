@@ -210,6 +210,28 @@ public class SchoolController {
     }
 
     /**
+     * PATCH /api/school/classes/{id}/stream-eligible
+     * Toggles whether a class is eligible for stream assignment.
+     */
+    @PatchMapping("/api/school/classes/{id}/stream-eligible")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> toggleStreamEligible(@PathVariable Long id,
+                                                  @RequestBody Map<String, Boolean> body) {
+        Boolean eligible = body.get("eligible");
+        if (eligible == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "'eligible' field is required."));
+        }
+        try {
+            SchoolClass updated = schoolService.toggleStreamEligible(id, eligible);
+            return ResponseEntity.ok(updated);
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
      * GET /api/super-admin/dashboard
      * Platform-wide stats: total schools, students, teachers, revenue this month.
      */

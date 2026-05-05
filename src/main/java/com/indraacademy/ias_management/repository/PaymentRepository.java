@@ -49,6 +49,8 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     Payment findByPaymentId(String paymentId);
 
+    java.util.Optional<Payment> findByPaymentIdAndSchoolId(String paymentId, Long schoolId);
+
     @Query("SELECT MAX(p.paymentDate) FROM Payment p WHERE p.studentId = :studentId AND p.schoolId = :schoolId AND p.session = :session")
     java.util.Optional<java.time.LocalDateTime> findLatestPaymentDateByStudentIdAndSchoolIdAndSession(
             @Param("studentId") String studentId,

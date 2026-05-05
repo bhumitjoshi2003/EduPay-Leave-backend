@@ -17,6 +17,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/fee-structure")
 @CrossOrigin(origins = "http://localhost:4200")
+@PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.SUB_ADMIN + "', '" + Role.SUPER_ADMIN + "')")
 public class FeeStructureController {
 
     private static final Logger log = LoggerFactory.getLogger(FeeStructureController.class);

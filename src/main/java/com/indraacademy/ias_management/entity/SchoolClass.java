@@ -23,6 +23,9 @@ public class SchoolClass {
     @Column(nullable = false)
     private boolean active = true;
 
+    @Column(name = "stream_eligible", nullable = false)
+    private boolean streamEligible = false;
+
     public SchoolClass() {}
 
     public Long getId() { return id; }
@@ -39,4 +42,7 @@ public class SchoolClass {
 
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
+
+    public boolean isStreamEligible() { return streamEligible; }
+    public void setStreamEligible(boolean streamEligible) { this.streamEligible = streamEligible; }
 }

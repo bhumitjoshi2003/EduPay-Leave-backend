@@ -13,6 +13,7 @@ import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.util.JwtUtil;
+import com.indraacademy.ias_management.util.SchoolContext;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
@@ -103,14 +104,19 @@ public class AuthController {
         }
 
         try {
-            // Original logic for registrationSecret check was commented out, leaving it out here as well.
             if (userRepository.findByUserId(user.getUserId()).isPresent()) {
                 log.warn("Registration failed: User ID {} already exists.", user.getUserId());
                 return ResponseEntity.status(HttpStatus.CONFLICT).body("User ID already exists.");
             }
+            // Always inherit schoolId from the calling admin's security context,
+            // never trust the client-supplied value (which may be null or wrong).
+            Long callerSchoolId = SchoolContext.get();
+            if (callerSchoolId != null) {
+                user.setSchoolId(callerSchoolId);
+            }
             user.setPassword(passwordEncoder.encode(user.getPassword()));
             userRepository.save(user);
-            log.info("User registered successfully: {}", user.getUserId());
+            log.info("User registered successfully: {} (schoolId={})", user.getUserId(), user.getSchoolId());
             return ResponseEntity.ok("User registered successfully");
         } catch (Exception e) {
             log.error("Error during user registration for ID: {}", user.getUserId(), e);

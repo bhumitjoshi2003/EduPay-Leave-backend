@@ -60,7 +60,11 @@ public class ExamController {
     @GetMapping("/{examId}/subjects")
     public ResponseEntity<?> getExamSubjects(@PathVariable Long examId) {
         log.info("GET /api/exams/{}/subjects", examId);
-        return ResponseEntity.ok(examConfigService.getExamSubjects(examId));
+        try {
+            return ResponseEntity.ok(examConfigService.getExamSubjects(examId));
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
@@ -73,8 +77,12 @@ public class ExamController {
         LocalDate examDate = body.get("examDate") != null
                 ? LocalDate.parse(body.get("examDate").toString()) : null;
         log.info("POST /api/exams/{}/subjects: subject={}, maxMarks={}", examId, subjectName, maxMarks);
-        ExamSubjectEntry saved = examConfigService.addExamSubject(examId, subjectName, maxMarks, examDate);
-        return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        try {
+            ExamSubjectEntry saved = examConfigService.addExamSubject(examId, subjectName, maxMarks, examDate);
+            return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
@@ -86,15 +94,23 @@ public class ExamController {
         LocalDate examDate = body.get("examDate") != null
                 ? LocalDate.parse(body.get("examDate").toString()) : null;
         log.info("PUT /api/exams/subjects/{}: maxMarks={}, examDate={}", entryId, maxMarks, examDate);
-        ExamSubjectEntry updated = examConfigService.updateExamSubject(entryId, maxMarks, examDate);
-        return ResponseEntity.ok(updated);
+        try {
+            ExamSubjectEntry updated = examConfigService.updateExamSubject(entryId, maxMarks, examDate);
+            return ResponseEntity.ok(updated);
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/subjects/{entryId}")
     public ResponseEntity<?> deleteExamSubject(@PathVariable Long entryId) {
         log.info("DELETE /api/exams/subjects/{}", entryId);
-        examConfigService.deleteExamSubject(entryId);
-        return ResponseEntity.noContent().build();
+        try {
+            examConfigService.deleteExamSubject(entryId);
+            return ResponseEntity.noContent().build();
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
     }
 }

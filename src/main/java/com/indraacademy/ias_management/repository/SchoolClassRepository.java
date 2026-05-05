@@ -10,4 +10,5 @@ import java.util.List;
 public interface SchoolClassRepository extends JpaRepository<SchoolClass, Long> {
     List<SchoolClass> findBySchoolIdAndActiveOrderByDisplayOrderAsc(Long schoolId, boolean active);
     List<SchoolClass> findBySchoolIdOrderByDisplayOrderAsc(Long schoolId);
+    List<SchoolClass> findBySchoolIdAndStreamEligibleAndActiveOrderByDisplayOrderAsc(Long schoolId, boolean streamEligible, boolean active);
 }

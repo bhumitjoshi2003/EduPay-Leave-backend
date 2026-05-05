@@ -332,6 +332,33 @@ public class SchoolService {
     }
 
     /**
+     * Toggles the stream-eligible flag for a class.
+     * Validates the class belongs to the current school.
+     */
+    @Transactional
+    public SchoolClass toggleStreamEligible(Long classId, boolean eligible) {
+        Long schoolId = securityUtil.getSchoolId();
+        SchoolClass sc = schoolClassRepository.findById(classId)
+                .orElseThrow(() -> new NoSuchElementException("Class not found: " + classId));
+        if (!schoolId.equals(sc.getSchoolId())) {
+            throw new SecurityException("Class does not belong to your school.");
+        }
+        sc.setStreamEligible(eligible);
+        return schoolClassRepository.save(sc);
+    }
+
+    /**
+     * Returns the names of all stream-eligible active classes for the current school.
+     */
+    public List<String> getStreamEligibleClassNames() {
+        Long schoolId = securityUtil.getSchoolId();
+        return schoolClassRepository.findBySchoolIdAndStreamEligibleAndActiveOrderByDisplayOrderAsc(schoolId, true, true)
+                .stream()
+                .map(SchoolClass::getName)
+                .toList();
+    }
+
+    /**
      * Looks up a school name by its ID, returning a safe fallback if not found.
      * Used by email/PDF templates to replace hardcoded school name.
      */

@@ -286,7 +286,8 @@ public class NotificationService {
         }
         log.info("Fetching notification by ID: {}", id);
         try {
-            return notificationRepository.findById(id);
+            Long schoolId = securityUtil.getSchoolId();
+            return notificationRepository.findByIdAndSchoolId(id, schoolId);
         } catch (DataAccessException e) {
             log.error("Data access error fetching notification ID: {}", id, e);
             throw new RuntimeException("Could not retrieve notification due to data access issue", e);
@@ -303,7 +304,8 @@ public class NotificationService {
         }
 
         try {
-            Notification notification = notificationRepository.findById(id)
+            Long schoolId = securityUtil.getSchoolId();
+            Notification notification = notificationRepository.findByIdAndSchoolId(id, schoolId)
                     .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
 
             String oldValue = objectMapper.writeValueAsString(notification);
@@ -345,7 +347,8 @@ public class NotificationService {
         }
 
         try {
-            Notification notification = notificationRepository.findById(id)
+            Long schoolId = securityUtil.getSchoolId();
+            Notification notification = notificationRepository.findByIdAndSchoolId(id, schoolId)
                     .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
 
             String oldValue = objectMapper.writeValueAsString(notification);

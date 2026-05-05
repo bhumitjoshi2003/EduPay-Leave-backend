@@ -147,6 +147,7 @@ public class StudentFeesController {
     }
 
     @GetMapping("/sessions/{studentId}")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
     public ResponseEntity<List<String>> getDistinctYearsByStudentId(@PathVariable String studentId) {
         log.info("Request to get distinct academic years for student: {}", studentId);
         List<String> sessions = studentFeesService.getDistinctYearsByStudentId(studentId);

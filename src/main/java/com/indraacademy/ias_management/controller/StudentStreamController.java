@@ -68,4 +68,14 @@ public class StudentStreamController {
         log.info("GET /api/student-stream/class/{}", className);
         return ResponseEntity.ok(studentStreamService.getClassSelections(className));
     }
+
+    @GetMapping("/eligible-students")
+    public ResponseEntity<Map<String, Object>> getEligibleStudents() {
+        log.info("GET /api/student-stream/eligible-students");
+        var result = studentStreamService.getStreamEligibleStudents();
+        return ResponseEntity.ok(Map.of(
+                "eligibleClassCount", result.eligibleClassCount(),
+                "students", result.students()
+        ));
+    }
 }

@@ -22,4 +22,6 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     List<Notification> findBySchoolIdAndCreatedByIsNotNull(Long schoolId);
 
     Page<Notification> findBySchoolIdAndCreatedByIsNotNull(Long schoolId, Pageable pageable);
+
+    java.util.Optional<Notification> findByIdAndSchoolId(Long id, Long schoolId);
 }

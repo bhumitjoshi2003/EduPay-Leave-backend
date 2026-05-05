@@ -36,6 +36,7 @@ public class NotificationController {
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     public ResponseEntity<Notification> getNotificationById(@PathVariable Long id) {
         log.info("Fetching notification with ID: {}", id);
         Optional<Notification> notification = notificationService.getNotificationById(id);
@@ -56,6 +57,7 @@ public class NotificationController {
     }
 
     @GetMapping("/all")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     public ResponseEntity<Page<Notification>> getAllNotifications(Pageable pageable) {
         log.info("Fetching all notifications.");
         Page<Notification> notifications = notificationService.getAllNotifications(pageable);

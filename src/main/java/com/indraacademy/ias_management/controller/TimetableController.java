@@ -17,6 +17,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/timetable")
+@PreAuthorize("isAuthenticated()")
 public class TimetableController {
 
     private static final Logger log = LoggerFactory.getLogger(TimetableController.class);
