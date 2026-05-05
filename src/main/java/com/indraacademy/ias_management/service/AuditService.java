@@ -5,8 +5,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.entity.AuditLog;
 import com.indraacademy.ias_management.repository.AuditRepository;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -23,8 +23,14 @@ public class AuditService {
     @Autowired
     private ObjectMapper objectMapper;
 
-    /** Full-entity log — use for CREATE and DELETE actions. */
-    @Async
+    @Autowired
+    private SecurityUtil securityUtil;
+
+    /**
+     * Full-entity log — use for CREATE and DELETE actions.
+     * Automatically stamps the current user's schoolId from the security context.
+     * Runs synchronously so the schoolId ThreadLocal is still available on the calling thread.
+     */
     public void log(
             String username,
             String role,
@@ -45,16 +51,15 @@ public class AuditService {
         log.setNewValue(newValue);
         log.setIpAddress(ip);
         log.setTimestamp(LocalDateTime.now());
+        // Stamp schoolId from the current request's security context.
+        // Will be null for SUPER_ADMIN and scheduled jobs, which is correct.
+        log.setSchoolId(securityUtil.getSchoolId());
 
         auditLogRepository.save(log);
     }
 
     /**
      * Diff-aware log — use for UPDATE actions.
-     * Must be @Async itself because logUpdate() calls log() on the same instance —
-     * a direct this.log() call bypasses the Spring proxy, so @Async on log() alone
-     * would be ignored for this code path.
-     *
      * Compares {@code oldJson} and {@code newJson} field-by-field.
      * If nothing changed, the audit entry is skipped entirely.
      * Otherwise, only the changed fields are stored in oldValue / newValue.
@@ -62,7 +67,6 @@ public class AuditService {
      * If either JSON string cannot be parsed (e.g., it is a plain-text description
      * rather than a proper JSON object), falls back to the full-entity log behavior.
      */
-    @Async
     public void logUpdate(
             String username,
             String role,
