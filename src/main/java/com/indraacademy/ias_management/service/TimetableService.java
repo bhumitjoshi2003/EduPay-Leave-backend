@@ -69,7 +69,9 @@ public class TimetableService {
     }
 
     public TimetableEntry update(Long id, TimetableEntry incoming, HttpServletRequest request) {
+        Long schoolId = securityUtil.getSchoolId();
         TimetableEntry existing = timetableRepository.findById(id)
+                .filter(e -> schoolId.equals(e.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Timetable entry not found: " + id));
 
         String oldValue = toJson(existing);
@@ -115,7 +117,9 @@ public class TimetableService {
     }
 
     public void delete(Long id, HttpServletRequest request) {
+        Long schoolId = securityUtil.getSchoolId();
         TimetableEntry existing = timetableRepository.findById(id)
+                .filter(e -> schoolId.equals(e.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Timetable entry not found: " + id));
 
         String oldValue = toJson(existing);

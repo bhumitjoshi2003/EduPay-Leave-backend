@@ -126,7 +126,7 @@ public class AttendanceService {
         Student student;
         String className;
         try {
-            Optional<Student> studentOptional = studentRepository.findById(studentId);
+            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
             if (studentOptional.isEmpty()) {
                 log.warn("Student not found with ID: {}", studentId);
                 return counts;
@@ -218,7 +218,7 @@ public class AttendanceService {
         }
         log.info("Fetching join date for student ID: {}", studentId);
         try {
-            return studentRepository.findById(studentId)
+            return studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                     .map(Student::getJoiningDate)
                     .orElseGet(() -> {
                         log.warn("Student not found with ID: {}", studentId);

@@ -73,8 +73,15 @@ public class StudentFeesService {
             studentFees.setManuallyPaid(studentFees.getManuallyPaid());
             studentFees.setManualPaymentReceived(studentFees.getManualPaymentReceived());
 
+            Long schoolId = securityUtil.getSchoolId();
             Optional<StudentFees> existingFees =
                     Optional.ofNullable(studentFeesRepository.findById(studentFees.getId()).orElse(null));
+
+            // Enforce school ownership — prevent cross-school fee record modification
+            if (existingFees.isPresent() && !schoolId.equals(existingFees.get().getSchoolId())) {
+                throw new SecurityException("Access denied: fee record does not belong to your school.");
+            }
+            studentFees.setSchoolId(schoolId); // always stamp with current school
 
             String oldValue = null;
             if(existingFees.isPresent()){

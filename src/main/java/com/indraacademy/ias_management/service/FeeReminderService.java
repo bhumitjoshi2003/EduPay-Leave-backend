@@ -442,7 +442,9 @@ public class FeeReminderService {
 
     private String getAcademicYear(LocalDate date) {
         int year = date.getYear();
-        return (date.getMonthValue() >= 4) ? (year - 1) + "-" + year : (year - 2) + "-" + (year - 1);
+        // April–December belongs to current year's academic session (e.g. April 2026 → "2026-2027")
+        // January–March belongs to previous year's session (e.g. March 2026 → "2025-2026")
+        return (date.getMonthValue() >= 4) ? year + "-" + (year + 1) : (year - 1) + "-" + year;
     }
 
     private int getAcademicMonth(int month) {

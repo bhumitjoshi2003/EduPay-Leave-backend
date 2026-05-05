@@ -154,7 +154,8 @@ public class MarkController {
         if (!Role.TEACHER.equals(securityUtil.getRole())) return null;
 
         String teacherId = securityUtil.getUsername();
-        String teacherClass = teacherRepository.findById(teacherId)
+        Long schoolId = securityUtil.getSchoolId();
+        String teacherClass = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
                 .map(t -> t.getClassTeacher())
                 .orElse(null);
 

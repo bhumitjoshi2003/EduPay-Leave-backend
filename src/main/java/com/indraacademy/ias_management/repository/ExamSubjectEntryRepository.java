@@ -6,11 +6,14 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ExamSubjectEntryRepository extends JpaRepository<ExamSubjectEntry, Long> {
 
     List<ExamSubjectEntry> findByExamConfigId(Long examConfigId);
+
+    Optional<ExamSubjectEntry> findByIdAndSchoolId(Long id, Long schoolId);
 
     boolean existsByExamConfigIdAndSubjectName(Long examConfigId, String subjectName);
 

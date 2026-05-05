@@ -334,7 +334,7 @@ public class MarkService {
         if (req.getExamSubjectEntryId() == null) {
             throw new IllegalArgumentException("examSubjectEntryId is required.");
         }
-        ExamSubjectEntry entry = examSubjectEntryRepository.findById(req.getExamSubjectEntryId())
+        ExamSubjectEntry entry = examSubjectEntryRepository.findByIdAndSchoolId(req.getExamSubjectEntryId(), securityUtil.getSchoolId())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "ExamSubjectEntry not found: " + req.getExamSubjectEntryId()));
         if (req.getMarksObtained() == null) {

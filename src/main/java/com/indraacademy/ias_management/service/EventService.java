@@ -78,7 +78,9 @@ public class EventService {
         }
         log.info("Fetching event by ID: {}", id);
         try {
-            Optional<Event> event = eventRepository.findById(id);
+            Long schoolId = securityUtil.getSchoolId();
+            Optional<Event> event = eventRepository.findById(id)
+                    .filter(e -> schoolId.equals(e.getSchoolId()));
             event.ifPresentOrElse(
                     e -> { resolveImageUrl(e); log.info("Event found with ID: {}", id); },
                     () -> log.warn("Event not found with ID: {}", id)
@@ -130,7 +132,9 @@ public class EventService {
         }
 
         try {
+            Long schoolId = securityUtil.getSchoolId();
             Event event = eventRepository.findById(id)
+                    .filter(e -> schoolId.equals(e.getSchoolId()))
                     .orElseThrow(() -> new IllegalArgumentException("Event not found with ID: " + id));
 
             String oldValue = objectMapper.writeValueAsString(event);
@@ -208,12 +212,12 @@ public class EventService {
             return;
         }
         log.info("Attempting to delete event with ID: {}", id);
+        Long schoolId = securityUtil.getSchoolId();
         try {
-            if (!eventRepository.existsById(id)) {
-                log.error("Event not found for deletion with ID: {}", id);
-                throw new IllegalArgumentException("Event not found with ID: " + id);
-            }
-            eventRepository.deleteById(id);
+            Event event = eventRepository.findById(id)
+                    .filter(e -> schoolId.equals(e.getSchoolId()))
+                    .orElseThrow(() -> new IllegalArgumentException("Event not found with ID: " + id));
+            eventRepository.deleteById(event.getId());
             log.info("Event deleted successfully with ID: {}", id);
         } catch (DataAccessException e) {
             log.error("Data access error deleting event ID: {}", id, e);

@@ -68,9 +68,9 @@ public class StudentService {
 
         Long schoolId = securityUtil.getSchoolId();
         try {
-            Optional<Student> existingStudent = studentRepository.findById(student.getStudentId());
+            Optional<Student> existingStudent = studentRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
             if (existingStudent.isPresent()) {
-                log.warn("Student with ID {} already exists.", student.getStudentId());
+                log.warn("Student with ID {} already exists in school {}.", student.getStudentId(), schoolId);
                 throw new IllegalArgumentException("Student with ID " + student.getStudentId() + " already exists.");
             }
 

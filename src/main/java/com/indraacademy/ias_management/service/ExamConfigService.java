@@ -78,8 +78,11 @@ public class ExamConfigService {
     @CacheEvict(value = "exam-config", allEntries = true)
     @Transactional
     public void deleteExam(Long id) {
-        if (!examConfigRepository.existsById(id)) {
-            throw new NoSuchElementException("ExamConfig not found: " + id);
+        Long schoolId = securityUtil.getSchoolId();
+        ExamConfig exam = examConfigRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + id));
+        if (!schoolId.equals(exam.getSchoolId())) {
+            throw new SecurityException("Access denied: exam does not belong to your school.");
         }
         examSubjectEntryRepository.deleteByExamConfigId(id);
         examConfigRepository.deleteById(id);
