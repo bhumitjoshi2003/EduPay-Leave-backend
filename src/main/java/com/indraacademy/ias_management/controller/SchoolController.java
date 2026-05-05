@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.dto.SchoolOnboardRequest;
 import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
 import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
 import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
+import com.indraacademy.ias_management.dto.SuperAdminSchoolUpdateRequest;
 import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.service.SchoolService;
@@ -79,6 +80,59 @@ public class SchoolController {
             return ResponseEntity.ok(updated);
         } catch (IllegalArgumentException | java.util.NoSuchElementException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * PUT /api/super-admin/schools/{schoolId}
+     * Update all editable fields of a school (info + subscription) by super admin.
+     */
+    @PutMapping("/api/super-admin/schools/{schoolId}")
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
+    public ResponseEntity<?> updateSchoolDetails(@PathVariable Long schoolId,
+                                                 @RequestBody SuperAdminSchoolUpdateRequest req,
+                                                 HttpServletRequest request) {
+        log.info("PUT /api/super-admin/schools/{}", schoolId);
+        try {
+            SchoolSettingsResponse updated = schoolService.updateSchoolDetails(schoolId, req, request);
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException | java.util.NoSuchElementException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * PATCH /api/super-admin/schools/{schoolId}/admin-password
+     * Reset the ADMIN user's password for a given school.
+     */
+    @PatchMapping("/api/super-admin/schools/{schoolId}/admin-password")
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
+    public ResponseEntity<?> resetAdminPassword(@PathVariable Long schoolId,
+                                                @RequestBody Map<String, String> body,
+                                                HttpServletRequest request) {
+        log.info("PATCH /api/super-admin/schools/{}/admin-password", schoolId);
+        String newPassword = body.get("newPassword");
+        try {
+            schoolService.resetAdminPassword(schoolId, newPassword, request);
+            return ResponseEntity.ok(Map.of("message", "Admin password reset successfully."));
+        } catch (IllegalArgumentException | java.util.NoSuchElementException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * DELETE /api/super-admin/schools/{schoolId}
+     * Deactivate a school (soft delete).
+     */
+    @DeleteMapping("/api/super-admin/schools/{schoolId}")
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
+    public ResponseEntity<?> deleteSchool(@PathVariable Long schoolId, HttpServletRequest request) {
+        log.info("DELETE /api/super-admin/schools/{}", schoolId);
+        try {
+            schoolService.deleteSchool(schoolId, request);
+            return ResponseEntity.ok(Map.of("message", "School deactivated successfully."));
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
         }
     }
 

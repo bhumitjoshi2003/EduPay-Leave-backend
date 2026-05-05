@@ -87,7 +87,7 @@ public class SubjectConfigService {
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
-    public AcademicStream addStream(String streamName) {
+    public StreamResponseDTO addStream(String streamName) {
         if (streamName == null || streamName.isBlank()) {
             throw new IllegalArgumentException("streamName is required.");
         }
@@ -100,7 +100,7 @@ public class SubjectConfigService {
         stream.setSchoolId(schoolId);
         AcademicStream saved = academicStreamRepository.save(stream);
         log.info("Added stream '{}'", streamName);
-        return saved;
+        return new StreamResponseDTO(saved.getId(), saved.getStreamName(), new java.util.ArrayList<>());
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
@@ -168,7 +168,7 @@ public class SubjectConfigService {
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
-    public OptionalSubjectGroup addOptionalGroup(String groupName) {
+    public OptionalGroupResponseDTO addOptionalGroup(String groupName) {
         if (groupName == null || groupName.isBlank()) {
             throw new IllegalArgumentException("groupName is required.");
         }
@@ -177,7 +177,7 @@ public class SubjectConfigService {
         group.setSchoolId(securityUtil.getSchoolId());
         OptionalSubjectGroup saved = optionalSubjectGroupRepository.save(group);
         log.info("Added optional subject group '{}'", groupName);
-        return saved;
+        return new OptionalGroupResponseDTO(saved.getId(), saved.getGroupName(), new java.util.ArrayList<>());
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)

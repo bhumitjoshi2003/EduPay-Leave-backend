@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.dto.SchoolOnboardRequest;
 import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
 import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
 import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
+import com.indraacademy.ias_management.dto.SuperAdminSchoolUpdateRequest;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.entity.User;
@@ -116,7 +117,9 @@ public class SchoolService {
                 request.getRemoteAddr()
         );
 
-        return SchoolSettingsResponse.from(saved);
+        SchoolSettingsResponse response = SchoolSettingsResponse.from(saved);
+        response.setAdminUserId(req.getAdminUserId());
+        return response;
     }
 
     /**
@@ -239,12 +242,117 @@ public class SchoolService {
     }
 
     /**
-     * SUPER_ADMIN: list all schools.
+     * SUPER_ADMIN: list all schools, enriched with each school's admin userId.
      */
     public List<SchoolSettingsResponse> listAllSchools() {
         return schoolRepository.findAll().stream()
-                .map(SchoolSettingsResponse::from)
+                .map(school -> {
+                    SchoolSettingsResponse r = SchoolSettingsResponse.from(school);
+                    userRepository.findFirstBySchoolIdAndRole(school.getId(), Role.ADMIN)
+                            .ifPresent(admin -> r.setAdminUserId(admin.getUserId()));
+                    return r;
+                })
                 .toList();
+    }
+
+    /**
+     * SUPER_ADMIN: update all editable fields of a school (info + subscription).
+     */
+    @Transactional
+    public SchoolSettingsResponse updateSchoolDetails(Long schoolId, SuperAdminSchoolUpdateRequest req,
+                                                      HttpServletRequest request) {
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        String oldValue = "name=" + school.getName() + ",plan=" + school.getPlan() + ",active=" + school.isActive();
+
+        if (req.getName() != null && !req.getName().isBlank()) school.setName(req.getName());
+        if (req.getBoardType() != null) school.setBoardType(req.getBoardType());
+        if (req.getAddress() != null) school.setAddress(req.getAddress());
+        if (req.getCity() != null) school.setCity(req.getCity());
+        if (req.getState() != null) school.setState(req.getState());
+        if (req.getPincode() != null) school.setPincode(req.getPincode());
+        if (req.getEmail() != null) school.setEmail(req.getEmail());
+        if (req.getPhone() != null) school.setPhone(req.getPhone());
+        if (req.getWebsite() != null) school.setWebsite(req.getWebsite());
+        if (req.getContactPersonName() != null) school.setContactPersonName(req.getContactPersonName());
+        if (req.getPlan() != null) school.setPlan(req.getPlan());
+        if (req.getMaxStudents() != null) school.setMaxStudents(req.getMaxStudents());
+        if (req.getExpiryDate() != null) school.setExpiryDate(req.getExpiryDate());
+        if (req.getActive() != null) school.setActive(req.getActive());
+
+        School updated = schoolRepository.save(school);
+        log.info("Super admin updated school schoolId={}", schoolId);
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "SUPER_ADMIN_UPDATE_SCHOOL",
+                "School",
+                String.valueOf(schoolId),
+                oldValue,
+                "name=" + updated.getName() + ",plan=" + updated.getPlan() + ",active=" + updated.isActive(),
+                request.getRemoteAddr()
+        );
+
+        SchoolSettingsResponse r = SchoolSettingsResponse.from(updated);
+        userRepository.findFirstBySchoolIdAndRole(schoolId, Role.ADMIN)
+                .ifPresent(admin -> r.setAdminUserId(admin.getUserId()));
+        return r;
+    }
+
+    /**
+     * SUPER_ADMIN: reset the ADMIN user's password for a given school.
+     */
+    @Transactional
+    public void resetAdminPassword(Long schoolId, String newPassword, HttpServletRequest request) {
+        if (newPassword == null || newPassword.isBlank()) {
+            throw new IllegalArgumentException("New password is required.");
+        }
+        if (newPassword.length() < 6) {
+            throw new IllegalArgumentException("Password must be at least 6 characters.");
+        }
+        User admin = userRepository.findFirstBySchoolIdAndRole(schoolId, Role.ADMIN)
+                .orElseThrow(() -> new NoSuchElementException("No admin user found for school: " + schoolId));
+
+        admin.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(admin);
+        log.info("Super admin reset password for admin userId={} schoolId={}", admin.getUserId(), schoolId);
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "RESET_ADMIN_PASSWORD",
+                "User",
+                admin.getUserId(),
+                null,
+                "Password reset by super admin for school " + schoolId,
+                request.getRemoteAddr()
+        );
+    }
+
+    /**
+     * SUPER_ADMIN: deactivate a school (soft delete — sets active=false for the school and all its users).
+     */
+    @Transactional
+    public void deleteSchool(Long schoolId, HttpServletRequest request) {
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        school.setActive(false);
+        schoolRepository.save(school);
+        log.info("Super admin deactivated schoolId={}", schoolId);
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "DEACTIVATE_SCHOOL",
+                "School",
+                String.valueOf(schoolId),
+                "active=true",
+                "active=false (deactivated by super admin)",
+                request.getRemoteAddr()
+        );
     }
 
     /**

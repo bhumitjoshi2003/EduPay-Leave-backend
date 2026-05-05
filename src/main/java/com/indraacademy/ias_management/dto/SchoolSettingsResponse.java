@@ -36,6 +36,8 @@ public class SchoolSettingsResponse {
     private String onboardedBy;
     /** Exposed so frontend knows if Razorpay is configured; secret is never sent. */
     private boolean razorpayConfigured;
+    /** userId of the school's ADMIN account — populated by service layer when available. */
+    private String adminUserId;
 
     public static SchoolSettingsResponse from(School school) {
         SchoolSettingsResponse r = new SchoolSettingsResponse();
@@ -84,4 +86,6 @@ public class SchoolSettingsResponse {
     public LocalDateTime getCreatedAt() { return createdAt; }
     public String getOnboardedBy() { return onboardedBy; }
     public boolean isRazorpayConfigured() { return razorpayConfigured; }
+    public String getAdminUserId() { return adminUserId; }
+    public void setAdminUserId(String adminUserId) { this.adminUserId = adminUserId; }
 }

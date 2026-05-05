@@ -71,8 +71,12 @@ public class SubjectConfigController {
     public ResponseEntity<?> addStream(@RequestBody Map<String, String> body) {
         String streamName = body.get("streamName");
         log.info("POST /api/streams: streamName={}", streamName);
-        AcademicStream saved = subjectConfigService.addStream(streamName);
-        return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        try {
+            StreamResponseDTO saved = subjectConfigService.addStream(streamName);
+            return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     @DeleteMapping("/streams/{id}")
@@ -112,8 +116,12 @@ public class SubjectConfigController {
     public ResponseEntity<?> addOptionalGroup(@RequestBody Map<String, String> body) {
         String groupName = body.get("groupName");
         log.info("POST /api/optional-groups: groupName={}", groupName);
-        OptionalSubjectGroup saved = subjectConfigService.addOptionalGroup(groupName);
-        return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        try {
+            OptionalGroupResponseDTO saved = subjectConfigService.addOptionalGroup(groupName);
+            return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     @DeleteMapping("/optional-groups/{id}")
