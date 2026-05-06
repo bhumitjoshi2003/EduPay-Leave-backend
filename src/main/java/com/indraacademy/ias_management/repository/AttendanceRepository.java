@@ -17,6 +17,9 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     @Transactional
     void deleteByDateAndClassNameAndSchoolId(LocalDate date, String className, Long schoolId);
 
+    @Transactional
+    void deleteByStudentIdAndSchoolId(String studentId, Long schoolId);
+
     List<Attendance> findByDateAndClassNameAndSchoolId(LocalDate date, String className, Long schoolId);
 
     @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")

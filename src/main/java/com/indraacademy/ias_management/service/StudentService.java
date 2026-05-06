@@ -3,7 +3,12 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.LeaveRepository;
+import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import net.coobird.thumbnailator.Thumbnails;
@@ -46,6 +51,11 @@ public class StudentService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private AuditService auditService;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private AttendanceRepository attendanceRepository;
+    @Autowired private StudentFeesRepository studentFeesRepository;
+    @Autowired private LeaveRepository leaveRepository;
+    @Autowired private PaymentRepository paymentRepository;
+    @Autowired private UserRepository userRepository;
 
     private String getAcademicYear(LocalDate date) {
         Year currentYear = Year.of(date.getYear());
@@ -268,6 +278,59 @@ public class StudentService {
             log.error("Unexpected error while updating student with ID: {}", studentId, e);
             throw new RuntimeException("An unexpected error occurred while updating the student.", e);
         }
+    }
+
+    /**
+     * Permanently deletes a student and all their associated records (attendance,
+     * fees, leaves, payments, and the login User account) within the caller's school.
+     *
+     * The deletion is wrapped in a single transaction so that all tables are cleaned
+     * up atomically — a partial failure rolls back the entire operation.
+     *
+     * NOTE: Payment records are retained for accounting/audit purposes and are NOT
+     * deleted. This is intentional: fee receipts must remain available even after
+     * a student is removed. Only attendance, fees schedule, and leave records are purged.
+     */
+    @Transactional
+    public void deleteStudent(String studentId, HttpServletRequest request) {
+        if (studentId == null || studentId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Student ID must be provided.");
+        }
+
+        Long schoolId = securityUtil.getSchoolId();
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+
+        log.warn("Deleting student {} and all associated records for school {}", studentId, schoolId);
+
+        // 1. Delete related records (cascading cleanup)
+        attendanceRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
+        studentFeesRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
+        leaveRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
+        // Note: Payment records are intentionally kept for financial audit trail
+
+        // 2. Delete the login User account
+        userRepository.findByUserId(studentId).ifPresent(userRepository::delete);
+
+        // 3. Delete the Student record itself
+        studentRepository.delete(student);
+
+        try {
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "DELETE_STUDENT",
+                    "Student",
+                    studentId,
+                    objectMapper.writeValueAsString(student),
+                    null,
+                    request.getRemoteAddr()
+            );
+        } catch (JsonProcessingException e) {
+            log.warn("Could not serialize deleted student for audit log: {}", studentId);
+        }
+
+        log.info("Student {} and associated records deleted successfully.", studentId);
     }
 
     private static final long MAX_PHOTO_SIZE = 10L * 1024 * 1024; // 10 MB

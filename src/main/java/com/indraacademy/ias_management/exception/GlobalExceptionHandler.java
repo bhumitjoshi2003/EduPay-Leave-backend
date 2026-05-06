@@ -35,13 +35,14 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse(404, "Not Found", ex.getMessage()));
     }
 
-    /** 409 — unique constraint / duplicate data */
+    /** 409 — unique constraint / duplicate data (detail logged internally, never sent to client) */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException ex) {
         log.warn("Data integrity violation: {}", ex.getMessage());
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
-                .body(new ErrorResponse(409, "Conflict", ex.getMessage()));
+                .body(new ErrorResponse(409, "Conflict",
+                        "A record with the provided data already exists or violates a uniqueness constraint."));
     }
 
     /** 500 — database error */

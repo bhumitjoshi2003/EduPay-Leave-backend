@@ -38,6 +38,11 @@ public class PaymentController {
         @SuppressWarnings("unchecked")
         Map<String, Object> paymentData = (Map<String, Object>) requestBody.get("paymentData");
 
+        if (paymentData == null) {
+            log.warn("createOrder called with missing 'paymentData' field in request body.");
+            return ResponseEntity.badRequest().body(Map.of("error", "Request body must contain a 'paymentData' object."));
+        }
+
         log.info("Request to create payment order for student: {}", paymentData.get("studentId"));
 
         try {

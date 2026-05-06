@@ -59,8 +59,15 @@ public class StudentController {
             log.info("Student registered successfully with ID: {}", savedStudent.getStudentId());
             return new ResponseEntity<>(savedStudent, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
-            log.warn("Student registration failed (Conflict): {}", e.getMessage());
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.CONFLICT);
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.contains("already exists")) {
+                // Duplicate student ID within this school — 409 Conflict is correct
+                log.warn("Student registration failed (Conflict): {}", msg);
+                return new ResponseEntity<>(msg, HttpStatus.CONFLICT);
+            }
+            // Missing or invalid input data — 400 Bad Request
+            log.warn("Student registration failed (Bad Request): {}", msg);
+            return new ResponseEntity<>(msg, HttpStatus.BAD_REQUEST);
         } catch (Exception e) {
             log.error("Unexpected error during student registration.", e);
             return new ResponseEntity<>("Failed to register student.", HttpStatus.INTERNAL_SERVER_ERROR);
@@ -191,6 +198,31 @@ public class StudentController {
         int count = request.getDecisions() != null ? request.getDecisions().size() : 0;
         log.warn("Request to execute promotion for {} student decisions", count);
         return ResponseEntity.ok(studentPromotionService.executePromotion(request, httpRequest));
+    }
+
+    /**
+     * Permanently deletes a student and their related attendance, fee schedule, and
+     * leave records within the admin's school. Payment records are intentionally
+     * retained for financial audit purposes.
+     *
+     * This is a destructive, irreversible operation — use with caution.
+     */
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @DeleteMapping("/{studentId}")
+    public ResponseEntity<?> deleteStudent(@PathVariable String studentId, HttpServletRequest request) {
+        log.warn("Request to permanently delete student: {}", studentId);
+        try {
+            studentService.deleteStudent(studentId, request);
+            log.info("Student {} deleted successfully.", studentId);
+            return ResponseEntity.noContent().build();
+        } catch (NoSuchElementException e) {
+            log.warn("Delete failed — student not found: {}", studentId);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Unexpected error deleting student: {}", studentId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to delete student.");
+        }
     }
 
     @GetMapping("/bulk/template")

@@ -13,6 +13,9 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
 
     List<StudentFees> findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(String studentId, Long schoolId, String year);
 
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByStudentIdAndSchoolId(String studentId, Long schoolId);
+
     StudentFees findByStudentIdAndSchoolIdAndYearAndMonth(String studentId, Long schoolId, String year, Integer month);
 
     @Query("SELECT DISTINCT sf.year FROM StudentFees sf WHERE sf.studentId = :studentId AND sf.schoolId = :schoolId")

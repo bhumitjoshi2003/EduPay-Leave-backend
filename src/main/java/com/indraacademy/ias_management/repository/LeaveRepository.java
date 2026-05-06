@@ -16,6 +16,9 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
 
     void deleteByStudentIdAndLeaveDateAndSchoolId(String studentId, String leaveDate, Long schoolId);
 
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByStudentIdAndSchoolId(String studentId, Long schoolId);
+
     Page<Leave> findByStudentIdContainingAndSchoolId(String studentId, Long schoolId, Pageable pageable);
 
     Page<Leave> findByLeaveDateAndSchoolId(String leaveDate, Long schoolId, Pageable pageable);

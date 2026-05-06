@@ -16,6 +16,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -37,14 +38,15 @@ public class NotificationController {
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
-    public ResponseEntity<Notification> getNotificationById(@PathVariable Long id) {
+    public ResponseEntity<?> getNotificationById(@PathVariable Long id) {
         log.info("Fetching notification with ID: {}", id);
         Optional<Notification> notification = notificationService.getNotificationById(id);
-        return notification.map(value -> new ResponseEntity<>(value, HttpStatus.OK))
-                .orElseGet(() -> {
-                    log.warn("Notification with ID {} not found.", id);
-                    return new ResponseEntity<>(HttpStatus.NOT_FOUND);
-                });
+        if (notification.isPresent()) {
+            return ResponseEntity.ok(notification.get());
+        }
+        log.warn("Notification with ID {} not found.", id);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "Notification with ID " + id + " not found."));
     }
 
     @GetMapping("/user")

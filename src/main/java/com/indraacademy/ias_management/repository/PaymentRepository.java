@@ -51,6 +51,9 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
 
     boolean existsByPaymentId(String paymentId);
 
+    @org.springframework.transaction.annotation.Transactional
+    void deleteByStudentIdAndSchoolId(String studentId, Long schoolId);
+
     @Query("SELECT MAX(p.paymentDate) FROM Payment p WHERE p.studentId = :studentId AND p.schoolId = :schoolId AND p.session = :session")
     java.util.Optional<java.time.LocalDateTime> findLatestPaymentDateByStudentIdAndSchoolIdAndSession(
             @Param("studentId") String studentId,

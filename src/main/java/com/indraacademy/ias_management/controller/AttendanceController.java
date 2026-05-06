@@ -56,7 +56,9 @@ public class AttendanceController {
     }
 
     @GetMapping("/counts/{studentId}/{year}/{month}")
-    public ResponseEntity<Map<String, Long>> getAttendanceCounts(@PathVariable String studentId, @PathVariable int year, @PathVariable int month) {
+    public ResponseEntity<?> getAttendanceCounts(@PathVariable String studentId, @PathVariable int year, @PathVariable int month) {
+        ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
+        if (rangeError != null) return rangeError;
         log.info("Request to get attendance counts for Student: {} in {}-{}", studentId, year, month);
         Map<String, Long> counts = attendanceService.getAttendanceCounts(studentId, year, month);
         return ResponseEntity.ok(counts);
@@ -84,12 +86,14 @@ public class AttendanceController {
     }
 
     @GetMapping("/student/{studentId}/month/{month}/year/{year}")
-    public ResponseEntity<List<Attendance>> getStudentMonthlyAttendance(
+    public ResponseEntity<?> getStudentMonthlyAttendance(
             @PathVariable String studentId,
             @PathVariable int month,
             @PathVariable int year,
             @RequestParam String className) {
 
+        ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
+        if (rangeError != null) return rangeError;
         List<Attendance> list = attendanceService.getAttendanceByStudentClassMonthAndYear(studentId, className, year, month);
         return ResponseEntity.ok(list);
     }
@@ -122,6 +126,9 @@ public class AttendanceController {
                         .body("Teachers can only view attendance for students in their assigned class.");
             }
         }
+
+        ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
+        if (rangeError != null) return rangeError;
 
         log.info("Daily attendance request — student: {}, month: {}, year: {}", studentId, month, year);
         DailyAttendanceDTO result = attendanceService.getDailyAttendance(studentId, month, year);
@@ -162,6 +169,11 @@ public class AttendanceController {
             }
         }
 
+        if (month != null || year != null) {
+            ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
+            if (rangeError != null) return rangeError;
+        }
+
         log.info("Attendance summary request — student: {}, type: {}, month: {}, year: {}, session: {}",
                 studentId, type, month, year, session);
         AttendanceSummaryDTO summary = attendanceService.getStudentSummary(studentId, type, month, year, session);
@@ -200,9 +212,30 @@ public class AttendanceController {
             }
         }
 
+        if (month != null || year != null) {
+            ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
+            if (rangeError != null) return rangeError;
+        }
+
         log.info("Class attendance summary request — class: {}, type: {}, month: {}, year: {}, session: {}",
                 className, type, month, year, session);
         List<ClassAttendanceSummaryDTO> summary = attendanceService.getClassSummary(className, type, month, year, session);
         return ResponseEntity.ok(summary);
+    }
+
+    /**
+     * Validates that month is in [1, 12] and year is in [2000, 2100].
+     * Returns a 400 ResponseEntity if invalid, null if valid.
+     */
+    private ResponseEntity<?> validateMonthAndYear(Integer month, Integer year) {
+        if (month != null && (month < 1 || month > 12)) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Invalid month '" + month + "'. Month must be between 1 and 12."));
+        }
+        if (year != null && (year < 2000 || year > 2100)) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Invalid year '" + year + "'. Year must be between 2000 and 2100."));
+        }
+        return null;
     }
 }
