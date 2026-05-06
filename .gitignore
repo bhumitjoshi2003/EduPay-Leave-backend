@@ -4,6 +4,18 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Secrets — never commit ###
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+firebase-service-account*.json
+google-services.json
+
+### Local uploads ###
+uploads/
+
 ### STS ###
 .apt_generated
 .classpath
