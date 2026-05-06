@@ -26,7 +26,6 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/student-fees")
-@CrossOrigin(origins = "http://localhost:4200")
 public class StudentFeesController {
 
     private static final Logger log = LoggerFactory.getLogger(StudentFeesController.class);

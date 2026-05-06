@@ -16,7 +16,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/bus-fees")
-@CrossOrigin(origins = "http://localhost:4200")
 @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.SUB_ADMIN + "', '" + Role.SUPER_ADMIN + "')")
 public class BusFeesController {
 

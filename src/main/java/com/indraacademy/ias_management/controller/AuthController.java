@@ -40,7 +40,6 @@ import java.util.*;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "http://localhost:4200")
 public class AuthController {
 
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);

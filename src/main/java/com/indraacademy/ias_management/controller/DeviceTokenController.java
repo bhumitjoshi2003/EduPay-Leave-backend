@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.entity.DeviceToken;
 import com.indraacademy.ias_management.repository.DeviceTokenRepository;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,13 +16,13 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/users/device-token")
-@CrossOrigin(origins = "http://localhost:4200")
 public class DeviceTokenController {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceTokenController.class);
 
     @Autowired private DeviceTokenRepository deviceTokenRepository;
     @Autowired private AuthService authService;
+    @Autowired private SecurityUtil securityUtil;
 
     /**
      * Registers (or updates) an FCM device token for the currently authenticated user.
@@ -53,6 +54,7 @@ public class DeviceTokenController {
         }
 
         DeviceToken newToken = new DeviceToken(userId, token, LocalDateTime.now());
+        newToken.setSchoolId(securityUtil.getSchoolId());
         deviceTokenRepository.save(newToken);
         log.info("Registered FCM token for user {}", userId);
         return ResponseEntity.ok(Map.of("message", "Token registered."));

@@ -19,7 +19,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/marks")
-@CrossOrigin(origins = "http://localhost:4200")
 public class MarkController {
 
     private static final Logger log = LoggerFactory.getLogger(MarkController.class);

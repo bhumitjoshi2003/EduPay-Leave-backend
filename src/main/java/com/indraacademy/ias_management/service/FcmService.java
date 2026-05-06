@@ -26,17 +26,18 @@ public class FcmService {
 
     /**
      * Sends a push notification to all registered devices for the given userId.
+     * schoolId is required to scope the device token lookup to the correct tenant.
      * Stale (UNREGISTERED) tokens are removed automatically.
      */
     @Async
     @Transactional
-    public void sendToUser(String userId, String title, String body) {
+    public void sendToUser(String userId, Long schoolId, String title, String body) {
         if (!isFirebaseAvailable()) {
             log.debug("Firebase not initialised — skipping push for user {}", userId);
             return;
         }
 
-        List<DeviceToken> tokens = deviceTokenRepository.findByUserId(userId);
+        List<DeviceToken> tokens = deviceTokenRepository.findByUserIdAndSchoolId(userId, schoolId);
         if (tokens.isEmpty()) {
             return;
         }
@@ -48,18 +49,17 @@ public class FcmService {
 
     /**
      * Sends a push notification to every device token in the provided list of userIds.
-     * This method is @Async so it runs on a background thread. The inner sendToUser()
-     * calls are direct (not through the proxy), which is fine — we are already off the
-     * request thread, so there is no blocking concern.
+     * schoolId is required to scope the device token lookup to the correct tenant.
+     * This method is @Async so it runs on a background thread.
      */
     @Async
     @Transactional
-    public void sendToUsers(List<String> userIds, String title, String body) {
+    public void sendToUsers(List<String> userIds, Long schoolId, String title, String body) {
         if (!isFirebaseAvailable() || userIds == null || userIds.isEmpty()) {
             return;
         }
         for (String userId : userIds) {
-            List<DeviceToken> tokens = deviceTokenRepository.findByUserId(userId);
+            List<DeviceToken> tokens = deviceTokenRepository.findByUserIdAndSchoolId(userId, schoolId);
             for (DeviceToken deviceToken : tokens) {
                 sendToToken(deviceToken.getToken(), title, body);
             }
