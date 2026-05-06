@@ -13,8 +13,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Year;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-@Service // or @Component if you prefer
+@Service
 public class StudentClassProgressionScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(StudentClassProgressionScheduler.class);
@@ -23,11 +24,22 @@ public class StudentClassProgressionScheduler {
     private StudentRepository studentRepository;
 
     /**
+     * Guards against concurrent execution within the same JVM instance.
+     * For multi-instance deployments (horizontal scaling) use ShedLock or
+     * a similar distributed lock to prevent simultaneous runs across nodes.
+     */
+    private final AtomicBoolean isRunning = new AtomicBoolean(false);
+
+    /**
      * Runs every year on 26th March at 00:00 to promote students to the next class.
      */
     @Transactional
     @Scheduled(cron = "0 0 0 26 3 *")
     public void incrementStudentClasses() {
+        if (!isRunning.compareAndSet(false, true)) {
+            log.warn("StudentClassProgressionScheduler is already running — skipping this trigger.");
+            return;
+        }
         log.info("Starting scheduled student class progression for new academic year.");
         Year currentYear = Year.now();
         int currentAcademicYear = currentYear.getValue();
@@ -60,6 +72,8 @@ public class StudentClassProgressionScheduler {
             log.error("Database error during student promotion", e);
         } catch (Exception e) {
             log.error("Unexpected error during student promotion", e);
+        } finally {
+            isRunning.set(false);
         }
     }
 

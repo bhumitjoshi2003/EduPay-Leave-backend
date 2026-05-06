@@ -167,7 +167,16 @@ public class RazorpayService {
             }
             log.info("Signature verified successfully for Payment ID: {}", paymentId);
 
-            // 2. Data Persistence and Post-Payment Logic (only if signature is valid)
+            // 2. Idempotency check — if this paymentId was already persisted, return success
+            //    without creating a duplicate record (handles client retries gracefully).
+            if (paymentRepository.existsByPaymentId(paymentId)) {
+                log.warn("Duplicate verify call for Payment ID: {} — already persisted, returning success.", paymentId);
+                response.put("success", true);
+                response.put("message", "Payment already verified.");
+                return response;
+            }
+
+            // 3. Data Persistence and Post-Payment Logic (only if signature is valid)
             Payment payment = new Payment();
             payment.setStudentId(studentId);
             payment.setStudentName((String) orderDetails.get("studentName"));

@@ -90,19 +90,22 @@ public class PaymentService {
         log.info("Filtering payment history. Class: {}, Student ID: {}, Date: {}", className, studentId, paymentDate);
         Long schoolId = securityUtil.getSchoolId();
 
+        // Sanitize studentId to strip SQL LIKE wildcard characters before passing to queries
+        String safeStudentId = sanitizeLikeParam(studentId);
+
         try {
-            if (className != null && studentId != null && paymentDate != null) {
-                return paymentRepository.findBySchoolIdAndClassNameAndStudentIdContainingAndPaymentDate(schoolId, className, studentId, paymentDate, pageable);
-            } else if (className != null && studentId != null) {
-                return paymentRepository.findBySchoolIdAndClassNameAndStudentIdContaining(schoolId, className, studentId, pageable);
+            if (className != null && safeStudentId != null && paymentDate != null) {
+                return paymentRepository.findBySchoolIdAndClassNameAndStudentIdContainingAndPaymentDate(schoolId, className, safeStudentId, paymentDate, pageable);
+            } else if (className != null && safeStudentId != null) {
+                return paymentRepository.findBySchoolIdAndClassNameAndStudentIdContaining(schoolId, className, safeStudentId, pageable);
             } else if (className != null && paymentDate != null) {
                 return paymentRepository.findBySchoolIdAndClassNameAndPaymentDate(schoolId, className, paymentDate, pageable);
-            } else if (studentId != null && paymentDate != null) {
-                return paymentRepository.findBySchoolIdAndStudentIdContainingAndPaymentDate(schoolId, studentId, paymentDate, pageable);
+            } else if (safeStudentId != null && paymentDate != null) {
+                return paymentRepository.findBySchoolIdAndStudentIdContainingAndPaymentDate(schoolId, safeStudentId, paymentDate, pageable);
             } else if (className != null) {
                 return paymentRepository.findBySchoolIdAndClassName(schoolId, className, pageable);
-            } else if (studentId != null) {
-                return paymentRepository.findBySchoolIdAndStudentIdContaining(schoolId, studentId, pageable);
+            } else if (safeStudentId != null) {
+                return paymentRepository.findBySchoolIdAndStudentIdContaining(schoolId, safeStudentId, pageable);
             } else if (paymentDate != null) {
                 return paymentRepository.findBySchoolIdAndPaymentDate(schoolId, paymentDate, pageable);
             } else {
@@ -395,6 +398,16 @@ public class PaymentService {
           .append("<td class=\"amt-col\">").append(amount).append("</td>")
           .append("</tr>\n");
         return rowIdx + 1;
+    }
+
+    /**
+     * Strips SQL LIKE wildcard characters (%, _, \) from a search term so they
+     * cannot be used to craft unintended broad-match patterns in LIKE queries.
+     * Returns null when the input is null (preserves the "no filter" semantic).
+     */
+    private String sanitizeLikeParam(String value) {
+        if (value == null) return null;
+        return value.replaceAll("[%_\\\\]", "");
     }
 
     /** Minimal HTML escaping for user-supplied strings. */

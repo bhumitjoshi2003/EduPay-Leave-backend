@@ -89,8 +89,8 @@ public class AuthController {
         Map<String, String> body = new LinkedHashMap<>();
         body.put("userId", user.getUserId());
         body.put("role", user.getRole());
-        body.put("name", resolveName(user.getUserId(), user.getRole()));
-        body.put("className", resolveClassName(user.getUserId(), user.getRole()));
+        body.put("name", resolveName(user.getUserId(), user.getRole(), user.getSchoolId()));
+        body.put("className", resolveClassName(user.getUserId(), user.getRole(), user.getSchoolId()));
 
         return ResponseEntity.ok(body);
     }
@@ -163,8 +163,14 @@ public class AuthController {
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
+        // Generate a unique JTI and persist it so we can revoke this refresh token on logout
+        String jti = UUID.randomUUID().toString();
+        loggedIn.setRefreshTokenId(jti);
+        userRepository.save(loggedIn);
+
         String refreshToken = Jwts.builder()
                 .setSubject(loggedIn.getUserId())
+                .setId(jti)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 7)))
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
@@ -176,8 +182,8 @@ public class AuthController {
         Map<String, String> body = new LinkedHashMap<>();
         body.put("userId", loggedIn.getUserId());
         body.put("role", loggedIn.getRole());
-        body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole()));
-        body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole()));
+        body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
+        body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
 
         return ResponseEntity.ok(body);
     }
@@ -192,13 +198,20 @@ public class AuthController {
                 .build();
     }
 
-    private String resolveName(String userId, String role) {
+    private String resolveName(String userId, String role, Long schoolId) {
         try {
             if (Role.STUDENT.equals(role)) {
-                return studentRepository.findByStudentId(userId).map(Student::getName).orElse(null);
+                return studentRepository.findByStudentIdAndSchoolId(userId, schoolId)
+                        .map(Student::getName).orElse(null);
             } else if (Role.TEACHER.equals(role)) {
-                return teacherRepository.findById(userId).map(Teacher::getName).orElse(null);
+                return teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
+                        .map(Teacher::getName).orElse(null);
             } else {
+                // ADMIN, SUB_ADMIN: scope to school; SUPER_ADMIN has null schoolId so fall back to findById
+                if (schoolId != null) {
+                    return adminRepository.findByAdminIdAndSchoolId(userId, schoolId)
+                            .map(Admin::getName).orElse(null);
+                }
                 return adminRepository.findById(userId).map(Admin::getName).orElse(null);
             }
         } catch (Exception e) {
@@ -207,12 +220,14 @@ public class AuthController {
         }
     }
 
-    private String resolveClassName(String userId, String role) {
+    private String resolveClassName(String userId, String role, Long schoolId) {
         try {
             if (Role.STUDENT.equals(role)) {
-                return studentRepository.findByStudentId(userId).map(Student::getClassName).orElse(null);
+                return studentRepository.findByStudentIdAndSchoolId(userId, schoolId)
+                        .map(Student::getClassName).orElse(null);
             } else if (Role.TEACHER.equals(role)) {
-                return teacherRepository.findById(userId).map(Teacher::getClassTeacher).orElse(null);
+                return teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
+                        .map(Teacher::getClassTeacher).orElse(null);
             }
         } catch (Exception e) {
             log.warn("Could not resolve className for userId={}: {}", userId, e.getMessage());
@@ -239,6 +254,8 @@ public class AuthController {
                     .getBody();
 
             String userId = claims.getSubject();
+            String tokenJti = claims.getId();
+
             Optional<User> userOptional = userRepository.findByUserId(userId);
 
             if (userOptional.isEmpty()) {
@@ -246,6 +263,12 @@ public class AuthController {
             }
 
             User loggedIn = userOptional.get();
+
+            // Verify the JTI matches the stored value — rejects any token issued before the last logout
+            if (tokenJti == null || !tokenJti.equals(loggedIn.getRefreshTokenId())) {
+                log.warn("Refresh token JTI mismatch for userId={} — token has been revoked.", userId);
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token has been revoked.");
+            }
 
             // Reject token refresh if the school has been deactivated
             if (loggedIn.getSchoolId() != null) {
@@ -262,13 +285,27 @@ public class AuthController {
 
             String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole(), loggedIn.getSchoolId());
 
+            // Rotate the JTI so the old refresh token cannot be reused
+            String newJti = UUID.randomUUID().toString();
+            loggedIn.setRefreshTokenId(newJti);
+            userRepository.save(loggedIn);
+
+            String newRefreshToken = Jwts.builder()
+                    .setSubject(userId)
+                    .setId(newJti)
+                    .setIssuedAt(new Date())
+                    .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 7)))
+                    .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
+                    .compact();
+
             response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", newAccessToken, Duration.ofHours(1)).toString());
+            response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", newRefreshToken, Duration.ofDays(7)).toString());
 
             Map<String, String> body = new LinkedHashMap<>();
             body.put("userId", loggedIn.getUserId());
             body.put("role", loggedIn.getRole());
-            body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole()));
-            body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole()));
+            body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
+            body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
 
             return ResponseEntity.ok(body);
 
@@ -278,7 +315,29 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<?> logout(HttpServletResponse response) {
+    public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
+        // Revoke the refresh token server-side by clearing the stored JTI.
+        // This ensures the token cannot be reused even if someone captured its raw value.
+        jakarta.servlet.http.Cookie refreshCookieRaw = WebUtils.getCookie(request, "refreshToken");
+        if (refreshCookieRaw != null) {
+            try {
+                Claims claims = Jwts.parserBuilder()
+                        .setSigningKey(jwtUtil.getPublicKey())
+                        .build()
+                        .parseClaimsJws(refreshCookieRaw.getValue())
+                        .getBody();
+                String userId = claims.getSubject();
+                userRepository.findByUserId(userId).ifPresent(user -> {
+                    user.setRefreshTokenId(null);
+                    userRepository.save(user);
+                });
+                log.info("Refresh token revoked server-side for userId={}", userId);
+            } catch (Exception e) {
+                // Token may already be expired or malformed — still clear cookies
+                log.debug("Could not parse refresh token during logout: {}", e.getMessage());
+            }
+        }
+
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", "", Duration.ZERO).toString());
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
 
