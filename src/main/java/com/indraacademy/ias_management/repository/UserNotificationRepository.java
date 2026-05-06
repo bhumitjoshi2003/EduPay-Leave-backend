@@ -14,17 +14,17 @@ import java.util.Optional;
 public interface UserNotificationRepository extends JpaRepository<UserNotification, Long> {
 
     @EntityGraph(attributePaths = "notification")
-    List<UserNotification> findByUserIdOrderByCreatedAtDesc(String userId);
+    List<UserNotification> findByUserIdAndSchoolIdOrderByCreatedAtDesc(String userId, Long schoolId);
 
     @EntityGraph(attributePaths = "notification")
-    Page<UserNotification> findByUserIdOrderByCreatedAtDesc(String userId, Pageable pageable);
+    Page<UserNotification> findByUserIdAndSchoolIdOrderByCreatedAtDesc(String userId, Long schoolId, Pageable pageable);
 
     @EntityGraph(attributePaths = "notification")
-    List<UserNotification> findByUserIdAndIsReadFalseOrderByCreatedAtDesc(String userId);
+    List<UserNotification> findByUserIdAndSchoolIdAndIsReadFalseOrderByCreatedAtDesc(String userId, Long schoolId);
 
-    long countByUserIdAndIsReadFalse(String userId);
+    long countByUserIdAndSchoolIdAndIsReadFalse(String userId, Long schoolId);
 
-    Optional<UserNotification> findByUserIdAndNotificationId(String userId, Long notificationId);
+    Optional<UserNotification> findByUserIdAndSchoolIdAndNotificationId(String userId, Long schoolId, Long notificationId);
 
-    boolean existsByUserIdAndNotificationId(String userId, Long notificationId);
+    boolean existsByUserIdAndSchoolIdAndNotificationId(String userId, Long schoolId, Long notificationId);
 }

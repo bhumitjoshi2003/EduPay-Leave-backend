@@ -53,7 +53,7 @@ public class MarkService {
      */
     @Transactional(readOnly = true)
     public List<StudentSubjectMarkDTO> getStudentsForSubjectEntry(Long examSubjectEntryId) {
-        ExamSubjectEntry entry = examSubjectEntryRepository.findById(examSubjectEntryId)
+        ExamSubjectEntry entry = examSubjectEntryRepository.findByIdAndSchoolId(examSubjectEntryId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException(
                         "ExamSubjectEntry not found: " + examSubjectEntryId));
         ExamConfig exam = examConfigRepository.findById(entry.getExamConfigId())

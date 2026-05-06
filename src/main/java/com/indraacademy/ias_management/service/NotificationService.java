@@ -121,8 +121,8 @@ public class NotificationService {
             UserNotification savedUserNotification = userNotificationRepository.save(userNotification);
             log.info("Individual notification created successfully for user: {}. Notification ID: {}", userId, savedNotification.getId());
 
-            // Send FCM push to the individual user
-            fcmService.sendToUser(userId, title, message);
+            // Send FCM push to the individual user (pass schoolId explicitly — @Async loses ThreadLocal)
+            fcmService.sendToUser(userId, schoolId, title, message);
 
             return savedUserNotification;
         } catch (DataAccessException e) {
@@ -167,12 +167,14 @@ public class NotificationService {
         List<UserNotification> userNotifications;
         List<Notification> broadNotifications;
 
+        Long schoolId = securityUtil.getSchoolId();
+
         try {
             // 1. Fetch existing user-specific notifications
-            userNotifications = new ArrayList<>(userNotificationRepository.findByUserIdOrderByCreatedAtDesc(userId));
+            userNotifications = new ArrayList<>(userNotificationRepository.findByUserIdAndSchoolIdOrderByCreatedAtDesc(userId, schoolId));
 
             // 2. Fetch broad/general notifications applicable to this user
-            broadNotifications = notificationRepository.findBySchoolIdAndCreatedByIsNotNull(securityUtil.getSchoolId()).stream()
+            broadNotifications = notificationRepository.findBySchoolIdAndCreatedByIsNotNull(schoolId).stream()
                     .filter(notification -> {
                         String audience = notification.getAudience();
                         if (audience == null) return false;
@@ -201,13 +203,13 @@ public class NotificationService {
         int newNotificationsCount = 0;
         for (Notification broadNotif : broadNotifications) {
             try {
-                if (!userNotificationRepository.existsByUserIdAndNotificationId(userId, broadNotif.getId())) {
+                if (!userNotificationRepository.existsByUserIdAndSchoolIdAndNotificationId(userId, schoolId, broadNotif.getId())) {
                     UserNotification newUserNotif = new UserNotification();
                     newUserNotif.setUserId(userId);
                     newUserNotif.setNotification(broadNotif);
                     newUserNotif.setIsRead(false);
                     newUserNotif.setCreatedAt(broadNotif.getCreatedAt());
-                    newUserNotif.setSchoolId(securityUtil.getSchoolId());
+                    newUserNotif.setSchoolId(schoolId);
                     userNotifications.add(userNotificationRepository.save(newUserNotif));
                     newNotificationsCount++;
                 }
@@ -219,7 +221,7 @@ public class NotificationService {
 
         // 4. Paginated DB query — sync is complete so all applicable entries now exist
         Page<UserNotification> page = userNotificationRepository
-                .findByUserIdOrderByCreatedAtDesc(userId, pageable);
+                .findByUserIdAndSchoolIdOrderByCreatedAtDesc(userId, schoolId, pageable);
 
         // 5. Convert to DTOs
         return page.map(userNotif -> {
@@ -247,7 +249,7 @@ public class NotificationService {
         }
         log.info("Counting unread notifications for user: {}", userId);
         try {
-            return userNotificationRepository.countByUserIdAndIsReadFalse(userId);
+            return userNotificationRepository.countByUserIdAndSchoolIdAndIsReadFalse(userId, securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Data access error counting unread notifications for user: {}", userId, e);
             throw new RuntimeException("Could not retrieve unread notification count due to data access issue", e);
@@ -264,7 +266,7 @@ public class NotificationService {
         log.info("Marking all unread notifications as read for user: {}", userId);
 
         try {
-            List<UserNotification> unread = userNotificationRepository.findByUserIdAndIsReadFalseOrderByCreatedAtDesc(userId);
+            List<UserNotification> unread = userNotificationRepository.findByUserIdAndSchoolIdAndIsReadFalseOrderByCreatedAtDesc(userId, securityUtil.getSchoolId());
             for (UserNotification un : unread) {
                 un.setIsRead(true);
                 userNotificationRepository.save(un);
@@ -419,38 +421,38 @@ public class NotificationService {
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 List<String> teacherIds = teacherRepository.findBySchoolId(schoolId)
                         .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
-                fcmService.sendToUsers(studentIds, title, body);
-                fcmService.sendToUsers(teacherIds, title, body);
+                fcmService.sendToUsers(studentIds, schoolId, title, body);
+                fcmService.sendToUsers(teacherIds, schoolId, title, body);
 
             } else if ("STUDENTS".equalsIgnoreCase(audience)) {
                 List<String> ids = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
-                fcmService.sendToUsers(ids, title, body);
+                fcmService.sendToUsers(ids, schoolId, title, body);
 
             } else if ("TEACHERS".equalsIgnoreCase(audience)) {
                 List<String> ids = teacherRepository.findBySchoolId(schoolId)
                         .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
-                fcmService.sendToUsers(ids, title, body);
+                fcmService.sendToUsers(ids, schoolId, title, body);
 
             } else if (audience.toUpperCase().startsWith("CLASS:")) {
                 String className = audience.substring("CLASS:".length());
                 List<String> ids = studentRepository
                         .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
-                fcmService.sendToUsers(ids, title, body);
+                fcmService.sendToUsers(ids, schoolId, title, body);
 
             } else if (audience.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
                 String className = audience.substring("CLASS_WITH_TEACHER:".length());
                 List<String> studentIds = studentRepository
                         .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
-                fcmService.sendToUsers(studentIds, title, body);
+                fcmService.sendToUsers(studentIds, schoolId, title, body);
                 teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
-                        .ifPresent(t -> fcmService.sendToUser(t.getTeacherId(), title, body));
+                        .ifPresent(t -> fcmService.sendToUser(t.getTeacherId(), schoolId, title, body));
 
             } else {
                 // Treat as a specific userId
-                fcmService.sendToUser(audience, title, body);
+                fcmService.sendToUser(audience, schoolId, title, body);
             }
         } catch (Exception e) {
             log.warn("FCM audience dispatch failed for audience '{}': {}", audience, e.getMessage());

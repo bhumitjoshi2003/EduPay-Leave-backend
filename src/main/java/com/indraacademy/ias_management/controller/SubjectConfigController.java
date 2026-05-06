@@ -27,7 +27,6 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "http://localhost:4200")
 @PreAuthorize("hasRole('" + Role.ADMIN + "')")
 public class SubjectConfigController {
 

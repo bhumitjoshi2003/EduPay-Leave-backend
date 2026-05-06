@@ -22,7 +22,6 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/leaves")
-@CrossOrigin(origins = "http://localhost:4200")
 public class LeaveController {
 
     private static final Logger log = LoggerFactory.getLogger(LeaveController.class);

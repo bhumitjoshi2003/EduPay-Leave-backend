@@ -18,7 +18,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/student-stream")
-@CrossOrigin(origins = "http://localhost:4200")
 @PreAuthorize("hasRole('" + Role.ADMIN + "')")
 public class StudentStreamController {
 
