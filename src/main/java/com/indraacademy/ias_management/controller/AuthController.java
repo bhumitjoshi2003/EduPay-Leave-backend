@@ -29,18 +29,14 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.WebUtils;
 
 import java.time.Duration;
 import java.time.LocalDate;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -48,6 +44,9 @@ import java.util.UUID;
 public class AuthController {
 
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+
+    private static final Set<String> VALID_ROLES = Set.of(
+            Role.SUPER_ADMIN, Role.ADMIN, Role.SUB_ADMIN, Role.TEACHER, Role.STUDENT);
 
     @Autowired private UserRepository userRepository;
     @Autowired private SchoolRepository schoolRepository;
@@ -97,34 +96,43 @@ public class AuthController {
         return ResponseEntity.ok(body);
     }
 
-//    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@RequestBody User user) {
         log.info("Request to register new user: {}", user.getUserId());
-        if (user.getPassword() == null) {
-            log.error("Registration failed: Password is required.");
-            return ResponseEntity.badRequest().body("Password is required.");
+
+        if (user.getPassword() == null || user.getRole() == null || user.getUserId() == null) {
+            return ResponseEntity.badRequest().body("userId, password, and role are required.");
+        }
+        if (!VALID_ROLES.contains(user.getRole())) {
+            return ResponseEntity.badRequest().body("Invalid role.");
         }
 
-        try {
-            if (userRepository.findByUserId(user.getUserId()).isPresent()) {
-                log.warn("Registration failed: User ID {} already exists.", user.getUserId());
-                return ResponseEntity.status(HttpStatus.CONFLICT).body("User ID already exists.");
-            }
-            // Always inherit schoolId from the calling admin's security context,
-            // never trust the client-supplied value (which may be null or wrong).
-            Long callerSchoolId = SchoolContext.get();
-            if (callerSchoolId != null) {
-                user.setSchoolId(callerSchoolId);
-            }
-            user.setPassword(passwordEncoder.encode(user.getPassword()));
-            userRepository.save(user);
-            log.info("User registered successfully: {} (schoolId={})", user.getUserId(), user.getSchoolId());
-            return ResponseEntity.ok("User registered successfully");
-        } catch (Exception e) {
-            log.error("Error during user registration for ID: {}", user.getUserId(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to register user.");
+        String callerRole = authService.getRole();
+        boolean callerIsSuperAdmin = Role.SUPER_ADMIN.equals(callerRole);
+
+        // Only SUPER_ADMIN may create another SUPER_ADMIN
+        if (Role.SUPER_ADMIN.equals(user.getRole()) && !callerIsSuperAdmin) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Only a SUPER_ADMIN can create a SUPER_ADMIN account.");
         }
+
+        if (userRepository.findByUserId(user.getUserId()).isPresent()) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body("User ID already exists.");
+        }
+
+        // SUPER_ADMIN may set any schoolId; anyone else inherits from their JWT.
+        if (!callerIsSuperAdmin) {
+            Long callerSchoolId = SchoolContext.get();
+            if (callerSchoolId == null) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Caller has no schoolId.");
+            }
+            user.setSchoolId(callerSchoolId);
+        }
+
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        userRepository.save(user);
+        return ResponseEntity.ok("User registered successfully");
     }
 
     @PostMapping("/login")
