@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.dto.AttendanceTrendDto;
 import com.indraacademy.ias_management.dto.ClassStatsDto;
 import com.indraacademy.ias_management.dto.DashboardStatsDto;
 import com.indraacademy.ias_management.dto.FeeTrendDto;
@@ -12,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -44,5 +46,14 @@ public class DashboardController {
         log.info("GET /api/dashboard/class-stats");
         List<ClassStatsDto> stats = dashboardService.getClassStats();
         return ResponseEntity.ok(stats);
+    }
+
+    @GetMapping("/attendance-trend")
+    public ResponseEntity<?> getAttendanceTrend(
+            @RequestParam String className,
+            @RequestParam(defaultValue = "monthly") String mode) {
+        log.info("GET /api/dashboard/attendance-trend?className={}&mode={}", className, mode);
+        List<AttendanceTrendDto> trend = dashboardService.getAttendanceTrend(className, mode);
+        return ResponseEntity.ok(trend);
     }
 }

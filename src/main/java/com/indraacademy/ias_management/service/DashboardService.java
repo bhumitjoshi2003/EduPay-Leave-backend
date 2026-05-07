@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.dto.AttendanceTrendDto;
 import com.indraacademy.ias_management.dto.ClassStatsDto;
 import com.indraacademy.ias_management.dto.DashboardStatsDto;
 import com.indraacademy.ias_management.dto.FeeTrendDto;
@@ -14,9 +15,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.WeekFields;
 import com.indraacademy.ias_management.entity.Attendance;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -154,6 +157,66 @@ public class DashboardService {
             }
         }));
 
+        return result;
+    }
+
+    // ─── /api/dashboard/attendance-trend ─────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<AttendanceTrendDto> getAttendanceTrend(String className, String mode) {
+        LocalDate today = LocalDate.now();
+        Long schoolId = securityUtil.getSchoolId();
+
+        long studentCount = studentRepository
+                .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
+                .size();
+
+        List<AttendanceTrendDto> result = new ArrayList<>();
+
+        if ("weekly".equalsIgnoreCase(mode)) {
+            // Last 8 complete weeks (Mon → Sat, skip Sunday)
+            LocalDate weekStart = today.with(DayOfWeek.MONDAY).minusWeeks(7);
+            DateTimeFormatter weekLabelFmt = DateTimeFormatter.ofPattern("d MMM");
+
+            for (int i = 0; i < 8; i++) {
+                LocalDate wStart = weekStart.plusWeeks(i);
+                LocalDate wEnd   = wStart.plusDays(5); // Mon–Sat
+
+                long workingDays = attendanceRepository.countDistinctWorkingDays(className, schoolId, wStart, wEnd);
+                double rate = 0.0;
+                if (workingDays > 0 && studentCount > 0) {
+                    long absences = attendanceRepository
+                            .findByClassNameAndSchoolIdAndDateBetween(className, schoolId, wStart, wEnd)
+                            .size();
+                    long totalPossible = workingDays * studentCount;
+                    rate = Math.round((double) (totalPossible - absences) / totalPossible * 1000.0) / 10.0;
+                }
+
+                String label = wStart.format(weekLabelFmt) + "–" + wEnd.format(weekLabelFmt);
+                result.add(new AttendanceTrendDto(label, rate));
+            }
+        } else {
+            // Monthly — last 6 calendar months
+            for (int i = 5; i >= 0; i--) {
+                LocalDate monthDate  = today.minusMonths(i);
+                LocalDate monthStart = monthDate.withDayOfMonth(1);
+                LocalDate monthEnd   = monthDate.withDayOfMonth(monthDate.lengthOfMonth());
+
+                long workingDays = attendanceRepository.countDistinctWorkingDays(className, schoolId, monthStart, monthEnd);
+                double rate = 0.0;
+                if (workingDays > 0 && studentCount > 0) {
+                    long absences = attendanceRepository
+                            .findByClassNameAndSchoolIdAndDateBetween(className, schoolId, monthStart, monthEnd)
+                            .size();
+                    long totalPossible = workingDays * studentCount;
+                    rate = Math.round((double) (totalPossible - absences) / totalPossible * 1000.0) / 10.0;
+                }
+
+                result.add(new AttendanceTrendDto(monthDate.format(TREND_FMT), rate));
+            }
+        }
+
+        log.info("Attendance trend computed: class={}, mode={}, points={}", className, mode, result.size());
         return result;
     }
 
