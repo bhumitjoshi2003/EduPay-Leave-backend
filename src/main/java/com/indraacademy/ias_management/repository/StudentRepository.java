@@ -33,6 +33,12 @@ public interface StudentRepository extends JpaRepository<Student, String> {
 
     Optional<Student> findByStudentIdAndSchoolId(String studentId, Long schoolId);
 
+    @Query("SELECT s FROM Student s WHERE s.schoolId = :schoolId " +
+           "AND (LOWER(s.name) LIKE LOWER(CONCAT('%', :query, '%')) " +
+           "OR LOWER(s.studentId) LIKE LOWER(CONCAT('%', :query, '%'))) " +
+           "ORDER BY s.name")
+    List<Student> searchByNameOrIdAndSchoolId(@Param("query") String query, @Param("schoolId") Long schoolId);
+
     long countByStatusAndSchoolId(StudentStatus status, Long schoolId);
     long countByClassNameAndSchoolId(String className, Long schoolId);
 

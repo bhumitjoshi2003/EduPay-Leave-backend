@@ -52,6 +52,13 @@ public class StudentController {
     @Autowired private AuthService authService;
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/search")
+    public ResponseEntity<List<Student>> searchStudents(@RequestParam String q) {
+        log.info("Request to search students with query: {}", q);
+        return ResponseEntity.ok(studentService.searchStudents(q));
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> registerStudent(@RequestBody Student newStudent, HttpServletRequest request) {
         log.info("Request to register new student: {}", newStudent.getStudentId());

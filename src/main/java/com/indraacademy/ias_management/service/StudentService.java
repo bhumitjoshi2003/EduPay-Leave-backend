@@ -68,6 +68,13 @@ public class StudentService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public List<Student> searchStudents(String query) {
+        if (query == null || query.trim().length() < 2) return List.of();
+        Long schoolId = securityUtil.getSchoolId();
+        return studentRepository.searchByNameOrIdAndSchoolId(query.trim(), schoolId);
+    }
+
     @Transactional
     public Student addStudent(Student student, HttpServletRequest request) {
         if (student == null || student.getStudentId() == null || student.getStudentId().trim().isEmpty()) {
