@@ -112,6 +112,8 @@ public class AuthController {
 
         // Only SUPER_ADMIN may create another SUPER_ADMIN
         if (Role.SUPER_ADMIN.equals(user.getRole()) && !callerIsSuperAdmin) {
+            log.warn("Privilege escalation attempt: caller {} ({}) tried to create SUPER_ADMIN account '{}'",
+                    authService.getUserId(), callerRole, user.getUserId());
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Only a SUPER_ADMIN can create a SUPER_ADMIN account.");
         }

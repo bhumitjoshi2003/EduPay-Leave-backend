@@ -127,6 +127,10 @@ public class StudentService {
         } catch (IllegalArgumentException | IllegalStateException e) {
             // Re-throw specific business exceptions
             throw e;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // Audit log serialisation failure — student was saved; log and continue
+            log.warn("Failed to serialise student {} for audit log: {}", student.getStudentId(), e.getMessage());
+            return student;
         } catch (Exception e) {
             log.error("Unexpected error while adding student with ID: {}", student.getStudentId(), e);
             throw new RuntimeException("An unexpected error occurred while adding the student.", e);

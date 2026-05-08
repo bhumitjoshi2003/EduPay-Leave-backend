@@ -19,6 +19,8 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -32,15 +34,26 @@ public class SecurityConfig {
     @Value("${frontend.url}")
     private String frontendUrl;
 
+    /**
+     * Comma-separated list of additional CORS origins, typically for mobile/dev clients.
+     * Default covers the Capacitor app origin and localhost dev servers.
+     * Override in application.properties via cors.additional-origins=...
+     */
+    @Value("${cors.additional-origins:capacitor://localhost,http://localhost,https://localhost}")
+    private String additionalOrigins;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(List.of(frontendUrl,
-                            "http://localhost",
-                            "https://localhost",
-                            "capacitor://localhost"));
+                    List<String> origins = new ArrayList<>();
+                    origins.add(frontendUrl);
+                    Arrays.stream(additionalOrigins.split(","))
+                            .map(String::trim)
+                            .filter(s -> !s.isEmpty())
+                            .forEach(origins::add);
+                    config.setAllowedOrigins(origins);
                     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                     config.setAllowedHeaders(List.of("*"));
                     config.setAllowCredentials(true);

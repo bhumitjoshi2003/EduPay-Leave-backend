@@ -90,10 +90,11 @@ public class MarkService {
 
         List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigId(examConfigId);
 
-        // For 11/12, restrict to the student's subjects
+        // For 11/12, restrict to the student's subjects — load subject set once, check in memory
         if (UPPER_CLASSES.contains(student.getClassName())) {
+            Set<String> studentSubjects = loadStudentSubjectSet(studentId);
             entries = entries.stream()
-                    .filter(e -> studentHasSubject(studentId, e.getSubjectName()))
+                    .filter(e -> studentSubjects.contains(e.getSubjectName().toLowerCase()))
                     .collect(Collectors.toList());
         }
 
@@ -180,16 +181,21 @@ public class MarkService {
                 ? examConfigRepository.findBySessionAndClassNameAndSchoolId(session, student.getClassName(), schoolId)
                 : examConfigRepository.findByClassNameAndSchoolId(student.getClassName(), schoolId);
 
+        // For 11/12 students, load subject set once and reuse across all exams
+        Set<String> studentSubjects = UPPER_CLASSES.contains(student.getClassName())
+                ? loadStudentSubjectSet(studentId)
+                : Set.of();
+
         List<ExamResultDTO> results = new ArrayList<>();
 
         for (ExamConfig exam : exams) {
             List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigId(exam.getId());
             if (entries.isEmpty()) continue;
 
-            // For 11/12, show only the student's own subjects
+            // For 11/12, show only the student's own subjects — use the pre-loaded set
             if (UPPER_CLASSES.contains(student.getClassName())) {
                 entries = entries.stream()
-                        .filter(e -> studentHasSubject(studentId, e.getSubjectName()))
+                        .filter(e -> studentSubjects.contains(e.getSubjectName().toLowerCase()))
                         .collect(Collectors.toList());
             }
             if (entries.isEmpty()) continue;
@@ -296,35 +302,97 @@ public class MarkService {
 
     private List<Student> resolveStudentsForSubject(String className, String subjectName) {
         List<Student> all = studentService.getActiveStudentsByClass(className);
-        if (UPPER_CLASSES.contains(className)) {
-            return all.stream()
-                    .filter(s -> studentHasSubject(s.getStudentId(), subjectName))
-                    .collect(Collectors.toList());
-        }
-        return all;
+        if (!UPPER_CLASSES.contains(className)) return all;
+
+        // Batch-load all stream selections + subjects in 3 DB calls (instead of 3 per student)
+        Map<String, Set<String>> subjectSetByStudent = batchLoadStudentSubjectSets(all);
+        String subjectLower = subjectName.toLowerCase();
+        return all.stream()
+                .filter(s -> subjectSetByStudent.getOrDefault(s.getStudentId(), Set.of()).contains(subjectLower))
+                .collect(Collectors.toList());
     }
 
     /**
-     * Returns true if the class 11/12 student has the given subject
-     * (either as a stream core subject or their chosen optional subject).
+     * Loads the lowercase subject names for a single class-11/12 student.
+     * Makes exactly 2–3 DB calls once per invocation — not per subject check.
      */
-    private boolean studentHasSubject(String studentId, String subjectName) {
-        Optional<StudentStreamSelection> selOpt = studentStreamSelectionRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
-        if (selOpt.isEmpty()) return false;
+    private Set<String> loadStudentSubjectSet(String studentId) {
+        Long schoolId = securityUtil.getSchoolId();
+        Optional<StudentStreamSelection> selOpt =
+                studentStreamSelectionRepository.findByStudentIdAndSchoolId(studentId, schoolId);
+        if (selOpt.isEmpty()) return Set.of();
 
         StudentStreamSelection sel = selOpt.get();
+        Set<String> subjects = new HashSet<>();
 
-        boolean isCore = streamCoreSubjectRepository.findByStreamIdAndSchoolId(sel.getStreamId(), securityUtil.getSchoolId())
-                .stream()
-                .anyMatch(s -> s.getSubjectName().equalsIgnoreCase(subjectName));
-        if (isCore) return true;
+        streamCoreSubjectRepository.findByStreamIdAndSchoolId(sel.getStreamId(), schoolId)
+                .forEach(s -> subjects.add(s.getSubjectName().toLowerCase()));
 
         if (sel.getOptionalSubjectId() != null) {
-            return optionalSubjectRepository.findById(sel.getOptionalSubjectId())
-                    .map(os -> os.getSubjectName().equalsIgnoreCase(subjectName))
-                    .orElse(false);
+            optionalSubjectRepository.findById(sel.getOptionalSubjectId())
+                    .ifPresent(os -> subjects.add(os.getSubjectName().toLowerCase()));
         }
-        return false;
+        return subjects;
+    }
+
+    /**
+     * Batch-loads stream selections and subjects for a list of students.
+     * Makes ~3 DB calls regardless of student count.
+     * Returns: studentId → set of lowercase subject names the student takes.
+     */
+    private Map<String, Set<String>> batchLoadStudentSubjectSets(List<Student> students) {
+        if (students.isEmpty()) return Map.of();
+        Long schoolId = securityUtil.getSchoolId();
+
+        List<String> studentIds = students.stream()
+                .map(Student::getStudentId).collect(Collectors.toList());
+
+        // 1 DB call: all stream selections for these students
+        List<StudentStreamSelection> selections =
+                studentStreamSelectionRepository.findByStudentIdInAndSchoolId(studentIds, schoolId);
+
+        Map<String, StudentStreamSelection> selByStudent = selections.stream()
+                .collect(Collectors.toMap(StudentStreamSelection::getStudentId, s -> s));
+
+        Set<Long> streamIds = selections.stream()
+                .map(StudentStreamSelection::getStreamId).collect(Collectors.toSet());
+        Set<Long> optionalIds = selections.stream()
+                .filter(s -> s.getOptionalSubjectId() != null)
+                .map(StudentStreamSelection::getOptionalSubjectId)
+                .collect(Collectors.toSet());
+
+        // 1 DB call: all core subjects for all relevant streams
+        Map<Long, Set<String>> coreByStream = new HashMap<>();
+        if (!streamIds.isEmpty()) {
+            streamCoreSubjectRepository.findByStreamIdInAndSchoolId(streamIds, schoolId)
+                    .forEach(s -> coreByStream
+                            .computeIfAbsent(s.getStreamId(), k -> new HashSet<>())
+                            .add(s.getSubjectName().toLowerCase()));
+        }
+
+        // 1 DB call: all optional subjects
+        Map<Long, String> optSubjectById = new HashMap<>();
+        if (!optionalIds.isEmpty()) {
+            optionalSubjectRepository.findAllById(optionalIds)
+                    .forEach(os -> optSubjectById.put(os.getId(), os.getSubjectName().toLowerCase()));
+        }
+
+        // Assemble per-student subject sets in memory
+        Map<String, Set<String>> result = new HashMap<>();
+        for (Student student : students) {
+            StudentStreamSelection sel = selByStudent.get(student.getStudentId());
+            if (sel == null) {
+                result.put(student.getStudentId(), Set.of());
+                continue;
+            }
+            Set<String> subjects = new HashSet<>(coreByStream.getOrDefault(sel.getStreamId(), Set.of()));
+            if (sel.getOptionalSubjectId() != null) {
+                String optName = optSubjectById.get(sel.getOptionalSubjectId());
+                if (optName != null) subjects.add(optName);
+            }
+            result.put(student.getStudentId(), subjects);
+        }
+        return result;
     }
 
     private void validateMarkEntry(MarkEntryRequest req) {

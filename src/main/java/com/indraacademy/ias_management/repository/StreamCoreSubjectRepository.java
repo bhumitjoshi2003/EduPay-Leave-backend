@@ -5,12 +5,16 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
 
 @Repository
 public interface StreamCoreSubjectRepository extends JpaRepository<StreamCoreSubject, Long> {
 
     List<StreamCoreSubject> findByStreamIdAndSchoolId(Long streamId, Long schoolId);
+
+    /** Batch-load core subjects for multiple streams in a single query. */
+    List<StreamCoreSubject> findByStreamIdInAndSchoolId(Collection<Long> streamIds, Long schoolId);
 
     boolean existsByStreamIdAndSubjectNameAndSchoolId(Long streamId, String subjectName, Long schoolId);
 
