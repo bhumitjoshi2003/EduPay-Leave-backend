@@ -14,4 +14,4 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            docker stop ias-backend-container || true
+            docker stop edunexify-backend-container || true

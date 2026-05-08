@@ -7,10 +7,12 @@ import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
 import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
 import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
 import com.indraacademy.ias_management.dto.SuperAdminSchoolUpdateRequest;
+import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.entity.SchoolClass;
+import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
@@ -38,6 +40,7 @@ public class SchoolService {
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private AdminRepository adminRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private PaymentRepository paymentRepository;
@@ -66,6 +69,38 @@ public class SchoolService {
         if (req.getAdminPassword() == null || req.getAdminPassword().isBlank()) {
             throw new IllegalArgumentException("Admin password is required.");
         }
+        if (req.getAdminName() == null || req.getAdminName().isBlank()) {
+            throw new IllegalArgumentException("Admin name is required.");
+        }
+        if (req.getAdminPhone() == null || req.getAdminPhone().isBlank()) {
+            throw new IllegalArgumentException("Admin phone number is required.");
+        }
+        if (req.getAdminDob() == null) {
+            throw new IllegalArgumentException("Admin date of birth is required.");
+        }
+
+        // Format validations
+        if (!req.getSlug().matches("^[a-z0-9][a-z0-9-]*$")) {
+            throw new IllegalArgumentException("Slug must be lowercase letters, digits, and hyphens only, and must start with a letter or digit.");
+        }
+        if (!req.getAdminEmail().matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            throw new IllegalArgumentException("Admin email is not a valid email address.");
+        }
+        if (!req.getAdminPhone().matches("^[0-9]{10}$")) {
+            throw new IllegalArgumentException("Admin phone must be exactly 10 digits.");
+        }
+        if (req.getAdminPassword().length() < 6) {
+            throw new IllegalArgumentException("Admin password must be at least 6 characters.");
+        }
+        if (req.getEmail() != null && !req.getEmail().isBlank()
+                && !req.getEmail().matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")) {
+            throw new IllegalArgumentException("School email is not a valid email address.");
+        }
+        if (req.getPhone() != null && !req.getPhone().isBlank()
+                && !req.getPhone().matches("^[0-9]{10}$")) {
+            throw new IllegalArgumentException("School phone must be exactly 10 digits.");
+        }
+
         if (schoolRepository.existsBySlug(req.getSlug())) {
             throw new IllegalArgumentException("A school with slug '" + req.getSlug() + "' already exists.");
         }
@@ -105,6 +140,18 @@ public class SchoolService {
         admin.setSchoolId(saved.getId());
         userRepository.save(admin);
         log.info("Admin user created: userId={} for schoolId={}", req.getAdminUserId(), saved.getId());
+
+        // 3. Create the Admin profile record so profile lookup works on login
+        Admin adminProfile = new Admin();
+        adminProfile.setAdminId(req.getAdminUserId());
+        adminProfile.setSchoolId(saved.getId());
+        adminProfile.setName(req.getAdminName());
+        adminProfile.setEmail(req.getAdminEmail());
+        adminProfile.setPhoneNumber(req.getAdminPhone());
+        adminProfile.setDob(req.getAdminDob());
+        adminProfile.setGender(req.getAdminGender());
+        adminRepository.save(adminProfile);
+        log.info("Admin profile created: adminId={} for schoolId={}", req.getAdminUserId(), saved.getId());
 
         auditService.log(
                 securityUtil.getUsername(),

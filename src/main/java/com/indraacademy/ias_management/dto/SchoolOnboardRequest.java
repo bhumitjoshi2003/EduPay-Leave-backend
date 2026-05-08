@@ -33,6 +33,10 @@ public class SchoolOnboardRequest {
     private String adminUserId;
     private String adminEmail;
     private String adminPassword;
+    private String adminName;
+    private String adminPhone;
+    private LocalDate adminDob;
+    private String adminGender;
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -90,4 +94,16 @@ public class SchoolOnboardRequest {
 
     public String getAdminPassword() { return adminPassword; }
     public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
+
+    public String getAdminName() { return adminName; }
+    public void setAdminName(String adminName) { this.adminName = adminName; }
+
+    public String getAdminPhone() { return adminPhone; }
+    public void setAdminPhone(String adminPhone) { this.adminPhone = adminPhone; }
+
+    public LocalDate getAdminDob() { return adminDob; }
+    public void setAdminDob(LocalDate adminDob) { this.adminDob = adminDob; }
+
+    public String getAdminGender() { return adminGender; }
+    public void setAdminGender(String adminGender) { this.adminGender = adminGender; }
 }

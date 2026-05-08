@@ -43,11 +43,24 @@ public class AdminService {
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
 
+    // ── Helper: fetch a single admin record in a role-aware way ─────────────────
+    // SUPER_ADMIN has no schoolId in their JWT, so we skip the schoolId filter.
+    private Admin findAdminByIdForCurrentUser(String adminId) {
+        if ("SUPER_ADMIN".equals(securityUtil.getRole())) {
+            return adminRepository.findById(adminId)
+                    .orElseThrow(() -> new NoSuchElementException("Admin not found: " + adminId));
+        }
+        return adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId())
+                .orElseThrow(() -> new NoSuchElementException("Admin not found: " + adminId));
+    }
+
     @Transactional(readOnly = true)
     public List<Admin> getAllAdmins() {
         log.info("Attempting to fetch all admins");
         try {
-            List<Admin> admins = adminRepository.findBySchoolId(securityUtil.getSchoolId());
+            List<Admin> admins = "SUPER_ADMIN".equals(securityUtil.getRole())
+                    ? adminRepository.findAll()
+                    : adminRepository.findBySchoolId(securityUtil.getSchoolId());
             log.info("Successfully fetched {} admins", admins.size());
             return admins;
         } catch (DataAccessException e) {
@@ -66,6 +79,9 @@ public class AdminService {
         log.info("Attempting to fetch admin by ID: {}", adminId);
 
         try {
+            if ("SUPER_ADMIN".equals(securityUtil.getRole())) {
+                return adminRepository.findById(adminId);
+            }
             return adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId());
         } catch (DataAccessException e) {
             log.error("Database access error occurred while fetching admin ID: {}", adminId, e);
@@ -83,7 +99,17 @@ public class AdminService {
 
         log.info("Attempting to create a new admin with email: {}", admin.getEmail());
 
-        Long schoolId = securityUtil.getSchoolId();
+        // SUPER_ADMIN has no school in their JWT — they must supply schoolId in the request body
+        Long schoolId;
+        if ("SUPER_ADMIN".equals(securityUtil.getRole())) {
+            if (admin.getSchoolId() == null) {
+                throw new IllegalArgumentException("schoolId is required when registering an admin as SUPER_ADMIN.");
+            }
+            schoolId = admin.getSchoolId();
+        } else {
+            schoolId = securityUtil.getSchoolId();
+        }
+
         try {
             admin.setSchoolId(schoolId);
             Admin savedAdmin = adminRepository.save(admin);
@@ -138,8 +164,7 @@ public class AdminService {
         }
 
         try {
-            Admin existingAdmin = adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId())
-                    .orElseThrow(() -> new RuntimeException("Admin not found"));
+            Admin existingAdmin = findAdminByIdForCurrentUser(adminId);
 
             String oldValue = objectMapper.writeValueAsString(existingAdmin);
 
@@ -184,8 +209,7 @@ public class AdminService {
         log.info("Attempting to delete admin with ID: {}", adminId);
 
         try {
-            Admin existingAdmin = adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId())
-                    .orElseThrow(() -> new RuntimeException("Admin not found"));
+            Admin existingAdmin = findAdminByIdForCurrentUser(adminId);
 
             String oldValue = objectMapper.writeValueAsString(existingAdmin);
 
@@ -227,8 +251,7 @@ public class AdminService {
             throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
         }
 
-        Admin admin = adminRepository.findByAdminIdAndSchoolId(adminId, securityUtil.getSchoolId())
-                .orElseThrow(() -> new NoSuchElementException("Admin not found: " + adminId));
+        Admin admin = findAdminByIdForCurrentUser(adminId);
 
         try {
             Path storageDir = Paths.get(photoDirectory).toAbsolutePath().normalize();

@@ -30,10 +30,10 @@ jobs:
             cd ~/EduPay-Leave-backend
             git pull origin main
 
-            docker stop ias-backend-container || true
-            docker rm ias-backend-container || true
+            docker stop edunexify-backend-container || true
+            docker rm edunexify-backend-container || true
 
-            docker build -t ias-backend .
+            docker build -t edunexify-backend .
 
             docker run -d \
               --restart unless-stopped \
@@ -44,7 +44,7 @@ jobs:
               --health-interval=30s \
               --health-timeout=5s \
               --health-retries=3 \
-              --name ias-backend-container \
+              --name edunexify-backend-container \
               -p 127.0.0.1:8080:8080 \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e SPRING_DATASOURCE_URL='${{ secrets.DB_URL }}' \
@@ -62,4 +62,4 @@ jobs:
               -e FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json \
               -e REDIS_URL='${{ secrets.REDIS_URL }}' \
               -e DEMO_NOTIFY_EMAIL='${{ secrets.DEMO_NOTIFY_EMAIL }}' \
-              ias-backend
+              edunexify-backend
