@@ -19,7 +19,7 @@ public class AuditController {
     private AuditQueryService auditQueryService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUB_ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUB_ADMIN + "')")
     public Page<AuditLog> getAuditLogs(
             AuditFilterDTO filter,
             Pageable pageable
