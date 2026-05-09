@@ -50,7 +50,7 @@ Spring Boot 3.4 / Java 21 REST API backed by PostgreSQL. Standard layered archit
 - **Stateless JWT** via HTTP-only cookies (`accessToken` cookie, not `Authorization` header).
 - `JwtAuthFilter` extracts the token from the cookie on every request.
 - Tokens are RS256-signed (RSA key pair). Access token TTL: 60 minutes.
-- Roles: `SUPER_ADMIN`, `ADMIN`, `TEACHER`, `STUDENT` (defined in `config/Role.java`).
+- Roles: `SUPER_ADMIN`, `ADMIN`, `SUB_ADMIN`, `TEACHER`, `STUDENT` (defined in `config/Role.java`).
 - Method-level security is enabled (`@EnableMethodSecurity`), so individual endpoints can use `@PreAuthorize("hasRole('ADMIN')")` etc.
 - `SecurityUtil` provides `getUsername()` / `getRole()` from the `SecurityContextHolder` — used throughout services for audit logging.
 - Public endpoints (no auth): `/api/auth/login`, `/api/auth/refresh-token`, `/api/auth/request-password-reset`, `/api/auth/reset-password`, `/actuator/health`.
@@ -97,3 +97,12 @@ Event images are stored on the filesystem under `./uploads/events/images/` (conf
 ### Email
 
 Sent via Brevo SMTP relay. `EmailService` is the single entry point. `app.mail.from` is the sender address (`noreply@edunexify.co.in`).
+
+### Multi-tenancy & School Onboarding
+
+- Every repository query filters by `schoolId` (`SecurityUtil.getSchoolId()` from JWT). Never query without it.
+- `SUPER_ADMIN` has no `schoolId` in their JWT — their endpoints operate across all schools.
+- `SchoolController` (`/api/super-admin/schools`) handles school CRUD for SUPER_ADMIN only.
+- `POST /api/super-admin/schools` — onboards a new school + creates its first ADMIN user in one transaction. Request body: `SchoolOnboardRequest` which includes both school fields and admin fields (`adminName`, `adminUserId`, `adminEmail`, `adminPhone`, `adminDob`, `adminGender`, `adminPassword`).
+- `AdminController` (`/api/admins`) — `POST` is SUPER_ADMIN only; when SUPER_ADMIN creates an admin, `schoolId` must be supplied in the request body (no JWT school available). For ADMIN role, `schoolId` is taken from the JWT.
+- `DashboardController` (`/api/dashboard`) — `GET /stats` is school-scoped (ADMIN gets their school's data); `GET /super-admin/stats` returns platform-wide counts for SUPER_ADMIN.

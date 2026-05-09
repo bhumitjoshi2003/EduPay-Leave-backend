@@ -140,7 +140,8 @@ public class DashboardService {
             double attendanceRate = 0.0;
             if (workingDays > 0) {
                 long totalAbsences = attendanceRepository
-                        .findByClassNameAndSchoolIdAndDateBetween(cls, schoolId, monthStart, monthEnd).size();
+                        .findByClassNameAndSchoolIdAndDateBetween(cls, schoolId, monthStart, monthEnd)
+                        .stream().filter(a -> !"X".equals(a.getStudentId())).count();
                 long totalPossible = workingDays * studentCount;
                 attendanceRate = Math.round((double) (totalPossible - totalAbsences) / totalPossible * 1000.0) / 10.0;
             }
@@ -187,7 +188,7 @@ public class DashboardService {
                 if (workingDays > 0 && studentCount > 0) {
                     long absences = attendanceRepository
                             .findByClassNameAndSchoolIdAndDateBetween(className, schoolId, wStart, wEnd)
-                            .size();
+                            .stream().filter(a -> !"X".equals(a.getStudentId())).count();
                     long totalPossible = workingDays * studentCount;
                     rate = Math.round((double) (totalPossible - absences) / totalPossible * 1000.0) / 10.0;
                 }
@@ -207,7 +208,7 @@ public class DashboardService {
                 if (workingDays > 0 && studentCount > 0) {
                     long absences = attendanceRepository
                             .findByClassNameAndSchoolIdAndDateBetween(className, schoolId, monthStart, monthEnd)
-                            .size();
+                            .stream().filter(a -> !"X".equals(a.getStudentId())).count();
                     long totalPossible = workingDays * studentCount;
                     rate = Math.round((double) (totalPossible - absences) / totalPossible * 1000.0) / 10.0;
                 }
