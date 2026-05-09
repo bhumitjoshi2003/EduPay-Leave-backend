@@ -16,7 +16,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/fee-structure")
-@PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.SUB_ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+@PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.SUB_ADMIN + "')")
 public class FeeStructureController {
 
     private static final Logger log = LoggerFactory.getLogger(FeeStructureController.class);
@@ -48,14 +48,14 @@ public class FeeStructureController {
         return ResponseEntity.ok(feeStructures);
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{academicYear}")
     public ResponseEntity<List<FeeStructure>> updateFeeStructures(@PathVariable String academicYear, @RequestBody List<FeeStructure> updatedFees, HttpServletRequest request) {
         log.info("Request to update fee structures for academic year: {}", academicYear);
         return ResponseEntity.ok(feeStructureService.updateFeeStructures(academicYear, updatedFees, request));
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping("/{academicYear}")
     public ResponseEntity<List<FeeStructure>> createNewSession(@PathVariable String academicYear, @RequestBody List<FeeStructure> newFees, HttpServletRequest request) {
         log.info("Request to create new fee session for year: {}", academicYear);

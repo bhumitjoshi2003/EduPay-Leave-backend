@@ -16,7 +16,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/bus-fees")
-@PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.SUB_ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+@PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.SUB_ADMIN + "')")
 public class BusFeesController {
 
     private static final Logger log = LoggerFactory.getLogger(BusFeesController.class);
@@ -48,7 +48,7 @@ public class BusFeesController {
         return ResponseEntity.ok(fees);
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{academicYear}")
     public ResponseEntity<List<BusFees>> updateFees(@PathVariable String academicYear, @RequestBody List<BusFees> updatedFees, HttpServletRequest request) {
         log.info("Request to update bus fees for academic year: {}", academicYear);
