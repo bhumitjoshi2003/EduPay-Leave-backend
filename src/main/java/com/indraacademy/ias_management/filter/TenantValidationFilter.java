@@ -70,12 +70,24 @@ public class TenantValidationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 4. Extract subdomain from Host header
-        String host = request.getServerName(); // e.g. "indraacademy.edunexify.co.in"
+        // 4. Determine the school slug.
+        //    Primary: school subdomain from the Host header (e.g. "indraacademy.edunexify.co.in").
+        //    Fallback: X-School-Slug request header sent by the Angular frontends.
+        //      — Web frontend uses an absolute API URL (https://edunexify.co.in/api), so the
+        //        Host header is always the root domain and yields no subdomain. The interceptor
+        //        therefore sends the current subdomain as X-School-Slug on every API call.
+        //      — Android app sends the stored school slug the same way.
+        String host = request.getServerName();
         String slug = extractSubdomain(host);
 
-        // 5. No subdomain → root domain or localhost → skip validation
-        //    This covers: Android app pointing to edunexify.co.in, SUPER_ADMIN, local dev
+        if (slug == null) {
+            String headerSlug = request.getHeader("X-School-Slug");
+            if (headerSlug != null && !headerSlug.isBlank()) {
+                slug = headerSlug.trim().toLowerCase();
+            }
+        }
+
+        // 5. No slug from any source → root domain / SUPER_ADMIN / Android with no school
         if (slug == null) {
             filterChain.doFilter(request, response);
             return;
@@ -132,7 +144,15 @@ public class TenantValidationFilter extends OncePerRequestFilter {
     }
 
     private boolean isPublicPath(String path) {
-        return path.startsWith("/api/auth/")
+        // Auth endpoints that have no JWT (no SchoolContext), so tenant validation
+        // cannot fire anyway. Explicitly listed so that /auth/me and /auth/change-password
+        // (which DO carry a JWT) go through validation like any other protected endpoint.
+        // /auth/logout is included so a user stuck on the wrong subdomain can still log out.
+        return path.equals("/api/auth/login")
+                || path.equals("/api/auth/logout")
+                || path.equals("/api/auth/refresh-token")
+                || path.startsWith("/api/auth/request-password-reset")
+                || path.startsWith("/api/auth/reset-password")
                 || path.startsWith("/api/public/")
                 || path.startsWith("/api/uploads/")
                 || path.startsWith("/api/files/")
