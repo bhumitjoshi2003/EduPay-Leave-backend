@@ -22,7 +22,6 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.util.WebUtils;
 
 import java.io.IOException;
 import java.util.List;
@@ -57,35 +56,55 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        Cookie accessCookie = WebUtils.getCookie(request, "accessToken");
-
-        if (accessCookie == null) {
+        // When multiple "accessToken" cookies exist (e.g. stale cookies from a previous
+        // session at a different school subdomain alongside a freshly issued cookie),
+        // WebUtils.getCookie returns only the first match — which may be the wrong one.
+        // Instead: collect all accessToken cookies, skip expired/invalid ones, and use
+        // the most recently issued valid token (highest iat claim).
+        Cookie[] allCookies = request.getCookies();
+        if (allCookies == null) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        String token = accessCookie.getValue();
-        String userId;
-        String role;
-        Long schoolId;
+        String token    = null;
+        String userId   = null;
+        String role     = null;
+        Long   schoolId = null;
+        long   bestIat  = Long.MIN_VALUE;
 
-        try {
-            userId = jwtUtil.extractUserId(token);
-            role = jwtUtil.extractUserRole(token);
-            schoolId = jwtUtil.extractSchoolId(token);
+        for (Cookie c : allCookies) {
+            if (!"accessToken".equals(c.getName())) continue;
+            try {
+                String candidateToken    = c.getValue();
+                long   candidateIat      = jwtUtil.extractIssuedAt(candidateToken).getTime();
+                String candidateUserId   = jwtUtil.extractUserId(candidateToken);
+                String candidateRole     = jwtUtil.extractUserRole(candidateToken);
+                Long   candidateSchoolId = jwtUtil.extractSchoolId(candidateToken);
 
-            log.debug("JWT extracted from cookie for userId={}, role={}, schoolId={}", userId, role, schoolId);
+                if (candidateIat > bestIat) {
+                    bestIat  = candidateIat;
+                    token    = candidateToken;
+                    userId   = candidateUserId;
+                    role     = candidateRole;
+                    schoolId = candidateSchoolId;
+                }
+            } catch (ExpiredJwtException e) {
+                // Skip expired tokens — only consider valid candidates
+            } catch (Exception e) {
+                log.debug("Skipping malformed accessToken cookie: {}", e.getMessage());
+            }
+        }
 
-        } catch (ExpiredJwtException e) {
-            log.warn("Expired JWT cookie for request: {}", request.getRequestURI());
+        if (token == null) {
+            // All accessToken cookies were expired or malformed
+            log.warn("All accessToken cookies expired/invalid for request: {}", request.getRequestURI());
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
             response.getWriter().write("{\"message\": \"Token Expired\"}");
             return;
-        } catch (Exception e) {
-            log.error("Invalid JWT cookie: {}", e.getMessage());
-            response.setStatus(HttpStatus.UNAUTHORIZED.value());
-            return;
         }
+
+        log.debug("JWT selected (iat={}) for userId={}, role={}, schoolId={}", bestIat, userId, role, schoolId);
 
         // Only authenticate if no context exists yet
         if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {

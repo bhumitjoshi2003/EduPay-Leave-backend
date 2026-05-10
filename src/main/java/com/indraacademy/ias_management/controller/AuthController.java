@@ -182,6 +182,11 @@ public class AuthController {
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
+        // Clear any stale cookies from previous sessions before issuing new ones.
+        // Two clearing passes: once with Domain (covers post-domain-fix cookies) and once
+        // without Domain (covers legacy host-only cookies set before the Domain fix).
+        clearCookies(response);
+
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", accessToken, Duration.ofHours(1)).toString());
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", refreshToken, Duration.ofDays(7)).toString());
 
@@ -206,6 +211,27 @@ public class AuthController {
                 .sameSite(sameSite)
                 .maxAge(maxAge)
                 .build();
+    }
+
+    /**
+     * Sends Max-Age=0 clearing cookies to remove any stale session cookies from
+     * previous logins. Two passes are required:
+     *   1. With Domain= — clears cookies that were set with the domain attribute
+     *      (sessions after the domain fix was deployed).
+     *   2. Without Domain — clears legacy host-only cookies set before the domain fix.
+     * Both passes are needed during the migration window while old host-only cookies
+     * may still be present in users' browsers.
+     */
+    private void clearCookies(HttpServletResponse response) {
+        // Pass 1: domain-scoped cookies
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken",  "", Duration.ZERO).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
+
+        // Pass 2: host-only cookies (no Domain attribute)
+        ResponseCookie clearAccess  = ResponseCookie.from("accessToken",  "").httpOnly(true).secure(isSecure).path("/").sameSite(sameSite).maxAge(Duration.ZERO).build();
+        ResponseCookie clearRefresh = ResponseCookie.from("refreshToken", "").httpOnly(true).secure(isSecure).path("/").sameSite(sameSite).maxAge(Duration.ZERO).build();
+        response.addHeader(HttpHeaders.SET_COOKIE, clearAccess.toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, clearRefresh.toString());
     }
 
     private String resolveName(String userId, String role, Long schoolId) {
