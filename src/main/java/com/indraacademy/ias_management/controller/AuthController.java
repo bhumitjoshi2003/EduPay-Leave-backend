@@ -95,6 +95,7 @@ public class AuthController {
         body.put("role", user.getRole());
         body.put("name", resolveName(user.getUserId(), user.getRole(), user.getSchoolId()));
         body.put("className", resolveClassName(user.getUserId(), user.getRole(), user.getSchoolId()));
+        body.put("schoolSlug", resolveSchoolSlug(user.getSchoolId()));
 
         return ResponseEntity.ok(body);
     }
@@ -195,6 +196,7 @@ public class AuthController {
         body.put("role", loggedIn.getRole());
         body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
         body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
+        body.put("schoolSlug", resolveSchoolSlug(loggedIn.getSchoolId()));
 
         return ResponseEntity.ok(body);
     }
@@ -232,6 +234,11 @@ public class AuthController {
         ResponseCookie clearRefresh = ResponseCookie.from("refreshToken", "").httpOnly(true).secure(isSecure).path("/").sameSite(sameSite).maxAge(Duration.ZERO).build();
         response.addHeader(HttpHeaders.SET_COOKIE, clearAccess.toString());
         response.addHeader(HttpHeaders.SET_COOKIE, clearRefresh.toString());
+    }
+
+    private String resolveSchoolSlug(Long schoolId) {
+        if (schoolId == null) return null;
+        return schoolRepository.findById(schoolId).map(School::getSlug).orElse(null);
     }
 
     private String resolveName(String userId, String role, Long schoolId) {
@@ -342,6 +349,7 @@ public class AuthController {
             body.put("role", loggedIn.getRole());
             body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
             body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
+            body.put("schoolSlug", resolveSchoolSlug(loggedIn.getSchoolId()));
 
             return ResponseEntity.ok(body);
 
