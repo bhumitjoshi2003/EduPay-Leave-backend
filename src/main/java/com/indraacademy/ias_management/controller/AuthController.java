@@ -66,6 +66,10 @@ public class AuthController {
     @Value("${auth.cookie.sameSite}")
     private String sameSite;
 
+    /** Cookie domain — must cover all school subdomains (e.g. "edunexify.co.in"). */
+    @Value("${app.base-domain:edunexify.co.in}")
+    private String cookieDomain;
+
     @GetMapping("/hari")
     public String message() {
         return "HARIBOL";
@@ -195,6 +199,10 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(isSecure)
                 .path("/")
+                // Setting the domain makes the cookie available to all school subdomains
+                // (e.g. indraacademy.edunexify.co.in) in addition to the root domain.
+                // Without this the cookie is host-only and fails on subdomains.
+                .domain(cookieDomain)
                 .sameSite(sameSite)
                 .maxAge(maxAge)
                 .build();
