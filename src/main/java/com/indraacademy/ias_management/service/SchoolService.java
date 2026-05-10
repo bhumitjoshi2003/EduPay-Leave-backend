@@ -47,6 +47,7 @@ public class SchoolService {
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private SlugResolutionService slugResolutionService;
 
     /**
      * Creates a new school and its first ADMIN user account.
@@ -311,7 +312,24 @@ public class SchoolService {
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
 
-        String oldValue = "name=" + school.getName() + ",plan=" + school.getPlan() + ",active=" + school.isActive();
+        String oldValue = "name=" + school.getName() + ",slug=" + school.getSlug() + ",plan=" + school.getPlan() + ",active=" + school.isActive();
+
+        // Slug update: validate format, enforce uniqueness, evict old cache entry
+        String oldSlug = school.getSlug();
+        if (req.getSlug() != null && !req.getSlug().isBlank()) {
+            String newSlug = req.getSlug().toLowerCase().trim();
+            if (!newSlug.equals(oldSlug)) {
+                if (!newSlug.matches("^[a-z0-9][a-z0-9-]*$")) {
+                    throw new IllegalArgumentException("Slug must be lowercase letters, digits, and hyphens only, and must start with a letter or digit.");
+                }
+                if (schoolRepository.existsBySlug(newSlug)) {
+                    throw new IllegalArgumentException("A school with slug '" + newSlug + "' already exists.");
+                }
+                school.setSlug(newSlug);
+                slugResolutionService.evictSlug(oldSlug);
+                log.info("Slug changed from '{}' to '{}' for schoolId={}", oldSlug, newSlug, schoolId);
+            }
+        }
 
         if (req.getName() != null && !req.getName().isBlank()) school.setName(req.getName());
         if (req.getBoardType() != null) school.setBoardType(req.getBoardType());
@@ -338,7 +356,7 @@ public class SchoolService {
                 "School",
                 String.valueOf(schoolId),
                 oldValue,
-                "name=" + updated.getName() + ",plan=" + updated.getPlan() + ",active=" + updated.isActive(),
+                "name=" + updated.getName() + ",slug=" + updated.getSlug() + ",plan=" + updated.getPlan() + ",active=" + updated.isActive(),
                 request.getRemoteAddr()
         );
 
@@ -390,6 +408,11 @@ public class SchoolService {
         school.setActive(!wasActive);
         schoolRepository.save(school);
         log.info("Super admin {} schoolId={}", wasActive ? "deactivated" : "activated", schoolId);
+
+        // Evict slug cache when deactivating — the slug must no longer resolve to an active school
+        if (wasActive && school.getSlug() != null) {
+            slugResolutionService.evictSlug(school.getSlug());
+        }
 
         auditService.log(
                 securityUtil.getUsername(),

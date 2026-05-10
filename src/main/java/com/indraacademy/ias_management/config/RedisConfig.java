@@ -88,7 +88,10 @@ public class RedisConfig implements CachingConfigurer {
                 "fee-structures",   defaultConfig.entryTtl(Duration.ofHours(2)),
                 "bus-fees",         defaultConfig.entryTtl(Duration.ofHours(2)),
                 "exam-config",      defaultConfig.entryTtl(Duration.ofHours(2)),
-                "subject-config",   defaultConfig.entryTtl(Duration.ofHours(2))
+                "subject-config",   defaultConfig.entryTtl(Duration.ofHours(2)),
+                // Slug→schoolId mapping changes only when a school is renamed or deactivated.
+                // Long TTL is safe because SlugResolutionService.evictSlug() is called on any such change.
+                "slug-school-id",   defaultConfig.entryTtl(Duration.ofHours(24))
         );
 
         return RedisCacheManager.builder(connectionFactory)

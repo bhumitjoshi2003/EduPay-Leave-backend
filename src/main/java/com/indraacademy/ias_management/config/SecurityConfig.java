@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.config;
 
 import com.indraacademy.ias_management.filter.JwtAuthFilter;
+import com.indraacademy.ias_management.filter.TenantValidationFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -19,7 +20,6 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -30,6 +30,9 @@ public class SecurityConfig {
 
     @Autowired
     private JwtAuthFilter jwtAuthFilter;
+
+    @Autowired
+    private TenantValidationFilter tenantValidationFilter;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -47,13 +50,21 @@ public class SecurityConfig {
         http
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    List<String> origins = new ArrayList<>();
-                    origins.add(frontendUrl);
+
+                    // Wildcard subdomain pattern for all school subdomains (*.edunexify.co.in).
+                    // allowedOriginPatterns supports wildcards; allowedOrigins does not.
+                    config.addAllowedOriginPattern("https://*.edunexify.co.in");
+                    config.addAllowedOriginPattern("http://*.edunexify.co.in");
+
+                    // Root domain (super-admin, marketing site, dev)
+                    config.addAllowedOriginPattern(frontendUrl);
+
+                    // Additional origins: Capacitor Android app, localhost dev servers
                     Arrays.stream(additionalOrigins.split(","))
                             .map(String::trim)
                             .filter(s -> !s.isEmpty())
-                            .forEach(origins::add);
-                    config.setAllowedOrigins(origins);
+                            .forEach(config::addAllowedOriginPattern);
+
                     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                     config.setAllowedHeaders(List.of("*"));
                     config.setAllowCredentials(true);
@@ -65,6 +76,7 @@ public class SecurityConfig {
                                 "/api/auth/reset-password",
                                 "/api/auth/request-password-reset",
                                 "/api/auth/refresh-token",
+                                "/api/public/**",
                                 "/actuator/health").permitAll()
                         .requestMatchers("/api/uploads/events/images/**").permitAll()
                         .requestMatchers("/api/uploads/student-photos/**").permitAll()
@@ -76,7 +88,8 @@ public class SecurityConfig {
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(unauthorizedEntryPoint()))
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(tenantValidationFilter, JwtAuthFilter.class);
 
         return http.build();
     }

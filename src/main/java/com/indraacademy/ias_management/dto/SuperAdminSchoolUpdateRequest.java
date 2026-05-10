@@ -12,6 +12,8 @@ public class SuperAdminSchoolUpdateRequest {
 
     // School info
     private String name;
+    /** Optional slug update. Must match ^[a-z0-9][a-z0-9-]*$. Null/blank = no change. */
+    private String slug;
     private BoardType boardType;
     private String address;
     private String city;
@@ -30,6 +32,9 @@ public class SuperAdminSchoolUpdateRequest {
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+
+    public String getSlug() { return slug; }
+    public void setSlug(String slug) { this.slug = slug; }
 
     public BoardType getBoardType() { return boardType; }
     public void setBoardType(BoardType boardType) { this.boardType = boardType; }
