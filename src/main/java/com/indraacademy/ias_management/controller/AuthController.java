@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.ChangePasswordRequest;
+import com.indraacademy.ias_management.dto.LoginRequest;
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
@@ -142,9 +143,9 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody User user, HttpServletResponse response) {
-        Optional<User> found = userRepository.findByUserId(user.getUserId());
-        if (found.isEmpty() || !passwordEncoder.matches(user.getPassword(), found.get().getPassword())) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest req, HttpServletResponse response) {
+        Optional<User> found = userRepository.findByUserId(req.getUserId());
+        if (found.isEmpty() || !passwordEncoder.matches(req.getPassword(), found.get().getPassword())) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid credentials");
         }
 
@@ -157,6 +158,20 @@ public class AuthController {
                 log.warn("Login rejected for userId={}: school {} is inactive", loggedIn.getUserId(), loggedIn.getSchoolId());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body("Your school account has been deactivated. Please contact Edunexify support.");
+            }
+        }
+
+        // Option B — school-scoped login enforcement.
+        // schoolSlug is only sent when the user is on a branded login page.
+        // SUPER_ADMIN has no schoolId so we skip the check for them.
+        if (req.getSchoolSlug() != null && !req.getSchoolSlug().isBlank()
+                && loggedIn.getSchoolId() != null) {
+            String userSchoolSlug = resolveSchoolSlug(loggedIn.getSchoolId());
+            if (!req.getSchoolSlug().equalsIgnoreCase(userSchoolSlug)) {
+                log.warn("Login rejected: userId={} attempted login on school slug '{}' but belongs to '{}'",
+                        loggedIn.getUserId(), req.getSchoolSlug(), userSchoolSlug);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("This account does not belong to this school.");
             }
         }
 
