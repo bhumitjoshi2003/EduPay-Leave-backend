@@ -82,6 +82,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/uploads/student-photos/**").permitAll()
                         .requestMatchers("/api/uploads/teacher-photos/**").permitAll()
                         .requestMatchers("/api/uploads/admin-photos/**").permitAll()
+                        .requestMatchers("/api/uploads/school-logos/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/demo-requests").permitAll()
                         .anyRequest().authenticated()
