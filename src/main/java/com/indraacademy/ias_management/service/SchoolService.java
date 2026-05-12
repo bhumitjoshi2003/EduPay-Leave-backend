@@ -28,6 +28,14 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import net.coobird.thumbnailator.Thumbnails;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -36,6 +44,10 @@ import java.util.NoSuchElementException;
 public class SchoolService {
 
     private static final Logger log = LoggerFactory.getLogger(SchoolService.class);
+    private static final long MAX_LOGO_SIZE = 5L * 1024 * 1024; // 5 MB
+
+    @Value("${school.logo.directory:./uploads/school-logos}")
+    private String logoDirectory;
 
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
@@ -219,6 +231,62 @@ public class SchoolService {
         );
 
         return SchoolSettingsResponse.from(updated);
+    }
+
+    /**
+     * Uploads and stores the school's logo image.
+     * The file is saved as {schoolId}.jpg — re-uploading replaces the previous logo.
+     * Returns the relative URL to be stored in school.logoUrl.
+     */
+    @Transactional
+    public String uploadLogo(MultipartFile file, HttpServletRequest request) {
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("Only image files are allowed.");
+        }
+        if (file.getSize() > MAX_LOGO_SIZE) {
+            throw new IllegalArgumentException("File size exceeds the 5 MB limit.");
+        }
+
+        Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        try {
+            Path storageDir = Paths.get(logoDirectory).toAbsolutePath().normalize();
+            Files.createDirectories(storageDir);
+
+            // One logo per school — always saved as <schoolId>.jpg (overwrites previous)
+            String fileName = schoolId + ".jpg";
+            Path targetLocation = storageDir.resolve(fileName);
+            Thumbnails.of(file.getInputStream())
+                    .size(400, 400)
+                    .keepAspectRatio(true)
+                    .outputFormat("jpg")
+                    .outputQuality(0.85)
+                    .toFile(targetLocation.toFile());
+
+            String relativeUrl = "/uploads/school-logos/" + fileName;
+            school.setLogoUrl(relativeUrl);
+            schoolRepository.save(school);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPLOAD_SCHOOL_LOGO",
+                    "School",
+                    String.valueOf(schoolId),
+                    null,
+                    relativeUrl,
+                    request.getRemoteAddr()
+            );
+
+            log.info("School logo uploaded for schoolId={}: {}", schoolId, relativeUrl);
+            return relativeUrl;
+        } catch (IOException e) {
+            log.error("Failed to store logo for schoolId={}", schoolId, e);
+            throw new RuntimeException("Could not store school logo. Please try again.", e);
+        }
     }
 
     /**

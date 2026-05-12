@@ -18,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -165,6 +166,26 @@ public class SchoolController {
         log.info("PUT /api/school/settings");
         try {
             return ResponseEntity.ok(schoolService.updateSettings(req, request));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/school/logo
+     * Upload or replace the school's logo image (multipart/form-data, field name "file").
+     * Returns the relative URL stored on the school record.
+     */
+    @PostMapping("/api/school/logo")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> uploadLogo(@RequestParam("file") MultipartFile file,
+                                        HttpServletRequest request) {
+        log.info("POST /api/school/logo — size={}", file.getSize());
+        try {
+            String logoUrl = schoolService.uploadLogo(file, request);
+            return ResponseEntity.ok(Map.of("logoUrl", logoUrl));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         } catch (java.util.NoSuchElementException e) {

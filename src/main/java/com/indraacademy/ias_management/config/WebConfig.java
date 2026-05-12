@@ -22,6 +22,9 @@ public class WebConfig implements WebMvcConfigurer {
     @Value("${admin.photo.directory:./uploads/admin-photos}")
     private String adminPhotoDirectory;
 
+    @Value("${school.logo.directory:./uploads/school-logos}")
+    private String schoolLogoDirectory;
+
     @Autowired
     public WebConfig(FileStorageProperties fileStorageProperties) {
         this.fileStorageProperties = fileStorageProperties;
@@ -44,5 +47,9 @@ public class WebConfig implements WebMvcConfigurer {
         String adminPhotosPath = Paths.get(adminPhotoDirectory).toAbsolutePath().normalize().toString();
         registry.addResourceHandler("/api/uploads/admin-photos/**")
                 .addResourceLocations("file:" + adminPhotosPath + "/");
+
+        String schoolLogosPath = Paths.get(schoolLogoDirectory).toAbsolutePath().normalize().toString();
+        registry.addResourceHandler("/api/uploads/school-logos/**")
+                .addResourceLocations("file:" + schoolLogosPath + "/");
     }
 }
