@@ -21,6 +21,10 @@ public class Plan {
     @Column(nullable = false, length = 50)
     private String tier;
 
+    /** Human-readable version label, e.g. "v1", "v2". Helps track pricing/feature evolution. */
+    @Column(length = 20)
+    private String version = "v1";
+
     /** false for hidden custom/enterprise plans not shown on pricing page */
     @Column(name = "is_public", nullable = false)
     private boolean isPublic = true;
@@ -95,6 +99,9 @@ public class Plan {
 
     public String getTier() { return tier; }
     public void setTier(String tier) { this.tier = tier; }
+
+    public String getVersion() { return version; }
+    public void setVersion(String version) { this.version = version; }
 
     public boolean isPublic() { return isPublic; }
     public void setPublic(boolean isPublic) { this.isPublic = isPublic; }

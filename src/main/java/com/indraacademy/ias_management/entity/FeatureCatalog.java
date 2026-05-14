@@ -2,6 +2,9 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * Master list of every gateable feature the platform supports.
  * Rows are seeded at startup and never changed without a code deploy.
@@ -29,6 +32,17 @@ public class FeatureCatalog {
     @Column(name = "is_always_on", nullable = false)
     private boolean isAlwaysOn = false;
 
+    /**
+     * Feature keys that must be present in the plan before this feature can be added.
+     * Example: PAYMENT_COLLECTION depends on FEE_MANAGEMENT.
+     * Seeded at startup; validated in PlanService on add/remove.
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "feature_catalog_dependencies",
+            joinColumns = @JoinColumn(name = "feature_key"))
+    @Column(name = "depends_on_feature_key", length = 60)
+    private Set<String> dependsOn = new HashSet<>();
+
     public FeatureCatalog() {}
 
     public FeatureCatalog(String featureKey, String displayName, String description,
@@ -54,4 +68,7 @@ public class FeatureCatalog {
 
     public boolean isAlwaysOn() { return isAlwaysOn; }
     public void setAlwaysOn(boolean isAlwaysOn) { this.isAlwaysOn = isAlwaysOn; }
+
+    public Set<String> getDependsOn() { return dependsOn; }
+    public void setDependsOn(Set<String> dependsOn) { this.dependsOn = dependsOn; }
 }

@@ -57,6 +57,8 @@ public class AuthController {
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private AdminRepository adminRepository;
+    @Autowired private com.indraacademy.ias_management.service.EntitlementService entitlementService;
+    @Autowired private com.indraacademy.ias_management.repository.SchoolEffectiveEntitlementRepository entitlementRepo;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -91,12 +93,15 @@ public class AuthController {
         }
 
         User user = userOptional.get();
-        Map<String, String> body = new LinkedHashMap<>();
+        Map<String, Object> body = new LinkedHashMap<>();
         body.put("userId", user.getUserId());
         body.put("role", user.getRole());
         body.put("name", resolveName(user.getUserId(), user.getRole(), user.getSchoolId()));
         body.put("className", resolveClassName(user.getUserId(), user.getRole(), user.getSchoolId()));
         body.put("schoolSlug", resolveSchoolSlug(user.getSchoolId()));
+
+        // Entitlement fields — only for school-scoped users (not SUPER_ADMIN)
+        appendEntitlementFields(body, user.getSchoolId());
 
         return ResponseEntity.ok(body);
     }
@@ -206,12 +211,13 @@ public class AuthController {
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", accessToken, Duration.ofHours(1)).toString());
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", refreshToken, Duration.ofDays(7)).toString());
 
-        Map<String, String> body = new LinkedHashMap<>();
+        Map<String, Object> body = new LinkedHashMap<>();
         body.put("userId", loggedIn.getUserId());
         body.put("role", loggedIn.getRole());
         body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
         body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
         body.put("schoolSlug", resolveSchoolSlug(loggedIn.getSchoolId()));
+        appendEntitlementFields(body, loggedIn.getSchoolId());
 
         return ResponseEntity.ok(body);
     }
@@ -249,6 +255,49 @@ public class AuthController {
         ResponseCookie clearRefresh = ResponseCookie.from("refreshToken", "").httpOnly(true).secure(isSecure).path("/").sameSite(sameSite).maxAge(Duration.ZERO).build();
         response.addHeader(HttpHeaders.SET_COOKIE, clearAccess.toString());
         response.addHeader(HttpHeaders.SET_COOKIE, clearRefresh.toString());
+    }
+
+    /**
+     * Appends subscription entitlement fields to the auth response body.
+     * SUPER_ADMIN has no schoolId → all fields are null/empty.
+     * School users with no subscription yet → fields are null/empty (no exception thrown).
+     */
+    private void appendEntitlementFields(Map<String, Object> body, Long schoolId) {
+        if (schoolId == null) {
+            body.put("featureKeys",         List.of());
+            body.put("planTier",            null);
+            body.put("planVersion",         null);
+            body.put("subscriptionStatus",  null);
+            body.put("expiresAt",           null);
+            body.put("graceEndsAt",         null);
+            return;
+        }
+        try {
+            var ent = entitlementRepo.findById(schoolId).orElse(null);
+            if (ent == null) {
+                body.put("featureKeys",         List.of());
+                body.put("planTier",            null);
+                body.put("planVersion",         null);
+                body.put("subscriptionStatus",  null);
+                body.put("expiresAt",           null);
+                body.put("graceEndsAt",         null);
+            } else {
+                body.put("featureKeys",         entitlementService.getEffectiveFeatureKeys(schoolId));
+                body.put("planTier",            ent.getPlanTier());
+                body.put("planVersion",         ent.getPlanVersion());
+                body.put("subscriptionStatus",  ent.getSubscriptionStatus());
+                body.put("expiresAt",           ent.getExpiresAt() != null ? ent.getExpiresAt().toString() : null);
+                body.put("graceEndsAt",         ent.getGraceEndsAt() != null ? ent.getGraceEndsAt().toString() : null);
+            }
+        } catch (Exception e) {
+            log.warn("Could not load entitlement for schoolId={}: {}", schoolId, e.getMessage());
+            body.put("featureKeys",         List.of());
+            body.put("planTier",            null);
+            body.put("planVersion",         null);
+            body.put("subscriptionStatus",  null);
+            body.put("expiresAt",           null);
+            body.put("graceEndsAt",         null);
+        }
     }
 
     private String resolveSchoolSlug(Long schoolId) {
@@ -359,12 +408,13 @@ public class AuthController {
             response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", newAccessToken, Duration.ofHours(1)).toString());
             response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", newRefreshToken, Duration.ofDays(7)).toString());
 
-            Map<String, String> body = new LinkedHashMap<>();
+            Map<String, Object> body = new LinkedHashMap<>();
             body.put("userId", loggedIn.getUserId());
             body.put("role", loggedIn.getRole());
             body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
             body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
             body.put("schoolSlug", resolveSchoolSlug(loggedIn.getSchoolId()));
+            appendEntitlementFields(body, loggedIn.getSchoolId());
 
             return ResponseEntity.ok(body);
 

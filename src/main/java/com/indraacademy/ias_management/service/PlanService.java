@@ -28,6 +28,7 @@ public class PlanService {
     @Autowired private PlanFeatureRepository planFeatureRepo;
     @Autowired private PlanFeatureChangeRepository planFeatureChangeRepo;
     @Autowired private GlobalSubscriptionConfigRepository configRepo;
+    @Autowired private EntitlementRefreshService entitlementRefreshService;
 
     // ── Plans ─────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ public class PlanService {
     private void applyRequest(Plan plan, PlanRequest req) {
         if (req.getName() != null)               plan.setName(req.getName());
         if (req.getTier() != null)               plan.setTier(req.getTier().toUpperCase());
+        if (req.getVersion() != null)            plan.setVersion(req.getVersion());
         plan.setPublic(req.isPublic());
         if (req.getMaxStudents() != null)        plan.setMaxStudents(req.getMaxStudents());
         if (req.getStudentSoftLimitPct() != null) plan.setStudentSoftLimitPct(req.getStudentSoftLimitPct());
@@ -113,10 +115,21 @@ public class PlanService {
     @Transactional
     public void addFeatureToPlan(Long planId, String featureKey, String adminId) {
         if (!planRepo.existsById(planId)) throw new IllegalArgumentException("Plan not found: " + planId);
-        if (!featureCatalogRepo.existsById(featureKey)) throw new IllegalArgumentException("Feature not found: " + featureKey);
+        FeatureCatalog catalog = featureCatalogRepo.findById(featureKey)
+                .orElseThrow(() -> new IllegalArgumentException("Feature not found: " + featureKey));
         if (planFeatureRepo.existsByPlanIdAndFeatureKey(planId, featureKey)) {
             log.info("Feature {} already on plan {} — skipping", featureKey, planId);
             return;
+        }
+
+        // Dependency validation: all required features must already be in the plan
+        Set<String> missing = catalog.getDependsOn().stream()
+                .filter(dep -> !planFeatureRepo.existsByPlanIdAndFeatureKey(planId, dep))
+                .collect(Collectors.toSet());
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Cannot add '" + featureKey + "': missing required feature(s): " + missing +
+                    ". Add them first.");
         }
 
         planFeatureRepo.save(new PlanFeature(planId, featureKey));
@@ -132,6 +145,7 @@ public class PlanService {
         planFeatureChangeRepo.save(change);
 
         log.info("Feature {} added to plan {} by {}", featureKey, planId, adminId);
+        entitlementRefreshService.refreshForPlanChange(planId);
     }
 
     @Transactional
@@ -139,6 +153,25 @@ public class PlanService {
         if (!planRepo.existsById(planId)) throw new IllegalArgumentException("Plan not found: " + planId);
         if (!planFeatureRepo.existsByPlanIdAndFeatureKey(planId, featureKey)) {
             throw new IllegalArgumentException("Feature " + featureKey + " is not on plan " + planId);
+        }
+
+        // Dependency validation: block removal if other plan features depend on this one
+        List<PlanFeature> planFeatures = planFeatureRepo.findByPlanId(planId);
+        Set<String> planFeatureKeys = planFeatures.stream()
+                .map(PlanFeature::getFeatureKey)
+                .collect(Collectors.toSet());
+
+        List<FeatureCatalog> dependents = featureCatalogRepo.findAll().stream()
+                .filter(f -> planFeatureKeys.contains(f.getFeatureKey())
+                        && !f.getFeatureKey().equals(featureKey)
+                        && f.getDependsOn().contains(featureKey))
+                .toList();
+        if (!dependents.isEmpty()) {
+            Set<String> dependentKeys = dependents.stream()
+                    .map(FeatureCatalog::getFeatureKey).collect(Collectors.toSet());
+            throw new IllegalArgumentException(
+                    "Cannot remove '" + featureKey + "': feature(s) " + dependentKeys +
+                    " depend on it. Remove those first.");
         }
 
         LocalDateTime effectiveAt = computeEffectiveAt(policy);
@@ -155,6 +188,7 @@ public class PlanService {
             planFeatureRepo.deleteByPlanIdAndFeatureKey(planId, featureKey);
             change.setApplied(true);
             log.info("Feature {} removed immediately from plan {} by {}", featureKey, planId, adminId);
+            entitlementRefreshService.refreshForPlanChange(planId);
         } else {
             change.setApplied(false);
             log.info("Feature {} scheduled for removal from plan {} at {} (policy={}) by {}",
@@ -182,6 +216,7 @@ public class PlanService {
                 change.setApplied(true);
                 planFeatureChangeRepo.save(change);
                 log.info("Applied scheduled removal: feature={} plan={}", change.getFeatureKey(), change.getPlanId());
+                entitlementRefreshService.refreshForPlanChange(change.getPlanId());
             } catch (Exception e) {
                 log.error("Failed to apply feature removal id={}: {}", change.getId(), e.getMessage());
             }

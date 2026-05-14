@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.dto;
 public class PlanRequest {
     private String name;
     private String tier;
+    private String version;
     private boolean isPublic = true;
     private Integer maxStudents;
     private Integer studentSoftLimitPct = 90;
@@ -22,6 +23,9 @@ public class PlanRequest {
 
     public String getTier() { return tier; }
     public void setTier(String tier) { this.tier = tier; }
+
+    public String getVersion() { return version; }
+    public void setVersion(String version) { this.version = version; }
 
     public boolean isPublic() { return isPublic; }
     public void setPublic(boolean isPublic) { this.isPublic = isPublic; }

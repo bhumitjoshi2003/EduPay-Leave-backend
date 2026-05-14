@@ -13,4 +13,6 @@ public interface AdminRepository extends JpaRepository<Admin, String> {
     List<Admin> findBySchoolId(Long schoolId);
 
     Optional<Admin> findByAdminIdAndSchoolId(String adminId, Long schoolId);
+
+    long countBySchoolId(Long schoolId);
 }

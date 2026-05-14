@@ -110,6 +110,20 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
             }
         }
         if (seeded > 0) log.info("Seeded {} feature catalog entries", seeded);
+
+        // Seed feature dependencies (idempotent — only adds missing deps)
+        seedDependency("PAYMENT_COLLECTION", "FEE_MANAGEMENT");
+        seedDependency("REPORT_CARD",         "EXAM_MARKS");
+    }
+
+    private void seedDependency(String featureKey, String dependsOnKey) {
+        featureCatalogRepo.findById(featureKey).ifPresent(f -> {
+            if (!f.getDependsOn().contains(dependsOnKey)) {
+                f.getDependsOn().add(dependsOnKey);
+                featureCatalogRepo.save(f);
+                log.info("Seeded dependency: {} → {}", featureKey, dependsOnKey);
+            }
+        });
     }
 
     // ── Default Plans ─────────────────────────────────────────────────────────
@@ -128,6 +142,7 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
         Plan p = new Plan();
         p.setName("Campus");
         p.setTier("CAMPUS");
+        p.setVersion("v1");
         p.setPublic(true);
         p.setActive(true);
         p.setPriorityScore(10);
@@ -154,6 +169,7 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
         Plan p = new Plan();
         p.setName("Academy");
         p.setTier("ACADEMY");
+        p.setVersion("v1");
         p.setPublic(true);
         p.setActive(true);
         p.setPriorityScore(20);
@@ -183,6 +199,7 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
         Plan p = new Plan();
         p.setName("Institute");
         p.setTier("INSTITUTE");
+        p.setVersion("v1");
         p.setPublic(true);
         p.setActive(true);
         p.setPriorityScore(30);

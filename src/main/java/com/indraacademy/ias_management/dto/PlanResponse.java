@@ -10,6 +10,7 @@ public class PlanResponse {
     private Long id;
     private String name;
     private String tier;
+    private String version;
     private boolean isPublic;
     private boolean isActive;
     private int priorityScore;
@@ -45,6 +46,7 @@ public class PlanResponse {
         r.id                   = p.getId();
         r.name                 = p.getName();
         r.tier                 = p.getTier();
+        r.version              = p.getVersion();
         r.isPublic             = p.isPublic();
         r.isActive             = p.isActive();
         r.priorityScore        = p.getPriorityScore();
@@ -70,6 +72,7 @@ public class PlanResponse {
     public Long getId() { return id; }
     public String getName() { return name; }
     public String getTier() { return tier; }
+    public String getVersion() { return version; }
     public boolean isPublic() { return isPublic; }
     public boolean isActive() { return isActive; }
     public int getPriorityScore() { return priorityScore; }
