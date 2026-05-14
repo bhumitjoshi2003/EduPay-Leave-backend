@@ -44,6 +44,9 @@ public class SubscriptionController {
     @Autowired private SchoolFeatureOverrideRepository overrideRepo;
     @Autowired private FeatureCatalogRepository featureCatalogRepo;
     @Autowired private PlanRepository planRepo;
+    @Autowired private StudentRepository studentRepo;
+    @Autowired private TeacherRepository teacherRepo;
+    @Autowired private AdminRepository adminRepo;
     @Autowired private EntitlementRefreshService refreshService;
     @Autowired private EntitlementService entitlementService;
     @Autowired private AuthService authService;
@@ -168,6 +171,53 @@ public class SubscriptionController {
             item.put("effectivelyOn", entitlementService.hasFeature(schoolId, f.getFeatureKey()));
             return item;
         }).toList();
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Get the school's current effective entitlement + live usage counts.
+     * Used by the admin dashboard Plan Usage section.
+     */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUB_ADMIN')")
+    @GetMapping("/api/school/entitlement")
+    public ResponseEntity<?> getSchoolEntitlement() {
+        Long schoolId = SchoolContext.get();
+        SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
+        List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
+
+        long activeStudents = studentRepo.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
+        long teachers = teacherRepo.countBySchoolId(schoolId);
+        long admins = adminRepo.countBySchoolId(schoolId);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (ent != null) {
+            result.put("planName",            ent.getPlanName());
+            result.put("planTier",            ent.getPlanTier());
+            result.put("subscriptionStatus",  ent.getSubscriptionStatus());
+            result.put("trialEndsAt",         ent.getTrialEndsAt());
+            result.put("expiresAt",           ent.getExpiresAt());
+            result.put("graceEndsAt",         ent.getGraceEndsAt());
+            result.put("maxStudents",         ent.getMaxStudents());
+            result.put("studentSoftLimitPct", ent.getStudentSoftLimitPct());
+            result.put("studentHardLimitPct", ent.getStudentHardLimitPct());
+            result.put("maxStaff",            ent.getMaxStaff());
+            result.put("staffSoftLimitPct",   ent.getStaffSoftLimitPct());
+            result.put("staffHardLimitPct",   ent.getStaffHardLimitPct());
+            result.put("storageGbLimit",      ent.getStorageGbLimit());
+            result.put("featureCount",        featureKeys.size());
+            result.put("features",            featureKeys);
+        } else {
+            result.put("planName",   null);
+            result.put("planTier",   null);
+            result.put("subscriptionStatus", null);
+            result.put("featureCount", featureKeys.size());
+            result.put("features",   featureKeys);
+        }
+        result.put("activeStudents", activeStudents);
+        result.put("totalStaff",     teachers + admins);
+        result.put("teachers",       teachers);
+        result.put("admins",         admins);
 
         return ResponseEntity.ok(result);
     }
