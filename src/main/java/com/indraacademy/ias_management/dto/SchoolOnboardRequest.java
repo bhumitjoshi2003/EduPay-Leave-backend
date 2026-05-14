@@ -29,6 +29,9 @@ public class SchoolOnboardRequest {
     private Integer maxStudents;
     private LocalDate expiryDate;
 
+    /** Optional: if set, a TRIAL subscription is auto-created using this plan + global defaultTrialDays. */
+    private Long trialPlanId;
+
     // First ADMIN user
     private String adminUserId;
     private String adminEmail;
@@ -106,4 +109,7 @@ public class SchoolOnboardRequest {
 
     public String getAdminGender() { return adminGender; }
     public void setAdminGender(String adminGender) { this.adminGender = adminGender; }
+
+    public Long getTrialPlanId() { return trialPlanId; }
+    public void setTrialPlanId(Long trialPlanId) { this.trialPlanId = trialPlanId; }
 }

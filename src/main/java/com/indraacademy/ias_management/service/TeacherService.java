@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.entity.LimitType;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,6 +43,9 @@ public class TeacherService {
 
     @Autowired
     private SecurityUtil securityUtil;
+
+    @Autowired
+    private EntitlementService entitlementService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -121,6 +125,11 @@ public class TeacherService {
 
         try {
             Long schoolId = securityUtil.getSchoolId();
+            try {
+                entitlementService.checkLimit(schoolId, LimitType.STAFF, 1);
+            } catch (IllegalStateException e) {
+                log.debug("No entitlement for school {} — skipping staff limit check", schoolId);
+            }
             Optional<Teacher> existingTeacher = teacherRepository.findByTeacherIdAndSchoolId(teacher.getTeacherId(), schoolId);
             if (existingTeacher.isPresent()) {
                 log.warn("Teacher with ID {} already exists.", teacher.getTeacherId());

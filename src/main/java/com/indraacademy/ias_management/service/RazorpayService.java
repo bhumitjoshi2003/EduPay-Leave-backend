@@ -82,6 +82,51 @@ public class RazorpayService {
         return globalKeySecret;
     }
 
+    /**
+     * Creates a Razorpay order using the platform-global keys (for subscription plan upgrades).
+     * Never uses school-specific keys — subscription revenue goes to the platform, not the school.
+     */
+    public Map<String, Object> createSubscriptionOrder(long amountPaise, Long planId, String planName, Long schoolId) {
+        try {
+            JSONObject options = new JSONObject();
+            options.put("amount", amountPaise);
+            options.put("currency", "INR");
+            options.put("receipt", "sub_" + schoolId + "_" + System.currentTimeMillis());
+            options.put("payment_capture", 1);
+
+            Order order = getGlobalRazorpayClient().Orders.create(options);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("razorpayKey", globalKeyId);
+            response.put("orderId", order.get("id"));
+            response.put("amount", order.get("amount"));
+            response.put("planId", planId);
+            response.put("planName", planName);
+            response.put("schoolId", schoolId);
+            log.info("Subscription order created for school={} plan={} orderId={}", schoolId, planId, order.get("id"));
+            return response;
+        } catch (RazorpayException e) {
+            log.error("Failed to create subscription order for school={} plan={}", schoolId, planId, e);
+            throw new RuntimeException("Failed to create subscription payment order: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Verifies the Razorpay signature for a subscription payment using global keys.
+     * Returns true if signature is valid.
+     */
+    public boolean verifySubscriptionSignature(String orderId, String paymentId, String signature) throws RazorpayException {
+        String payload = orderId + "|" + paymentId;
+        return Utils.verifySignature(payload, signature, globalKeySecret);
+    }
+
+    private RazorpayClient getGlobalRazorpayClient() throws RazorpayException {
+        if (globalKeyId == null || globalKeyId.isBlank() || globalKeySecret == null || globalKeySecret.isBlank()) {
+            throw new IllegalStateException("Platform Razorpay keys are not configured. Contact support to upgrade your plan.");
+        }
+        return new RazorpayClient(globalKeyId, globalKeySecret);
+    }
+
     public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int additionalCharges, int lateFees, int platformFee) {
         if (amount <= 0 || studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to create order with invalid amount or missing student ID. Amount: {}", amount);

@@ -8,14 +8,20 @@ import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
 import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
 import com.indraacademy.ias_management.dto.SuperAdminSchoolUpdateRequest;
 import com.indraacademy.ias_management.entity.Admin;
+import com.indraacademy.ias_management.entity.GlobalSubscriptionConfig;
+import com.indraacademy.ias_management.entity.Plan;
 import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.SchoolSubscription;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.repository.AdminRepository;
+import com.indraacademy.ias_management.repository.GlobalSubscriptionConfigRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.PlanRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.SchoolSubscriptionRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
@@ -37,6 +43,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -56,6 +63,10 @@ public class SchoolService {
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private SchoolSubscriptionRepository subscriptionRepository;
+    @Autowired private PlanRepository planRepository;
+    @Autowired private GlobalSubscriptionConfigRepository globalConfigRepository;
+    @Autowired private EntitlementRefreshService entitlementRefreshService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private PasswordEncoder passwordEncoder;
@@ -165,6 +176,30 @@ public class SchoolService {
         adminProfile.setGender(req.getAdminGender());
         adminRepository.save(adminProfile);
         log.info("Admin profile created: adminId={} for schoolId={}", req.getAdminUserId(), saved.getId());
+
+        // 4. Auto-create a trial subscription if a plan was specified
+        if (req.getTrialPlanId() != null) {
+            Plan plan = planRepository.findById(req.getTrialPlanId()).orElse(null);
+            if (plan != null) {
+                GlobalSubscriptionConfig config = globalConfigRepository.findById(1)
+                        .orElse(new GlobalSubscriptionConfig());
+                LocalDateTime now = LocalDateTime.now();
+                SchoolSubscription sub = new SchoolSubscription();
+                sub.setSchoolId(saved.getId());
+                sub.setPlanId(plan.getId());
+                sub.setStatus("TRIAL");
+                sub.setTrialStartAt(now);
+                sub.setTrialEndsAt(now.plusDays(config.getDefaultTrialDays()));
+                sub.setCreatedBy(securityUtil.getUsername());
+                sub.setNotes("Auto-created trial on onboarding by " + securityUtil.getUsername());
+                subscriptionRepository.save(sub);
+                entitlementRefreshService.refresh(saved.getId(), "ONBOARD");
+                log.info("Auto-created TRIAL subscription for school={} plan={} trialEnds={}",
+                        saved.getId(), plan.getId(), sub.getTrialEndsAt());
+            } else {
+                log.warn("trialPlanId={} not found — skipping auto-subscription for school={}", req.getTrialPlanId(), saved.getId());
+            }
+        }
 
         auditService.log(
                 securityUtil.getUsername(),

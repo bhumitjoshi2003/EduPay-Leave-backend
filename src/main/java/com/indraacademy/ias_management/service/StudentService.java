@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.entity.LimitType;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.User;
@@ -50,6 +51,7 @@ public class StudentService {
     @Autowired private UserDetailsServiceImpl userDetailsService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private AuditService auditService;
+    @Autowired private EntitlementService entitlementService;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private StudentFeesRepository studentFeesRepository;
@@ -84,6 +86,12 @@ public class StudentService {
         log.info("Attempting to add new student with ID: {}", student.getStudentId());
 
         Long schoolId = securityUtil.getSchoolId();
+        try {
+            entitlementService.checkLimit(schoolId, LimitType.STUDENTS, 1);
+        } catch (IllegalStateException e) {
+            // No subscription configured yet — allow the operation
+            log.debug("No entitlement for school {} — skipping student limit check", schoolId);
+        }
         try {
             Optional<Student> existingStudent = studentRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
             if (existingStudent.isPresent()) {

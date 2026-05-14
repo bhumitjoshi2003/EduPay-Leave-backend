@@ -8,7 +8,9 @@ import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.EntitlementRefreshService;
 import com.indraacademy.ias_management.service.EntitlementService;
+import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.util.SchoolContext;
+import com.razorpay.RazorpayException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,9 +49,11 @@ public class SubscriptionController {
     @Autowired private StudentRepository studentRepo;
     @Autowired private TeacherRepository teacherRepo;
     @Autowired private AdminRepository adminRepo;
+    @Autowired private GlobalSubscriptionConfigRepository globalConfigRepo;
     @Autowired private EntitlementRefreshService refreshService;
     @Autowired private EntitlementService entitlementService;
     @Autowired private AuthService authService;
+    @Autowired private RazorpayService razorpayService;
 
     // ══════════════════════════════════════════════════════════════════════════
     //  SUPER_ADMIN — Subscription management
@@ -267,6 +271,105 @@ public class SubscriptionController {
                 "featureKey",    featureKey,
                 "overrideState", req.getOverrideState(),
                 "effectivelyOn", entitlementService.hasFeature(schoolId, featureKey)));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  ADMIN — School-initiated plan upgrade via Razorpay
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Creates a Razorpay order for upgrading to a paid plan.
+     * Uses platform-global Razorpay keys (subscription revenue goes to platform, not school).
+     */
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping("/api/school/subscription/upgrade/order")
+    public ResponseEntity<?> createUpgradeOrder(@RequestBody Map<String, Object> body) {
+        Long planId = body.get("planId") != null ? Long.valueOf(body.get("planId").toString()) : null;
+        String billingCycle = body.getOrDefault("billingCycle", "MONTHLY").toString().toUpperCase();
+
+        if (planId == null) return ResponseEntity.badRequest().body("planId is required.");
+        Plan plan = planRepo.findById(planId).orElse(null);
+        if (plan == null || !plan.isPublic() || !plan.isActive()) {
+            return ResponseEntity.badRequest().body("Plan not found or not available.");
+        }
+
+        Long amountPaise = "ANNUAL".equals(billingCycle) ? plan.getAnnualPricePaise() : plan.getMonthlyPricePaise();
+        if (amountPaise == null || amountPaise <= 0) {
+            return ResponseEntity.badRequest().body("This plan has no price configured for " + billingCycle + " billing.");
+        }
+
+        Long schoolId = SchoolContext.get();
+        try {
+            Map<String, Object> order = razorpayService.createSubscriptionOrder(amountPaise, planId, plan.getName(), schoolId);
+            order.put("billingCycle", billingCycle);
+            return ResponseEntity.ok(order);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(503).body(e.getMessage());
+        } catch (Exception e) {
+            log.error("Failed to create upgrade order school={} plan={}", schoolId, planId, e);
+            return ResponseEntity.internalServerError().body("Failed to create payment order.");
+        }
+    }
+
+    /**
+     * Verifies the Razorpay payment and activates the subscription.
+     * On success, creates or replaces the school's SchoolSubscription and triggers entitlement refresh.
+     */
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping("/api/school/subscription/upgrade/verify")
+    public ResponseEntity<?> verifyUpgradePayment(@RequestBody Map<String, String> body) {
+        String orderId     = body.get("razorpay_order_id");
+        String paymentId   = body.get("razorpay_payment_id");
+        String signature   = body.get("razorpay_signature");
+        String planIdStr   = body.get("planId");
+        String billingCycle = body.getOrDefault("billingCycle", "MONTHLY").toUpperCase();
+
+        if (orderId == null || paymentId == null || signature == null || planIdStr == null) {
+            return ResponseEntity.badRequest().body("Missing required payment verification fields.");
+        }
+
+        Long schoolId = SchoolContext.get();
+        try {
+            boolean valid = razorpayService.verifySubscriptionSignature(orderId, paymentId, signature);
+            if (!valid) {
+                log.warn("Invalid subscription payment signature school={} order={}", schoolId, orderId);
+                return ResponseEntity.status(400).body("Payment signature verification failed.");
+            }
+
+            Long planId = Long.valueOf(planIdStr);
+            Plan plan = planRepo.findById(planId)
+                    .orElseThrow(() -> new IllegalArgumentException("Plan not found."));
+
+            LocalDateTime now = LocalDateTime.now();
+            SchoolSubscription sub = subscriptionRepo.findBySchoolId(schoolId)
+                    .orElse(new SchoolSubscription());
+            sub.setSchoolId(schoolId);
+            sub.setPlanId(planId);
+            sub.setStatus("ACTIVE");
+            sub.setActivatedAt(now);
+            sub.setExpiresAt("ANNUAL".equals(billingCycle) ? now.plusYears(1) : now.plusMonths(1));
+
+            GlobalSubscriptionConfig config = globalConfigRepo.findById(1).orElse(new GlobalSubscriptionConfig());
+            sub.setGraceEndsAt(sub.getExpiresAt().plusDays(config.getGracePeriodDays()));
+            sub.setNotes("Activated via Razorpay payment " + paymentId + " (" + billingCycle + ")");
+            sub.setCreatedBy(authService.getUserId());
+            subscriptionRepo.save(sub);
+
+            refreshService.refreshForSubscriptionChange(schoolId);
+            log.info("Subscription activated school={} plan='{}' cycle={} paymentId={} by={}",
+                    schoolId, plan.getName(), billingCycle, paymentId, authService.getUserId());
+
+            SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
+            List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
+            return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys));
+
+        } catch (RazorpayException e) {
+            log.error("Razorpay signature verification failed school={} order={}", schoolId, orderId, e);
+            return ResponseEntity.status(400).body("Payment signature verification failed.");
+        } catch (Exception e) {
+            log.error("Subscription upgrade verification failed school={}", schoolId, e);
+            return ResponseEntity.internalServerError().body("Payment verification failed: " + e.getMessage());
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
