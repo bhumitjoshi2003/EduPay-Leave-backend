@@ -87,6 +87,17 @@ public class PlanController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * POST /api/super-admin/plans/{planId}/reactivate
+     * Re-enables a previously deactivated plan.
+     */
+    @PostMapping("/plans/{planId}/reactivate")
+    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
+    public PlanResponse reactivatePlan(@PathVariable Long planId) {
+        log.info("POST /api/super-admin/plans/{}/reactivate", planId);
+        return planService.reactivatePlan(planId);
+    }
+
     // ── Plan Features ─────────────────────────────────────────────────────────
 
     /**

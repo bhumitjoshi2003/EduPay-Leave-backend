@@ -86,6 +86,16 @@ public class PlanService {
         log.info("Plan deactivated: id={}", planId);
     }
 
+    @Transactional
+    public PlanResponse reactivatePlan(Long planId) {
+        Plan plan = planRepo.findById(planId)
+                .orElseThrow(() -> new IllegalArgumentException("Plan not found: " + planId));
+        plan.setActive(true);
+        planRepo.save(plan);
+        log.info("Plan reactivated: id={}", planId);
+        return getPlan(planId);
+    }
+
     private void applyRequest(Plan plan, PlanRequest req) {
         if (req.getName() != null)               plan.setName(req.getName());
         if (req.getTier() != null)               plan.setTier(req.getTier().toUpperCase());
