@@ -59,7 +59,7 @@ public class SubscriptionController {
     //  SUPER_ADMIN — Subscription management
     // ══════════════════════════════════════════════════════════════════════════
 
-    /** View a school's full subscription + resolved entitlement state. */
+    /** View a school's full subscription + resolved entitlement state + live usage counts. */
     @PreAuthorize("hasRole('SUPER_ADMIN')")
     @GetMapping("/api/super-admin/schools/{schoolId}/subscription")
     public ResponseEntity<?> getSubscription(@PathVariable Long schoolId) {
@@ -68,7 +68,9 @@ public class SubscriptionController {
 
         SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
         List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
-        return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys));
+        long activeStudents = studentRepo.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
+        long currentStaff   = teacherRepo.countBySchoolId(schoolId) + adminRepo.countBySchoolId(schoolId);
+        return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys, activeStudents, currentStaff));
     }
 
     /**
@@ -98,7 +100,9 @@ public class SubscriptionController {
 
         SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
         List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
-        return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys));
+        long activeStudents = studentRepo.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
+        long currentStaff   = teacherRepo.countBySchoolId(schoolId) + adminRepo.countBySchoolId(schoolId);
+        return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys, activeStudents, currentStaff));
     }
 
     /**
@@ -126,7 +130,9 @@ public class SubscriptionController {
 
         SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
         List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
-        return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys));
+        long activeStudents = studentRepo.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
+        long currentStaff   = teacherRepo.countBySchoolId(schoolId) + adminRepo.countBySchoolId(schoolId);
+        return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys, activeStudents, currentStaff));
     }
 
     /** Manually trigger an entitlement rebuild for a school (super admin utility). */

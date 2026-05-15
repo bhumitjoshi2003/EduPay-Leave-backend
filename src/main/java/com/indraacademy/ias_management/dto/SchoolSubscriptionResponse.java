@@ -35,10 +35,23 @@ public class SchoolSubscriptionResponse {
 
     // Active feature keys
     public List<String> featureKeys;
+    public int totalFeatures;
+
+    // Limit thresholds (copied from entitlement for frontend display)
+    public Integer studentSoftLimitPct;
+    public Integer studentHardLimitPct;
+    public Integer staffSoftLimitPct;
+    public Integer staffHardLimitPct;
+
+    // Live usage counts (queried at request time)
+    public long activeStudents;
+    public long currentStaff;
 
     public static SchoolSubscriptionResponse from(SchoolSubscription sub,
                                                    SchoolEffectiveEntitlement ent,
-                                                   List<String> featureKeys) {
+                                                   List<String> featureKeys,
+                                                   long activeStudents,
+                                                   long currentStaff) {
         SchoolSubscriptionResponse r = new SchoolSubscriptionResponse();
         r.subscriptionId       = sub.getId();
         r.schoolId             = sub.getSchoolId();
@@ -53,19 +66,26 @@ public class SchoolSubscriptionResponse {
         r.notes                = sub.getNotes();
 
         if (ent != null) {
-            r.planName             = ent.getPlanName();
-            r.planTier             = ent.getPlanTier();
-            r.planVersion          = ent.getPlanVersion();
+            r.planName              = ent.getPlanName();
+            r.planTier              = ent.getPlanTier();
+            r.planVersion           = ent.getPlanVersion();
             r.resolvedPriorityScore = ent.getResolvedPriorityScore();
-            r.entitlementSource    = ent.getEntitlementSource();
-            r.maxStudents          = ent.getMaxStudents();
-            r.maxStaff             = ent.getMaxStaff();
-            r.storageGbLimit       = ent.getStorageGbLimit();
-            r.lastRebuiltAt        = ent.getLastRebuiltAt() != null ? ent.getLastRebuiltAt().toString() : null;
-            r.rebuiltBy            = ent.getRebuiltBy();
+            r.entitlementSource     = ent.getEntitlementSource();
+            r.maxStudents           = ent.getMaxStudents();
+            r.maxStaff              = ent.getMaxStaff();
+            r.storageGbLimit        = ent.getStorageGbLimit();
+            r.studentSoftLimitPct   = ent.getStudentSoftLimitPct()  != null ? ent.getStudentSoftLimitPct()  : 90;
+            r.studentHardLimitPct   = ent.getStudentHardLimitPct()  != null ? ent.getStudentHardLimitPct()  : 105;
+            r.staffSoftLimitPct     = ent.getStaffSoftLimitPct()    != null ? ent.getStaffSoftLimitPct()    : 90;
+            r.staffHardLimitPct     = ent.getStaffHardLimitPct()    != null ? ent.getStaffHardLimitPct()    : 105;
+            r.lastRebuiltAt         = ent.getLastRebuiltAt() != null ? ent.getLastRebuiltAt().toString() : null;
+            r.rebuiltBy             = ent.getRebuiltBy();
         }
 
-        r.featureKeys = featureKeys;
+        r.featureKeys    = featureKeys;
+        r.totalFeatures  = featureKeys != null ? featureKeys.size() : 0;
+        r.activeStudents = activeStudents;
+        r.currentStaff   = currentStaff;
         return r;
     }
 }

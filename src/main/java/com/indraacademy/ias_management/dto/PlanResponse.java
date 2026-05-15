@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.indraacademy.ias_management.entity.FeatureCatalog;
 import com.indraacademy.ias_management.entity.Plan;
 
@@ -11,7 +12,9 @@ public class PlanResponse {
     private String name;
     private String tier;
     private String version;
+    @JsonProperty("isPublic")
     private boolean isPublic;
+    @JsonProperty("isActive")
     private boolean isActive;
     private int priorityScore;
 

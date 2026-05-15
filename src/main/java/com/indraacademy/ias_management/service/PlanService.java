@@ -128,7 +128,13 @@ public class PlanService {
         FeatureCatalog catalog = featureCatalogRepo.findById(featureKey)
                 .orElseThrow(() -> new IllegalArgumentException("Feature not found: " + featureKey));
         if (planFeatureRepo.existsByPlanIdAndFeatureKey(planId, featureKey)) {
-            log.info("Feature {} already on plan {} — skipping", featureKey, planId);
+            // Feature is still in plan_features — may have a pending deferred removal; cancel it
+            int cancelled = cancelPendingRemovals(planId, featureKey);
+            if (cancelled > 0) {
+                log.info("Cancelled {} pending removal(s) for feature {} on plan {} (re-add)", cancelled, featureKey, planId);
+            } else {
+                log.info("Feature {} already on plan {} — skipping", featureKey, planId);
+            }
             return;
         }
 
@@ -182,6 +188,13 @@ public class PlanService {
             throw new IllegalArgumentException(
                     "Cannot remove '" + featureKey + "': feature(s) " + dependentKeys +
                     " depend on it. Remove those first.");
+        }
+
+        // Cancel any existing pending removals so the new request is the only one in effect
+        int cancelled = cancelPendingRemovals(planId, featureKey);
+        if (cancelled > 0) {
+            log.info("Cancelled {} prior pending removal(s) for feature {} on plan {} — superseded by new policy '{}'",
+                    cancelled, featureKey, planId, policy);
         }
 
         LocalDateTime effectiveAt = computeEffectiveAt(policy);
@@ -276,6 +289,25 @@ public class PlanService {
                 .toList();
 
         return PlanResponse.from(plan, features, pendingChanges);
+    }
+
+    /**
+     * Marks all unapplied REMOVE changes for a given plan+feature as applied (superseded).
+     * Call this before inserting a new removal or when re-adding a feature, so only the
+     * latest intent is reflected in pendingChanges.
+     *
+     * @return the number of records cancelled
+     */
+    private int cancelPendingRemovals(Long planId, String featureKey) {
+        List<PlanFeatureChange> pending = planFeatureChangeRepo
+                .findByPlanIdAndFeatureKeyAndActionTypeAndApplied(planId, featureKey, "REMOVE", false);
+        for (PlanFeatureChange c : pending) {
+            c.setApplied(true);
+        }
+        if (!pending.isEmpty()) {
+            planFeatureChangeRepo.saveAll(pending);
+        }
+        return pending.size();
     }
 
     /**

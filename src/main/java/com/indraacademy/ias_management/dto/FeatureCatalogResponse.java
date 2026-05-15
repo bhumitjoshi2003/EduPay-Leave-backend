@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.indraacademy.ias_management.entity.FeatureCatalog;
 
 import java.util.Set;
@@ -9,6 +10,7 @@ public class FeatureCatalogResponse {
     private String displayName;
     private String description;
     private String category;
+    @JsonProperty("isAlwaysOn")
     private boolean isAlwaysOn;
     private Set<String> dependsOn;
 

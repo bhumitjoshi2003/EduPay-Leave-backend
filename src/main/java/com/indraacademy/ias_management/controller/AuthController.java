@@ -164,6 +164,19 @@ public class AuthController {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body("Your school account has been deactivated. Please contact Edunexify support.");
             }
+
+            // Block STUDENT and TEACHER login when subscription is EXPIRED.
+            // ADMIN/SUB_ADMIN are allowed through so they can log in and renew.
+            String role = loggedIn.getRole();
+            if (Role.STUDENT.equals(role) || Role.TEACHER.equals(role)) {
+                var ent = entitlementRepo.findById(loggedIn.getSchoolId()).orElse(null);
+                if (ent != null && "EXPIRED".equals(ent.getSubscriptionStatus())) {
+                    log.warn("Login rejected for userId={} ({}): school {} subscription is EXPIRED",
+                            loggedIn.getUserId(), role, loggedIn.getSchoolId());
+                    return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
+                            .body("Your school's subscription has expired. Please contact your school administrator.");
+                }
+            }
         }
 
         // Option B — school-scoped login enforcement.
@@ -223,17 +236,18 @@ public class AuthController {
     }
 
     private ResponseCookie buildCookie(String name, String value, Duration maxAge) {
-        return ResponseCookie.from(name, value)
+        ResponseCookie.ResponseCookieBuilder builder = ResponseCookie.from(name, value)
                 .httpOnly(true)
                 .secure(isSecure)
                 .path("/")
-                // Setting the domain makes the cookie available to all school subdomains
-                // (e.g. indraacademy.edunexify.co.in) in addition to the root domain.
-                // Without this the cookie is host-only and fails on subdomains.
-                .domain(cookieDomain)
                 .sameSite(sameSite)
-                .maxAge(maxAge)
-                .build();
+                .maxAge(maxAge);
+        // Only set Domain when configured — omitting it makes the cookie host-only,
+        // which is required for localhost development (browsers reject Domain=edunexify.co.in on localhost).
+        if (cookieDomain != null && !cookieDomain.isBlank()) {
+            builder.domain(cookieDomain);
+        }
+        return builder.build();
     }
 
     /**
@@ -387,6 +401,21 @@ public class AuthController {
                     response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
                     return ResponseEntity.status(HttpStatus.FORBIDDEN)
                             .body("Your school account has been deactivated. Please contact Edunexify support.");
+                }
+
+                // Block token refresh for STUDENT/TEACHER when subscription is EXPIRED.
+                // ADMIN/SUB_ADMIN are allowed to keep their session so they can renew.
+                String refreshRole = loggedIn.getRole();
+                if (Role.STUDENT.equals(refreshRole) || Role.TEACHER.equals(refreshRole)) {
+                    var ent = entitlementRepo.findById(loggedIn.getSchoolId()).orElse(null);
+                    if (ent != null && "EXPIRED".equals(ent.getSubscriptionStatus())) {
+                        log.warn("Token refresh rejected for userId={} ({}): school {} subscription is EXPIRED",
+                                userId, refreshRole, loggedIn.getSchoolId());
+                        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", "", Duration.ZERO).toString());
+                        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
+                        return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
+                                .body("Your school's subscription has expired. Please contact your school administrator.");
+                    }
                 }
             }
 

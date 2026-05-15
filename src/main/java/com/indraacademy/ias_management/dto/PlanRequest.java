@@ -1,9 +1,12 @@
 package com.indraacademy.ias_management.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public class PlanRequest {
     private String name;
     private String tier;
     private String version;
+    @JsonProperty("isPublic")
     private boolean isPublic = true;
     private Integer maxStudents;
     private Integer studentSoftLimitPct = 90;

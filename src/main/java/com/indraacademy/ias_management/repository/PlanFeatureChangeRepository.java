@@ -13,4 +13,7 @@ public interface PlanFeatureChangeRepository extends JpaRepository<PlanFeatureCh
     /** Used by the scheduler to find pending removals whose effective time has arrived. */
     List<PlanFeatureChange> findByActionTypeAndAppliedFalseAndEffectiveAtBefore(
             String actionType, LocalDateTime now);
+    /** Used to find and cancel existing pending removals when a new removal or re-add overrides them. */
+    List<PlanFeatureChange> findByPlanIdAndFeatureKeyAndActionTypeAndApplied(
+            Long planId, String featureKey, String actionType, boolean applied);
 }
