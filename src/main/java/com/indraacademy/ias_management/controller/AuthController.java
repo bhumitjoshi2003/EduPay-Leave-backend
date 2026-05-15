@@ -396,9 +396,8 @@ public class AuthController {
                 School school = schoolRepository.findById(loggedIn.getSchoolId()).orElse(null);
                 if (school == null || !school.isActive()) {
                     log.warn("Token refresh rejected for userId={}: school {} is inactive", userId, loggedIn.getSchoolId());
-                    // Clear cookies so the client is fully logged out
-                    response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", "", Duration.ZERO).toString());
-                    response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
+                    // Clear all cookies (both domain-scoped and host-only) so the client is fully logged out
+                    clearCookies(response);
                     return ResponseEntity.status(HttpStatus.FORBIDDEN)
                             .body("Your school account has been deactivated. Please contact Edunexify support.");
                 }
@@ -411,8 +410,7 @@ public class AuthController {
                     if (ent != null && "EXPIRED".equals(ent.getSubscriptionStatus())) {
                         log.warn("Token refresh rejected for userId={} ({}): school {} subscription is EXPIRED",
                                 userId, refreshRole, loggedIn.getSchoolId());
-                        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", "", Duration.ZERO).toString());
-                        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
+                        clearCookies(response);
                         return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
                                 .body("Your school's subscription has expired. Please contact your school administrator.");
                     }

@@ -189,7 +189,10 @@ public class SchoolService {
                 sub.setPlanId(plan.getId());
                 sub.setStatus("TRIAL");
                 sub.setTrialStartAt(now);
-                sub.setTrialEndsAt(now.plusDays(config.getDefaultTrialDays()));
+                LocalDateTime trialEnd = req.getTrialEndsAt() != null
+                        ? req.getTrialEndsAt().atStartOfDay()
+                        : now.plusDays(config.getDefaultTrialDays());
+                sub.setTrialEndsAt(trialEnd);
                 sub.setCreatedBy(securityUtil.getUsername());
                 sub.setNotes("Auto-created trial on onboarding by " + securityUtil.getUsername());
                 subscriptionRepository.save(sub);

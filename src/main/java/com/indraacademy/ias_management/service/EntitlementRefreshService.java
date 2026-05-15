@@ -127,18 +127,24 @@ public class EntitlementRefreshService {
                 .map(PlanFeature::getFeatureKey)
                 .collect(Collectors.toSet());
 
-        // Step 3: Apply school DISABLED overrides
-        List<SchoolFeatureOverride> disabledOverrides =
-                overrideRepo.findBySchoolIdAndOverrideState(schoolId, "DISABLED");
-        Set<String> disabledKeys = disabledOverrides.stream()
+        // Step 3: Apply school-level overrides
+        // DISABLED overrides remove a plan feature; ENABLED overrides add a feature beyond the plan.
+        List<SchoolFeatureOverride> allOverrides = overrideRepo.findBySchoolId(schoolId);
+        Set<String> disabledKeys = allOverrides.stream()
+                .filter(o -> "DISABLED".equals(o.getOverrideState()))
+                .map(SchoolFeatureOverride::getFeatureKey)
+                .collect(Collectors.toSet());
+        Set<String> enabledKeys = allOverrides.stream()
+                .filter(o -> "ENABLED".equals(o.getOverrideState()))
                 .map(SchoolFeatureOverride::getFeatureKey)
                 .collect(Collectors.toSet());
 
         Set<String> effectiveKeys = planFeatureKeys.stream()
                 .filter(k -> !disabledKeys.contains(k))
-                .collect(Collectors.toSet());
+                .collect(Collectors.toCollection(java.util.HashSet::new));
+        effectiveKeys.addAll(enabledKeys);  // super admin can grant extras beyond the plan
 
-        // EXPIRED schools lose all features
+        // EXPIRED schools lose all features (overrides included)
         if ("EXPIRED".equals(resolvedStatus)) {
             effectiveKeys = Set.of();
         }

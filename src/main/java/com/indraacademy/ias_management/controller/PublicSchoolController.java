@@ -54,12 +54,14 @@ public class PublicSchoolController {
 
     /**
      * Public unauthenticated endpoint — returns all active, publicly visible plans.
-     * Used by the pricing page at /plans.
+     * Used by the pricing page at edunexify.co.in.
+     * pendingChanges is stripped — internal admin data not needed here.
      */
     @GetMapping("/plans")
     public List<PlanResponse> getPublicPlans() {
         return planService.getAllPlans(false).stream()
                 .filter(PlanResponse::isPublic)
+                .map(PlanResponse::withoutPendingChanges)
                 .toList();
     }
 }

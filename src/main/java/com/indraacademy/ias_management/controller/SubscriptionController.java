@@ -38,7 +38,7 @@ public class SubscriptionController {
     private static final Logger log = LoggerFactory.getLogger(SubscriptionController.class);
 
     private static final Set<String> VALID_STATUSES = Set.of("TRIAL", "ACTIVE", "GRACE", "EXPIRED");
-    private static final Set<String> VALID_OVERRIDE_STATES = Set.of("DEFAULT", "DISABLED");
+    private static final Set<String> VALID_OVERRIDE_STATES = Set.of("DEFAULT", "DISABLED", "ENABLED");
 
     @Autowired private SchoolSubscriptionRepository subscriptionRepo;
     @Autowired private SchoolEffectiveEntitlementRepository entitlementRepo;
@@ -46,6 +46,7 @@ public class SubscriptionController {
     @Autowired private SchoolFeatureOverrideRepository overrideRepo;
     @Autowired private FeatureCatalogRepository featureCatalogRepo;
     @Autowired private PlanRepository planRepo;
+    @Autowired private PlanFeatureRepository planFeatureRepository;
     @Autowired private StudentRepository studentRepo;
     @Autowired private TeacherRepository teacherRepo;
     @Autowired private AdminRepository adminRepo;
@@ -218,11 +219,21 @@ public class SubscriptionController {
             result.put("featureCount",        featureKeys.size());
             result.put("features",            featureKeys);
         } else {
-            result.put("planName",   null);
-            result.put("planTier",   null);
-            result.put("subscriptionStatus", null);
-            result.put("featureCount", featureKeys.size());
-            result.put("features",   featureKeys);
+            result.put("planName",            null);
+            result.put("planTier",            null);
+            result.put("subscriptionStatus",  null);
+            result.put("trialEndsAt",         null);
+            result.put("expiresAt",           null);
+            result.put("graceEndsAt",         null);
+            result.put("maxStudents",         null);
+            result.put("studentSoftLimitPct", null);
+            result.put("studentHardLimitPct", null);
+            result.put("maxStaff",            null);
+            result.put("staffSoftLimitPct",   null);
+            result.put("staffHardLimitPct",   null);
+            result.put("storageGbLimit",      null);
+            result.put("featureCount",        featureKeys.size());
+            result.put("features",            featureKeys);
         }
         result.put("activeStudents", activeStudents);
         result.put("totalStaff",     teachers + admins);
@@ -272,6 +283,97 @@ public class SubscriptionController {
         refreshService.refreshForOverrideChange(schoolId);
         log.info("Feature override: school={} feature={} state={} by={}", schoolId, featureKey,
                 req.getOverrideState(), adminId);
+
+        return ResponseEntity.ok(Map.of(
+                "featureKey",    featureKey,
+                "overrideState", req.getOverrideState(),
+                "effectivelyOn", entitlementService.hasFeature(schoolId, featureKey)));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  SUPER_ADMIN — Per-school feature overrides
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * List all features with their current override state for a specific school.
+     * Returns both plan-granted features and manually enabled extras.
+     */
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @GetMapping("/api/super-admin/schools/{schoolId}/features")
+    public ResponseEntity<?> listSchoolFeatures(@PathVariable Long schoolId) {
+        List<FeatureCatalog> catalog = featureCatalogRepo.findAll().stream()
+                .filter(f -> !f.isAlwaysOn())
+                .sorted((a, b) -> {
+                    int cat = a.getCategory().compareTo(b.getCategory());
+                    return cat != 0 ? cat : a.getDisplayName().compareTo(b.getDisplayName());
+                })
+                .toList();
+
+        List<SchoolFeatureOverride> overrides = overrideRepo.findBySchoolId(schoolId);
+        Map<String, String> overrideMap = new LinkedHashMap<>();
+        for (SchoolFeatureOverride o : overrides) {
+            overrideMap.put(o.getFeatureKey(), o.getOverrideState());
+        }
+
+        // Features the school's current plan grants (independent of overrides)
+        SchoolSubscription sub = subscriptionRepo.findBySchoolId(schoolId).orElse(null);
+        java.util.Set<String> planFeatureKeys = sub != null
+                ? planFeatureRepository.findByPlanId(sub.getPlanId()).stream()
+                    .map(com.indraacademy.ias_management.entity.PlanFeature::getFeatureKey)
+                    .collect(java.util.stream.Collectors.toSet())
+                : java.util.Set.of();
+
+        List<Map<String, Object>> result = catalog.stream().map(f -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            String state = overrideMap.getOrDefault(f.getFeatureKey(), "DEFAULT");
+            boolean planGranted = planFeatureKeys.contains(f.getFeatureKey());
+            item.put("featureKey",    f.getFeatureKey());
+            item.put("displayName",   f.getDisplayName());
+            item.put("category",      f.getCategory());
+            item.put("planGranted",   planGranted);
+            item.put("overrideState", state);
+            item.put("effectivelyOn", entitlementService.hasFeature(schoolId, f.getFeatureKey()));
+            return item;
+        }).toList();
+
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Set a feature override for a specific school (super admin only).
+     * DEFAULT  — remove override (revert to plan default)
+     * DISABLED — disable even if plan grants it
+     * ENABLED  — enable even if plan does not grant it
+     */
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @PutMapping("/api/super-admin/schools/{schoolId}/features/{featureKey}/override")
+    public ResponseEntity<?> setSuperAdminFeatureOverride(@PathVariable Long schoolId,
+                                                          @PathVariable String featureKey,
+                                                          @RequestBody SchoolFeatureOverrideRequest req) {
+        if (!VALID_OVERRIDE_STATES.contains(req.getOverrideState())) {
+            return ResponseEntity.badRequest().body("overrideState must be DEFAULT, DISABLED, or ENABLED.");
+        }
+        if (!featureCatalogRepo.existsById(featureKey)) {
+            return ResponseEntity.badRequest().body("Feature not found: " + featureKey);
+        }
+
+        if ("DEFAULT".equals(req.getOverrideState())) {
+            // Remove any existing override
+            overrideRepo.findBySchoolIdAndFeatureKey(schoolId, featureKey)
+                    .ifPresent(overrideRepo::delete);
+        } else {
+            SchoolFeatureOverride override = overrideRepo.findBySchoolIdAndFeatureKey(schoolId, featureKey)
+                    .orElse(new SchoolFeatureOverride());
+            override.setSchoolId(schoolId);
+            override.setFeatureKey(featureKey);
+            override.setOverrideState(req.getOverrideState());
+            override.setUpdatedBy(authService.getUserId());
+            overrideRepo.save(override);
+        }
+
+        refreshService.refreshForOverrideChange(schoolId);
+        log.info("Super admin feature override: school={} feature={} state={} by={}",
+                schoolId, featureKey, req.getOverrideState(), authService.getUserId());
 
         return ResponseEntity.ok(Map.of(
                 "featureKey",    featureKey,
@@ -367,7 +469,9 @@ public class SubscriptionController {
 
             SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
             List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
-            return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys));
+            long activeStudents = studentRepo.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
+            long currentStaff   = teacherRepo.countBySchoolId(schoolId) + adminRepo.countBySchoolId(schoolId);
+            return ResponseEntity.ok(SchoolSubscriptionResponse.from(sub, ent, featureKeys, activeStudents, currentStaff));
 
         } catch (RazorpayException e) {
             log.error("Razorpay signature verification failed school={} order={}", schoolId, orderId, e);

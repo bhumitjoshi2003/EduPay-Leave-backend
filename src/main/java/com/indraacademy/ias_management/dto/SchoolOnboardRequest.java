@@ -32,6 +32,9 @@ public class SchoolOnboardRequest {
     /** Optional: if set, a TRIAL subscription is auto-created using this plan + global defaultTrialDays. */
     private Long trialPlanId;
 
+    /** Optional: custom trial end date. If null, falls back to now + globalConfig.defaultTrialDays. */
+    private LocalDate trialEndsAt;
+
     // First ADMIN user
     private String adminUserId;
     private String adminEmail;
@@ -112,4 +115,7 @@ public class SchoolOnboardRequest {
 
     public Long getTrialPlanId() { return trialPlanId; }
     public void setTrialPlanId(Long trialPlanId) { this.trialPlanId = trialPlanId; }
+
+    public LocalDate getTrialEndsAt() { return trialEndsAt; }
+    public void setTrialEndsAt(LocalDate trialEndsAt) { this.trialEndsAt = trialEndsAt; }
 }

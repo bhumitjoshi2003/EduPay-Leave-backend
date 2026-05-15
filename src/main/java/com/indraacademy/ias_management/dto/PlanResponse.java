@@ -72,6 +72,33 @@ public class PlanResponse {
         return r;
     }
 
+    /** Returns a copy of this response with pendingChanges cleared — used for public endpoints. */
+    public PlanResponse withoutPendingChanges() {
+        PlanResponse copy = new PlanResponse();
+        copy.id                  = this.id;
+        copy.name                = this.name;
+        copy.tier                = this.tier;
+        copy.version             = this.version;
+        copy.isPublic            = this.isPublic;
+        copy.isActive            = this.isActive;
+        copy.priorityScore       = this.priorityScore;
+        copy.maxStudents         = this.maxStudents;
+        copy.studentSoftLimitPct = this.studentSoftLimitPct;
+        copy.studentHardLimitPct = this.studentHardLimitPct;
+        copy.maxStaff            = this.maxStaff;
+        copy.staffSoftLimitPct   = this.staffSoftLimitPct;
+        copy.staffHardLimitPct   = this.staffHardLimitPct;
+        copy.storageGbLimit      = this.storageGbLimit;
+        copy.storageSoftLimitPct = this.storageSoftLimitPct;
+        copy.storageHardLimitPct = this.storageHardLimitPct;
+        copy.monthlyPricePaise   = this.monthlyPricePaise;
+        copy.annualPricePaise    = this.annualPricePaise;
+        copy.currency            = this.currency;
+        copy.features            = this.features;
+        copy.pendingChanges      = List.of();  // strip internal data
+        return copy;
+    }
+
     public Long getId() { return id; }
     public String getName() { return name; }
     public String getTier() { return tier; }
