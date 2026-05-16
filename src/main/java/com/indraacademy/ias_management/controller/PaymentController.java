@@ -34,6 +34,7 @@ public class PaymentController {
     @Autowired private AuthService authService;
 
     @PostMapping("/create")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
     public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, Object> requestBody) {
         @SuppressWarnings("unchecked")
         Map<String, Object> paymentData = (Map<String, Object>) requestBody.get("paymentData");
@@ -78,6 +79,7 @@ public class PaymentController {
     }
 
     @PostMapping("/verify")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
     public ResponseEntity<Map<String, Object>> verifyPayment(@RequestBody Map<String, Object> requestBody) {
         log.info("Request to verify payment.");
         try {

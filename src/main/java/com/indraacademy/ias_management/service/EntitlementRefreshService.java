@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -42,6 +43,12 @@ public class EntitlementRefreshService {
     @Autowired private PlanRepository planRepo;
     @Autowired private PlanFeatureRepository planFeatureRepo;
     @Autowired private GlobalSubscriptionConfigRepository configRepo;
+    @Autowired private SchoolRepository schoolRepo;
+    @Autowired private AdminRepository adminRepo;
+    @Autowired private EmailService emailService;
+    @Autowired private SchoolSubscriptionHistoryRepository historyRepo;
+
+    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd MMMM yyyy");
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -114,11 +121,24 @@ public class EntitlementRefreshService {
         }
 
         // Step 1: Resolve subscription status from timestamps
+        String previousStatus = sub.getStatus();
         String resolvedStatus = resolveStatus(sub);
-        if (!resolvedStatus.equals(sub.getStatus())) {
+        if (!resolvedStatus.equals(previousStatus)) {
             sub.setStatus(resolvedStatus);
             subscriptionRepo.save(sub);
-            log.info("School {} subscription status transitioned to {}", schoolId, resolvedStatus);
+            log.info("School {} subscription status transitioned {} → {}", schoolId, previousStatus, resolvedStatus);
+            // Log history event for automatic status transitions
+            try {
+                historyRepo.save(new SchoolSubscriptionHistory(
+                        schoolId, "STATUS_CHANGED", sub.getPlanId(), plan.getName(),
+                        resolvedStatus, previousStatus + " → " + resolvedStatus, "SCHEDULER"));
+            } catch (Exception e) {
+                log.warn("Failed to save STATUS_CHANGED history for schoolId={}: {}", schoolId, e.getMessage());
+            }
+            // Notify admin when entering GRACE period
+            if ("GRACE".equals(resolvedStatus)) {
+                sendGracePeriodEntryEmail(schoolId, plan.getName(), sub.getGraceEndsAt());
+            }
         }
 
         // Step 2: Load plan features
@@ -185,6 +205,114 @@ public class EntitlementRefreshService {
 
         log.info("Entitlement rebuilt for schoolId={} plan='{}' status={} features={} trigger={}",
                 schoolId, plan.getName(), resolvedStatus, effectiveKeys.size(), triggeredBy);
+    }
+
+    // ── Grace period email notification ──────────────────────────────────────
+
+    private void sendGracePeriodEntryEmail(Long schoolId, String planName, LocalDateTime graceEndsAt) {
+        try {
+            School school = schoolRepo.findById(schoolId).orElse(null);
+            if (school == null) return;
+
+            String recipientEmail = school.getEmail();
+            if (recipientEmail == null || recipientEmail.isBlank()) {
+                List<Admin> admins = adminRepo.findBySchoolId(schoolId);
+                if (!admins.isEmpty()) recipientEmail = admins.get(0).getEmail();
+            }
+            if (recipientEmail == null || recipientEmail.isBlank()) {
+                log.warn("No admin email for school {} — skipping grace period notification", schoolId);
+                return;
+            }
+
+            String graceStr = graceEndsAt != null ? graceEndsAt.format(DATE_FMT) : "soon";
+            String subject = "Action Required: Your Edunexify subscription has expired — " + school.getName();
+            String html = buildGracePeriodHtml(school.getName(), planName, graceStr);
+            emailService.sendHtmlEmail(recipientEmail, subject, html);
+            log.info("Sent grace period entry email to {} for school '{}'", recipientEmail, school.getName());
+        } catch (Exception e) {
+            log.error("Failed to send grace period email for schoolId={}: {}", schoolId, e.getMessage());
+        }
+    }
+
+    private String buildGracePeriodHtml(String schoolName, String planName, String graceEndsStr) {
+        String safe = (schoolName != null && !schoolName.isBlank()) ? schoolName : "School";
+        String plan = (planName  != null && !planName.isBlank())  ? planName  : "your plan";
+        int year = LocalDateTime.now().getYear();
+        return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                  <meta charset="UTF-8">
+                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                  <title>Subscription Expired — Grace Period Active</title>
+                </head>
+                <body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
+                  <table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:32px 16px;">
+                    <tr><td align="center">
+                      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
+
+                        <!-- Header -->
+                        <tr>
+                          <td align="center" style="background-color:#7f1d1d;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
+                            <p style="margin:0 0 10px;font-size:44px;line-height:1;">&#128680;</p>
+                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">%s</h1>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center" style="background-color:#dc2626;padding:10px 40px;">
+                            <p style="margin:0;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
+                              Subscription Expired — Grace Period Active
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Body -->
+                        <tr>
+                          <td style="background-color:#ffffff;padding:36px 40px;">
+                            <p style="margin:0 0 20px;font-size:16px;color:#111827;">Dear Administrator,</p>
+                            <p style="margin:0 0 28px;font-size:14px;color:#6b7280;line-height:1.8;">
+                              Your Edunexify <strong style="color:#111827;">%s</strong> subscription for
+                              <strong style="color:#111827;">%s</strong> has expired. You are now in a
+                              <strong style="color:#dc2626;">grace period</strong> that ends on
+                              <strong style="color:#dc2626;">%s</strong>.
+                            </p>
+
+                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+                              <tr>
+                                <td style="background-color:#fef2f2;border:2px solid #fca5a5;border-radius:12px;padding:20px 24px;">
+                                  <p style="margin:0 0 10px;font-size:11px;font-weight:700;color:#dc2626;letter-spacing:1.5px;text-transform:uppercase;">Important Notice</p>
+                                  <p style="margin:0;font-size:13px;color:#7f1d1d;line-height:1.7;">
+                                    During the grace period, your school still has access to all features.
+                                    After <strong>%s</strong>, access will be suspended until the subscription is renewed.
+                                    Please renew immediately to avoid service interruption.
+                                  </p>
+                                </td>
+                              </tr>
+                            </table>
+
+                            <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
+                            <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
+                              With regards,<br>
+                              <strong>The Edunexify Team</strong><br>
+                              <span style="font-size:12px;color:#9ca3af;">Platform Administration</span>
+                            </p>
+                          </td>
+                        </tr>
+
+                        <!-- Footer -->
+                        <tr>
+                          <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
+                            <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Edunexify. All rights reserved.</p>
+                          </td>
+                        </tr>
+
+                      </table>
+                    </td></tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(safe, plan, safe, graceEndsStr, graceEndsStr, year);
     }
 
     // ── Status resolution ─────────────────────────────────────────────────────

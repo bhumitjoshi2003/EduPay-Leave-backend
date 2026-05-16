@@ -282,6 +282,7 @@ public class AuthController {
             body.put("planTier",            null);
             body.put("planVersion",         null);
             body.put("subscriptionStatus",  null);
+            body.put("trialEndsAt",         null);
             body.put("expiresAt",           null);
             body.put("graceEndsAt",         null);
             return;
@@ -293,6 +294,7 @@ public class AuthController {
                 body.put("planTier",            null);
                 body.put("planVersion",         null);
                 body.put("subscriptionStatus",  null);
+                body.put("trialEndsAt",         null);
                 body.put("expiresAt",           null);
                 body.put("graceEndsAt",         null);
             } else {
@@ -300,6 +302,7 @@ public class AuthController {
                 body.put("planTier",            ent.getPlanTier());
                 body.put("planVersion",         ent.getPlanVersion());
                 body.put("subscriptionStatus",  ent.getSubscriptionStatus());
+                body.put("trialEndsAt",         ent.getTrialEndsAt() != null ? ent.getTrialEndsAt().toString() : null);
                 body.put("expiresAt",           ent.getExpiresAt() != null ? ent.getExpiresAt().toString() : null);
                 body.put("graceEndsAt",         ent.getGraceEndsAt() != null ? ent.getGraceEndsAt().toString() : null);
             }
@@ -309,6 +312,7 @@ public class AuthController {
             body.put("planTier",            null);
             body.put("planVersion",         null);
             body.put("subscriptionStatus",  null);
+            body.put("trialEndsAt",         null);
             body.put("expiresAt",           null);
             body.put("graceEndsAt",         null);
         }

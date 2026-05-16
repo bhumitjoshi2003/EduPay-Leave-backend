@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.dto.SchoolFeatureOverrideRequest;
 import com.indraacademy.ias_management.dto.SchoolSubscriptionRequest;
 import com.indraacademy.ias_management.dto.SchoolSubscriptionResponse;
 import com.indraacademy.ias_management.entity.*;
+import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.EntitlementRefreshService;
@@ -25,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.springframework.data.domain.PageRequest;
 
 /**
  * Endpoints for subscription management and school-level feature overrides.
@@ -51,6 +53,8 @@ public class SubscriptionController {
     @Autowired private TeacherRepository teacherRepo;
     @Autowired private AdminRepository adminRepo;
     @Autowired private GlobalSubscriptionConfigRepository globalConfigRepo;
+    @Autowired private SchoolRepository schoolRepo;
+    @Autowired private SchoolSubscriptionHistoryRepository historyRepo;
     @Autowired private EntitlementRefreshService refreshService;
     @Autowired private EntitlementService entitlementService;
     @Autowired private AuthService authService;
@@ -96,8 +100,12 @@ public class SubscriptionController {
         sub = subscriptionRepo.save(sub);
 
         refreshService.refreshForSubscriptionChange(schoolId);
+        syncLegacyPlanField(schoolId, sub.getPlanId());
         log.info("Subscription assigned: school={} plan={} status={} by={}",
                 schoolId, sub.getPlanId(), sub.getStatus(), authService.getUserId());
+        logHistory(schoolId, "PLAN_ASSIGNED", sub.getPlanId(),
+                planRepo.findById(sub.getPlanId()).map(p -> p.getName()).orElse("Unknown"),
+                sub.getStatus(), sub.getNotes(), authService.getUserId());
 
         SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
         List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
@@ -126,8 +134,12 @@ public class SubscriptionController {
         sub = subscriptionRepo.save(sub);
 
         refreshService.refreshForSubscriptionChange(schoolId);
+        syncLegacyPlanField(schoolId, sub.getPlanId());
         log.info("Subscription updated: school={} plan={} status={} by={}",
                 schoolId, sub.getPlanId(), sub.getStatus(), authService.getUserId());
+        logHistory(schoolId, "PLAN_UPDATED", sub.getPlanId(),
+                planRepo.findById(sub.getPlanId()).map(p -> p.getName()).orElse("Unknown"),
+                sub.getStatus(), sub.getNotes(), authService.getUserId());
 
         SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
         List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
@@ -171,13 +183,20 @@ public class SubscriptionController {
             overrideMap.put(o.getFeatureKey(), o.getOverrideState());
         }
 
+        // Features the school's current plan actually grants (before overrides)
+        SchoolSubscription sub = subscriptionRepo.findBySchoolId(schoolId).orElse(null);
+        java.util.Set<String> planFeatureKeys = sub != null
+                ? planFeatureRepository.findByPlanId(sub.getPlanId()).stream()
+                    .map(com.indraacademy.ias_management.entity.PlanFeature::getFeatureKey)
+                    .collect(java.util.stream.Collectors.toSet())
+                : java.util.Set.of();
+
         List<Map<String, Object>> result = catalog.stream().map(f -> {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("featureKey",    f.getFeatureKey());
             item.put("displayName",   f.getDisplayName());
             item.put("category",      f.getCategory());
-            item.put("planGranted",   entitlementService.hasFeature(schoolId, f.getFeatureKey())
-                                      || "DISABLED".equals(overrideMap.get(f.getFeatureKey())));
+            item.put("planGranted",   planFeatureKeys.contains(f.getFeatureKey()));
             item.put("overrideState", overrideMap.getOrDefault(f.getFeatureKey(), "DEFAULT"));
             item.put("effectivelyOn", entitlementService.hasFeature(schoolId, f.getFeatureKey()));
             return item;
@@ -254,22 +273,16 @@ public class SubscriptionController {
         Long schoolId = SchoolContext.get();
         String adminId = authService.getUserId();
 
+        // Admins can only set DEFAULT or DISABLED — only super admins can ENABLE features
+        if ("ENABLED".equals(req.getOverrideState())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Admins cannot enable features not included in their plan. Contact support.");
+        }
         if (!VALID_OVERRIDE_STATES.contains(req.getOverrideState())) {
             return ResponseEntity.badRequest().body("overrideState must be DEFAULT or DISABLED.");
         }
         if (!featureCatalogRepo.existsById(featureKey)) {
             return ResponseEntity.badRequest().body("Feature not found: " + featureKey);
-        }
-
-        // Admins can only DISABLE features that their plan grants
-        if ("DISABLED".equals(req.getOverrideState())) {
-            boolean planGranted = entitlementService.hasFeature(schoolId, featureKey)
-                    || overrideRepo.findBySchoolIdAndFeatureKey(schoolId, featureKey)
-                    .map(o -> "DISABLED".equals(o.getOverrideState())).orElse(false);
-            // Re-check against entitlement (before the override is applied, feature is in entitlement table)
-            // Actually we need to check if plan itself has this feature
-            // We check entitlement BEFORE override was applied:
-            // If it's already DISABLED the feature won't be in entitlement — check subscription plan features
         }
 
         SchoolFeatureOverride override = overrideRepo.findBySchoolIdAndFeatureKey(schoolId, featureKey)
@@ -464,8 +477,11 @@ public class SubscriptionController {
             subscriptionRepo.save(sub);
 
             refreshService.refreshForSubscriptionChange(schoolId);
+            syncLegacyPlanField(schoolId, planId);
             log.info("Subscription activated school={} plan='{}' cycle={} paymentId={} by={}",
                     schoolId, plan.getName(), billingCycle, paymentId, authService.getUserId());
+            logHistory(schoolId, "PAYMENT_SUCCESS", planId, plan.getName(), "ACTIVE",
+                    "Razorpay payment " + paymentId + " (" + billingCycle + ")", authService.getUserId());
 
             SchoolEffectiveEntitlement ent = entitlementRepo.findById(schoolId).orElse(null);
             List<String> featureKeys = entitlementService.getEffectiveFeatureKeys(schoolId);
@@ -482,7 +498,108 @@ public class SubscriptionController {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    //  ADMIN — Subscription history (own school)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /** Returns the last 20 subscription lifecycle events for the requesting school. */
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUB_ADMIN')")
+    @GetMapping("/api/school/subscription/history")
+    public ResponseEntity<?> getSubscriptionHistory() {
+        Long schoolId = SchoolContext.get();
+        List<SchoolSubscriptionHistory> history =
+                historyRepo.findBySchoolIdOrderByOccurredAtDesc(schoolId, PageRequest.of(0, 20));
+        return ResponseEntity.ok(history);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  SUPER_ADMIN — Subscription health overview
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Returns a summary of every school's current subscription status.
+     * Sorted: EXPIRED → GRACE → TRIAL → ACTIVE → no-entitlement.
+     */
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
+    @GetMapping("/api/super-admin/subscription-health")
+    public ResponseEntity<?> getSubscriptionHealth() {
+        List<SchoolEffectiveEntitlement> entitlements = entitlementRepo.findAll();
+        Map<Long, School> schoolMap = new java.util.HashMap<>();
+        schoolRepo.findAll().forEach(s -> schoolMap.put(s.getId(), s));
+
+        int[] order = {0}; // status sort order helper
+        java.util.function.Function<String, Integer> sortKey = status -> switch (status == null ? "" : status) {
+            case "EXPIRED" -> 0;
+            case "GRACE"   -> 1;
+            case "TRIAL"   -> 2;
+            case "ACTIVE"  -> 3;
+            default        -> 4;
+        };
+
+        List<Map<String, Object>> result = entitlements.stream()
+                .sorted(java.util.Comparator.comparingInt(e -> sortKey.apply(e.getSubscriptionStatus())))
+                .map(ent -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    School school = schoolMap.get(ent.getSchoolId());
+                    item.put("schoolId",           ent.getSchoolId());
+                    item.put("schoolName",          school != null ? school.getName() : "Unknown");
+                    item.put("isActive",            school != null && school.isActive());
+                    item.put("subscriptionStatus",  ent.getSubscriptionStatus());
+                    item.put("planName",            ent.getPlanName());
+                    item.put("planTier",            ent.getPlanTier());
+                    item.put("trialEndsAt",         ent.getTrialEndsAt());
+                    item.put("expiresAt",           ent.getExpiresAt());
+                    item.put("graceEndsAt",         ent.getGraceEndsAt());
+                    item.put("maxStudents",         ent.getMaxStudents());
+                    item.put("lastRebuiltAt",       ent.getLastRebuiltAt());
+                    return item;
+                })
+                .toList();
+
+        return ResponseEntity.ok(result);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /**
+     * Updates the legacy School.plan enum to reflect the current active subscription plan.
+     * Used to keep the settings endpoint in sync with the entitlement system.
+     */
+    private void syncLegacyPlanField(Long schoolId, Long planId) {
+        if (planId == null) return;
+        try {
+            Plan plan = planRepo.findById(planId).orElse(null);
+            if (plan == null) return;
+            School school = schoolRepo.findById(schoolId).orElse(null);
+            if (school == null) return;
+            school.setPlan(mapToLegacyPlan(plan.getTier(), plan.getName()));
+            schoolRepo.save(school);
+        } catch (Exception e) {
+            log.warn("Failed to sync legacy plan field for school={}: {}", schoolId, e.getMessage());
+        }
+    }
+
+    private SubscriptionPlan mapToLegacyPlan(String tier, String planName) {
+        // Try tier first, then plan name — case-insensitive match against enum values
+        for (SubscriptionPlan lp : SubscriptionPlan.values()) {
+            if (lp.name().equalsIgnoreCase(tier)) return lp;
+        }
+        for (SubscriptionPlan lp : SubscriptionPlan.values()) {
+            if (lp.name().equalsIgnoreCase(planName)) return lp;
+        }
+        // Any named paid plan that doesn't match the old enum → ENTERPRISE
+        return SubscriptionPlan.ENTERPRISE;
+    }
+
+    private void logHistory(Long schoolId, String eventType, Long planId, String planName,
+                             String status, String notes, String performedBy) {
+        try {
+            historyRepo.save(new SchoolSubscriptionHistory(
+                    schoolId, eventType, planId, planName, status, notes, performedBy));
+        } catch (Exception e) {
+            log.warn("Failed to save subscription history schoolId={} event={}: {}", schoolId, eventType, e.getMessage());
+        }
+    }
 
     private void applyRequest(SchoolSubscription sub, SchoolSubscriptionRequest req, String callerUserId) {
         if (req.getPlanId()  != null) sub.setPlanId(req.getPlanId());

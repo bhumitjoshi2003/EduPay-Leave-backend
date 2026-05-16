@@ -134,16 +134,12 @@ public class TeacherController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping("/{teacherId}/photo")
     public ResponseEntity<?> uploadTeacherPhoto(@PathVariable String teacherId,
                                                 @RequestParam("file") MultipartFile file) {
         String currentUserId = authService.getUserId();
         String currentRole   = authService.getRole();
-
-        if (Role.TEACHER.equals(currentRole) && !teacherId.equals(currentUserId)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Teachers can only upload their own photo.");
-        }
 
         log.info("Photo upload for teacher {} by {} ({})", teacherId, currentUserId, currentRole);
 

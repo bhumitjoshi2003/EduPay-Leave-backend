@@ -16,20 +16,24 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /**
- * Daily scheduler that sends email warnings to school admins before their
- * subscription (trial or paid) expires.
+ * Daily scheduler that sends multi-stage email warnings to school admins before
+ * their subscription (trial or paid) expires.
  *
- * Fires at 09:00 every day. Looks for subscriptions whose expiry falls within
- * the next [expiryNotifyDays] days (configurable via GlobalSubscriptionConfig).
+ * Fires at 09:00 every day. Sends at milestone thresholds: 14, 7, 3, and 1 day(s)
+ * before expiry — each with progressively more urgent messaging.
  */
 @Service
 public class SubscriptionExpiryNotificationScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(SubscriptionExpiryNotificationScheduler.class);
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+
+    /** Days-before-expiry at which a reminder email is sent. Ordered most → least. */
+    private static final int[] NOTIFY_MILESTONES = { 14, 7, 3, 1 };
 
     @Autowired private SchoolSubscriptionRepository subscriptionRepo;
     @Autowired private SchoolRepository schoolRepo;
@@ -41,63 +45,72 @@ public class SubscriptionExpiryNotificationScheduler {
     public void sendExpiryNotifications() {
         log.info("Starting scheduled job: sendExpiryNotifications at {}", LocalDateTime.now());
 
-        GlobalSubscriptionConfig config = configRepo.findById(1).orElse(new GlobalSubscriptionConfig());
-        int notifyDays = config.getExpiryNotifyDays();
-
         LocalDateTime now = LocalDateTime.now();
-        LocalDateTime window = now.plusDays(notifyDays);
+        // Load all TRIAL/ACTIVE subs expiring within the furthest milestone window (14 days)
+        LocalDateTime window = now.plusDays(NOTIFY_MILESTONES[0]);
+        List<SchoolSubscription> candidates = subscriptionRepo.findExpiringSoon(now, window);
 
-        List<SchoolSubscription> expiring = subscriptionRepo.findExpiringSoon(now, window);
-        if (expiring.isEmpty()) {
-            log.info("No subscriptions expiring within {} day(s). Nothing to notify.", notifyDays);
+        if (candidates.isEmpty()) {
+            log.info("No subscriptions expiring within {} day(s). Nothing to notify.", NOTIFY_MILESTONES[0]);
             return;
         }
-        log.info("Found {} subscription(s) expiring within {} day(s).", expiring.size(), notifyDays);
+        log.info("Found {} candidate subscription(s) within {} days.", candidates.size(), NOTIFY_MILESTONES[0]);
 
-        for (SchoolSubscription sub : expiring) {
+        int sent = 0;
+        for (SchoolSubscription sub : candidates) {
             try {
                 Long schoolId = sub.getSchoolId();
-                School school = schoolRepo.findById(schoolId).orElse(null);
-                if (school == null) {
-                    log.warn("School not found for subscription schoolId={}", schoolId);
-                    continue;
-                }
-
-                // Determine expiry date and label
                 LocalDateTime expiryDt = "TRIAL".equals(sub.getStatus()) ? sub.getTrialEndsAt() : sub.getExpiresAt();
                 if (expiryDt == null) continue;
 
-                String expiryStr = expiryDt.format(DATE_FMT);
-                boolean isTrial  = "TRIAL".equals(sub.getStatus());
+                long daysLeft = ChronoUnit.DAYS.between(now.toLocalDate(), expiryDt.toLocalDate());
 
-                // Find admin email — prefer school entity email, fall back to first admin record
-                String recipientEmail = school.getEmail();
-                if (recipientEmail == null || recipientEmail.isBlank()) {
-                    List<Admin> admins = adminRepo.findBySchoolId(schoolId);
-                    if (!admins.isEmpty()) {
-                        recipientEmail = admins.get(0).getEmail();
-                    }
+                // Only send if today is exactly a milestone day
+                boolean isMilestone = false;
+                for (int milestone : NOTIFY_MILESTONES) {
+                    if (daysLeft == milestone) { isMilestone = true; break; }
                 }
+                if (!isMilestone) continue;
 
-                if (recipientEmail == null || recipientEmail.isBlank()) {
-                    log.warn("No admin email found for school '{}' (id={}). Skipping notification.", school.getName(), schoolId);
+                School school = schoolRepo.findById(schoolId).orElse(null);
+                if (school == null) {
+                    log.warn("School not found for schoolId={}", schoolId);
                     continue;
                 }
 
-                String subject = isTrial
-                        ? "Your Edunexify trial ends on " + expiryStr + " — " + school.getName()
-                        : "Your Edunexify subscription expires on " + expiryStr + " — " + school.getName();
+                String recipientEmail = school.getEmail();
+                if (recipientEmail == null || recipientEmail.isBlank()) {
+                    List<Admin> admins = adminRepo.findBySchoolId(schoolId);
+                    if (!admins.isEmpty()) recipientEmail = admins.get(0).getEmail();
+                }
+                if (recipientEmail == null || recipientEmail.isBlank()) {
+                    log.warn("No admin email for school '{}' (id={}). Skipping.", school.getName(), schoolId);
+                    continue;
+                }
 
-                String htmlBody = buildExpiryHtml(school.getName(), expiryStr, isTrial, notifyDays);
+                boolean isTrial = "TRIAL".equals(sub.getStatus());
+                String expiryStr = expiryDt.format(DATE_FMT);
+
+                String subject = buildSubject(school.getName(), expiryStr, isTrial, (int) daysLeft);
+                String htmlBody = buildExpiryHtml(school.getName(), expiryStr, isTrial, (int) daysLeft);
                 emailService.sendHtmlEmail(recipientEmail, subject, htmlBody);
-                log.info("Sent expiry notification to {} for school '{}' (expires {})", recipientEmail, school.getName(), expiryStr);
+                log.info("Sent {}-day expiry reminder to {} for school '{}' (expires {})",
+                        daysLeft, recipientEmail, school.getName(), expiryStr);
+                sent++;
 
             } catch (Exception e) {
                 log.error("Failed to send expiry notification for schoolId={}", sub.getSchoolId(), e);
             }
         }
 
-        log.info("Finished scheduled job: sendExpiryNotifications");
+        log.info("Finished sendExpiryNotifications: {} email(s) sent.", sent);
+    }
+
+    private String buildSubject(String schoolName, String expiryStr, boolean isTrial, int daysLeft) {
+        String urgency = daysLeft <= 1 ? "⚠️ Final Warning: " : daysLeft <= 3 ? "Urgent: " : "";
+        String typeLabel = isTrial ? "trial" : "subscription";
+        return urgency + "Your Edunexify " + typeLabel + " expires in " + daysLeft
+               + " day" + (daysLeft == 1 ? "" : "s") + " — " + schoolName;
     }
 
     private String buildExpiryHtml(String schoolName, String expiryStr, boolean isTrial, int notifyDays) {

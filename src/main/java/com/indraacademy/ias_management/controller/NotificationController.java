@@ -50,6 +50,7 @@ public class NotificationController {
     }
 
     @GetMapping("/user")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Page<UserNotificationDTO>> getUserNotifications(Pageable pageable) {
         String userId = authService.getUserId();
         String userRole = authService.getRole();
@@ -85,6 +86,7 @@ public class NotificationController {
     }
 
     @GetMapping("/user/unread/count")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Long> getUnreadNotificationCount() {
         String userId = authService.getUserId();
         String userRole = authService.getRole();
@@ -94,6 +96,7 @@ public class NotificationController {
     }
 
     @PutMapping("/user/read-all")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> markAllNotificationsAsRead() {
         String userId = authService.getUserId();
         log.info("Marking all notifications as read for user ID {}", userId);

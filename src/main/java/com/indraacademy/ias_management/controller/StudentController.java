@@ -171,14 +171,6 @@ public class StudentController {
         String currentUserId = authService.getUserId();
         String currentRole   = authService.getRole();
 
-        // STUDENT can only upload their own photo
-        if (Role.TEACHER.equals(currentRole)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Teachers cannot upload student photos.");
-        }
-        if (Role.STUDENT.equals(currentRole) && !studentId.equals(currentUserId)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Students can only upload their own photo.");
-        }
-
         log.info("Photo upload for student {} by {} ({})", studentId, currentUserId, currentRole);
 
         if (file.isEmpty()) {
