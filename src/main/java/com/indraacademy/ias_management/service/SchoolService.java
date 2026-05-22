@@ -152,6 +152,20 @@ public class SchoolService {
         school.setExpiryDate(req.getExpiryDate());
         school.setActive(true);
         school.setOnboardedBy(securityUtil.getUsername());
+        // Academic configuration — apply if provided, entity defaults handle the rest
+        if (req.getAcademicYearStartMonth() != null) {
+            int m = req.getAcademicYearStartMonth();
+            if (m >= 1 && m <= 12) school.setAcademicYearStartMonth(m);
+        }
+        if (req.getWorkingDays() != null && !req.getWorkingDays().isBlank()) {
+            validateWorkingDays(req.getWorkingDays());
+            school.setWorkingDays(req.getWorkingDays().toUpperCase());
+        }
+        if (req.getPeriodsPerDay() != null && req.getPeriodsPerDay() > 0) school.setPeriodsPerDay(req.getPeriodsPerDay());
+        if (req.getGradingSystem() != null && !req.getGradingSystem().isBlank()) {
+            validateGradingSystem(req.getGradingSystem());
+            school.setGradingSystem(req.getGradingSystem().toUpperCase());
+        }
         School saved = schoolRepository.save(school);
         log.info("School onboarded: id={}, slug={}", saved.getId(), saved.getSlug());
 
@@ -253,6 +267,19 @@ public class SchoolService {
         if (req.getLogoUrl() != null) school.setLogoUrl(req.getLogoUrl());
         if (req.getThemeColor() != null) school.setThemeColor(req.getThemeColor());
         if (req.getContactPersonName() != null) school.setContactPersonName(req.getContactPersonName());
+        if (req.getAcademicYearStartMonth() != null) {
+            int m = req.getAcademicYearStartMonth();
+            if (m >= 1 && m <= 12) school.setAcademicYearStartMonth(m);
+        }
+        if (req.getWorkingDays() != null && !req.getWorkingDays().isBlank()) {
+            validateWorkingDays(req.getWorkingDays());
+            school.setWorkingDays(req.getWorkingDays().toUpperCase());
+        }
+        if (req.getPeriodsPerDay() != null && req.getPeriodsPerDay() > 0) school.setPeriodsPerDay(req.getPeriodsPerDay());
+        if (req.getGradingSystem() != null && !req.getGradingSystem().isBlank()) {
+            validateGradingSystem(req.getGradingSystem());
+            school.setGradingSystem(req.getGradingSystem().toUpperCase());
+        }
 
         School updated = schoolRepository.save(school);
         log.info("School settings updated for schoolId={}", schoolId);
@@ -682,5 +709,31 @@ public class SchoolService {
         return schoolRepository.findById(schoolId)
                 .map(School::getName)
                 .orElse("School");
+    }
+
+    // ─── Validation helpers ───────────────────────────────────────────────────
+
+    private static final java.util.Set<String> VALID_DAY_NAMES = java.util.Set.of(
+            "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"
+    );
+    private static final java.util.Set<String> VALID_GRADING_SYSTEMS = java.util.Set.of(
+            "CBSE", "LETTER", "PERCENTAGE"
+    );
+
+    private void validateWorkingDays(String workingDays) {
+        String[] days = workingDays.split(",");
+        for (String day : days) {
+            if (!VALID_DAY_NAMES.contains(day.trim().toUpperCase())) {
+                throw new IllegalArgumentException(
+                        "Invalid working day: '" + day.trim() + "'. Must be one of: MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY");
+            }
+        }
+    }
+
+    private void validateGradingSystem(String gradingSystem) {
+        if (!VALID_GRADING_SYSTEMS.contains(gradingSystem.trim().toUpperCase())) {
+            throw new IllegalArgumentException(
+                    "Invalid gradingSystem: '" + gradingSystem + "'. Must be one of: CBSE, LETTER, PERCENTAGE");
+        }
     }
 }

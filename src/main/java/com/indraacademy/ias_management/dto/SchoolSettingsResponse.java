@@ -39,6 +39,11 @@ public class SchoolSettingsResponse {
     /** userId of the school's ADMIN account — populated by service layer when available. */
     private String adminUserId;
 
+    private int academicYearStartMonth;
+    private String workingDays;
+    private int periodsPerDay;
+    private String gradingSystem;
+
     public static SchoolSettingsResponse from(School school) {
         SchoolSettingsResponse r = new SchoolSettingsResponse();
         r.id = school.getId();
@@ -62,6 +67,10 @@ public class SchoolSettingsResponse {
         r.createdAt = school.getCreatedAt();
         r.onboardedBy = school.getOnboardedBy();
         r.razorpayConfigured = school.getRazorpayKeyId() != null && !school.getRazorpayKeyId().isBlank();
+        r.academicYearStartMonth = school.getAcademicYearStartMonth();
+        r.workingDays = school.getWorkingDays();
+        r.periodsPerDay = school.getPeriodsPerDay();
+        r.gradingSystem = school.getGradingSystem();
         return r;
     }
 
@@ -88,4 +97,9 @@ public class SchoolSettingsResponse {
     public boolean isRazorpayConfigured() { return razorpayConfigured; }
     public String getAdminUserId() { return adminUserId; }
     public void setAdminUserId(String adminUserId) { this.adminUserId = adminUserId; }
+
+    public int getAcademicYearStartMonth() { return academicYearStartMonth; }
+    public String getWorkingDays() { return workingDays; }
+    public int getPeriodsPerDay() { return periodsPerDay; }
+    public String getGradingSystem() { return gradingSystem; }
 }

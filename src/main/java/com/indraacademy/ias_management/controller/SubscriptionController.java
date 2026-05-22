@@ -527,7 +527,6 @@ public class SubscriptionController {
         Map<Long, School> schoolMap = new java.util.HashMap<>();
         schoolRepo.findAll().forEach(s -> schoolMap.put(s.getId(), s));
 
-        int[] order = {0}; // status sort order helper
         java.util.function.Function<String, Integer> sortKey = status -> switch (status == null ? "" : status) {
             case "EXPIRED" -> 0;
             case "GRACE"   -> 1;

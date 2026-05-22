@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.scheduler;
 
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
@@ -11,17 +12,26 @@ import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Year;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 @Service
 public class StudentClassProgressionScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(StudentClassProgressionScheduler.class);
 
+    private static final List<String> DEFAULT_CLASS_SEQUENCE = List.of(
+            "Play Group", "Nursery", "LKG", "UKG",
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"
+    );
+
     @Autowired
     private StudentRepository studentRepository;
+
+    @Autowired
+    private SchoolClassRepository schoolClassRepository;
 
     /**
      * Guards against concurrent execution within the same JVM instance.
@@ -32,38 +42,46 @@ public class StudentClassProgressionScheduler {
 
     /**
      * Runs every year on 26th March at 00:00 to promote students to the next class.
+     * Uses each school's configured class sequence from the database.
      */
     @Transactional
-    @Scheduled(cron = "0 0 0 26 3 *")
+    @Scheduled(cron = "0 0 0 26 3 *", zone = "Asia/Kolkata")
     public void incrementStudentClasses() {
         if (!isRunning.compareAndSet(false, true)) {
             log.warn("StudentClassProgressionScheduler is already running — skipping this trigger.");
             return;
         }
         log.info("Starting scheduled student class progression for new academic year.");
-        Year currentYear = Year.now();
-        int currentAcademicYear = currentYear.getValue();
 
         try {
             List<Student> students = studentRepository.findByStatus(StudentStatus.ACTIVE);
             int promotedCount = 0;
 
-            for (Student student : students) {
-                String currentClass = student.getClassName();
-                String nextClass = determineNextClass(currentClass);
+            // Group students by school so we load each school's class sequence only once
+            Map<Long, List<Student>> bySchool = students.stream()
+                    .collect(Collectors.groupingBy(Student::getSchoolId));
 
-                if (nextClass == null) {
-                    log.info("Skipping student ID {} — final class reached ({})",
-                            student.getStudentId(), currentClass);
-                    continue;
+            for (Map.Entry<Long, List<Student>> entry : bySchool.entrySet()) {
+                Long schoolId = entry.getKey();
+                List<String> classSequence = getSchoolClassSequence(schoolId);
+
+                for (Student student : entry.getValue()) {
+                    String currentClass = student.getClassName();
+                    String nextClass = determineNextClass(currentClass, classSequence);
+
+                    if (nextClass == null) {
+                        log.info("Skipping student ID {} — final class reached ({})",
+                                student.getStudentId(), currentClass);
+                        continue;
+                    }
+
+                    log.debug("Promoting {} from {} → {}",
+                            student.getStudentId(), currentClass, nextClass);
+
+                    student.setClassName(nextClass);
+                    studentRepository.save(student);
+                    promotedCount++;
                 }
-
-                log.debug("Promoting {} from {} → {}",
-                        student.getStudentId(), currentClass, nextClass);
-
-                student.setClassName(nextClass);
-                studentRepository.save(student);
-                promotedCount++;
             }
 
             log.info("Promotion completed. Total students promoted: {}", promotedCount);
@@ -77,25 +95,30 @@ public class StudentClassProgressionScheduler {
         }
     }
 
-    private String determineNextClass(String currentClass) {
-        if (currentClass == null || currentClass.trim().isEmpty())
-            return null;
+    private List<String> getSchoolClassSequence(Long schoolId) {
+        List<String> classes = schoolClassRepository
+                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
+                .stream()
+                .map(c -> c.getName())
+                .collect(Collectors.toList());
+        return classes.isEmpty() ? DEFAULT_CLASS_SEQUENCE : classes;
+    }
 
-        switch (currentClass.toUpperCase()) {
-            case "NURSERY": return "LKG";
-            case "LKG": return "UKG";
-            case "UKG": return "1";
+    private String determineNextClass(String currentClass, List<String> classSequence) {
+        if (currentClass == null || currentClass.trim().isEmpty()) return null;
+        int idx = -1;
+        for (int i = 0; i < classSequence.size(); i++) {
+            if (classSequence.get(i).equalsIgnoreCase(currentClass)) {
+                idx = i;
+                break;
+            }
         }
-        try {
-            int classNum = Integer.parseInt(currentClass);
-            if (classNum >= 1 && classNum < 12) return String.valueOf(classNum + 1);
-
-            if (classNum == 12) return null; // Graduated
-
-            return null;
-        } catch (NumberFormatException e) {
-            log.warn("Invalid class format '{}' — skipping promotion.", currentClass);
+        if (idx < 0) {
+            log.warn("Class '{}' not found in school's class sequence — skipping promotion.", currentClass);
             return null;
         }
+        // Last class in sequence → graduated
+        if (idx == classSequence.size() - 1) return null;
+        return classSequence.get(idx + 1);
     }
 }

@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.entity.FeeStructure;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.StudentFees;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,8 +17,6 @@ import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.Year;
-import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -27,9 +26,9 @@ import java.util.Optional;
 public class StudentFeesService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentFeesService.class);
-    private static final DateTimeFormatter YEAR_FORMATTER = DateTimeFormatter.ofPattern("yyyy");
 
     @Autowired private StudentFeesRepository studentFeesRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private FeeStructureService feeStructureService;
     @Autowired private BusFeesService busFeesService;
     @Autowired private AuditService auditService;
@@ -37,14 +36,12 @@ public class StudentFeesService {
     @Autowired private ObjectMapper objectMapper;
 
     private String getAcademicYear(LocalDate date) {
-        Year currentYear = Year.of(date.getYear());
-        if (date.getMonthValue() >= 4) {
-            return currentYear.format(YEAR_FORMATTER) + "-" +
-                    currentYear.plusYears(1).format(YEAR_FORMATTER);
-        } else {
-            return currentYear.minusYears(1).format(DateTimeFormatter.ofPattern("yyyy")) + "-" +
-                    currentYear.format(YEAR_FORMATTER);
-        }
+        int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
+        int year = date.getYear();
+        return (date.getMonthValue() >= startMonth)
+                ? year + "-" + (year + 1)
+                : (year - 1) + "-" + year;
     }
 
     @Transactional(readOnly = true)
@@ -238,8 +235,10 @@ public class StudentFeesService {
         }
     }
 
-    private int getAcademicMonth(int month) {
-        return (month >= 4) ? (month - 3) : (month + 9);
+    private int getAcademicMonth(int calendarMonth) {
+        int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
+        return ((calendarMonth - startMonth + 12) % 12) + 1;
     }
 
     @Transactional(readOnly = true)
@@ -340,22 +339,14 @@ public class StudentFeesService {
 
         log.info("Creating 12 months of default fees for student ID: {} Year: {}", studentId, year);
 
-        int joiningMonth = joiningDate.getMonthValue();
-
-        int startMonth;
-        int endMonth;
-
-        if (joiningMonth >= 1 && joiningMonth <= 3) {
-            // Jan–Mar → only remaining months till March
-            startMonth = joiningMonth+9;
-            endMonth = 12;
-        } else {
-            // April–March → full academic year
-            startMonth = 1;
-            endMonth = 12;
-        }
-
         Long schoolId = securityUtil.getSchoolId();
+        int schoolStartMonth = schoolRepository.findById(schoolId)
+                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
+
+        // Convert joining calendar month to academic month (1 = first month of school year)
+        int joiningCalendarMonth = joiningDate.getMonthValue();
+        int startMonth = ((joiningCalendarMonth - schoolStartMonth + 12) % 12) + 1;
+        int endMonth = 12;
         try {
             for (int month = startMonth; month <= endMonth; month++) {
                 StudentFees studentFee = new StudentFees();

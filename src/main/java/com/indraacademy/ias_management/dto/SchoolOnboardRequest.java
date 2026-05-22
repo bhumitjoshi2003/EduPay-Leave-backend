@@ -35,6 +35,19 @@ public class SchoolOnboardRequest {
     /** Optional: custom trial end date. If null, falls back to now + globalConfig.defaultTrialDays. */
     private LocalDate trialEndsAt;
 
+    // Academic configuration (defaults applied in entity if not provided)
+    /** Calendar month the academic year starts (1=Jan … 12=Dec). Defaults to 4 (April). */
+    private Integer academicYearStartMonth;
+
+    /** Comma-separated working day names, e.g. "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY". */
+    private String workingDays;
+
+    /** Number of teaching periods per school day. Defaults to 8. */
+    private Integer periodsPerDay;
+
+    /** Grading system: CBSE, LETTER, or PERCENTAGE. Defaults to CBSE. */
+    private String gradingSystem;
+
     // First ADMIN user
     private String adminUserId;
     private String adminEmail;
@@ -118,4 +131,16 @@ public class SchoolOnboardRequest {
 
     public LocalDate getTrialEndsAt() { return trialEndsAt; }
     public void setTrialEndsAt(LocalDate trialEndsAt) { this.trialEndsAt = trialEndsAt; }
+
+    public Integer getAcademicYearStartMonth() { return academicYearStartMonth; }
+    public void setAcademicYearStartMonth(Integer academicYearStartMonth) { this.academicYearStartMonth = academicYearStartMonth; }
+
+    public String getWorkingDays() { return workingDays; }
+    public void setWorkingDays(String workingDays) { this.workingDays = workingDays; }
+
+    public Integer getPeriodsPerDay() { return periodsPerDay; }
+    public void setPeriodsPerDay(Integer periodsPerDay) { this.periodsPerDay = periodsPerDay; }
+
+    public String getGradingSystem() { return gradingSystem; }
+    public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }
 }

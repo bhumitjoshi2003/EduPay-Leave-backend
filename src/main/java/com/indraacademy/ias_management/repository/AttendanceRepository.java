@@ -26,9 +26,8 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     long countAbsences(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("year") int year, @Param("month") int month);
 
     @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND a.chargePaid = false " +
-            "AND ((EXTRACT(YEAR FROM a.date) = :startYear AND EXTRACT(MONTH FROM a.date) >= 4) " +
-            "OR (EXTRACT(YEAR FROM a.date) = :endYear AND EXTRACT(MONTH FROM a.date) <= 3))")
-    long countUnappliedLeavesForAcademicYear(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("startYear") int startYear, @Param("endYear") int endYear);
+            "AND a.date >= :startDate AND a.date <= :endDate")
+    long countUnappliedLeavesForAcademicYear(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 
     @Transactional
     @Modifying

@@ -1,7 +1,11 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
+import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,118 +16,151 @@ import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.LocalDateTime;
-import java.time.Year;
-import java.time.format.DateTimeFormatter;
+import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class StudentFeesGenerationService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentFeesGenerationService.class);
 
-    @Autowired
-    private StudentRepository studentRepository;
+    private static final List<String> DEFAULT_CLASS_SEQUENCE = List.of(
+            "Play Group", "Nursery", "LKG", "UKG",
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"
+    );
 
-    @Autowired
-    private StudentFeesRepository studentFeesRepository;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private StudentFeesRepository studentFeesRepository;
+    @Autowired private SchoolRepository schoolRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private AuditService auditService;
 
-    @Autowired
-    private AuditService auditService;
-
+    /**
+     * Runs on the 1st of every month. For each active school, checks whether this
+     * month is the month BEFORE their academic year starts (the "generation month").
+     * If so, generates fee records for all returning students for the next academic year.
+     *
+     * Examples:
+     *   April-start school  → generates on March 1
+     *   July-start school   → generates on June 1
+     *   January-start school → generates on December 1
+     */
     @Transactional
-    @Scheduled(cron = "0 0 0 1 3 *") // Run at 00:00 on 1st March every year
+    @Scheduled(cron = "0 0 0 1 * *", zone = "Asia/Kolkata")
     public void generateStudentFeesForNextYear() {
-        log.info("Starting scheduled student fees generation for the next academic year.");
+        LocalDate today = LocalDate.now();
+        log.info("Monthly fee-generation check triggered for date: {}", today);
 
-        Year currentYear = Year.now();
-        int currentYearValue = currentYear.getValue();
-        String nextAcademicYear = currentYear.format(DateTimeFormatter.ofPattern("yyyy")) + "-" +
-                currentYear.plusYears(1).format(DateTimeFormatter.ofPattern("yyyy"));
+        List<School> activeSchools = schoolRepository.findAll().stream()
+                .filter(School::isActive)
+                .collect(Collectors.toList());
 
-        log.info("Generating fees for academic year: {}", nextAcademicYear);
+        // Load all active students once, grouped by school to avoid N+1 queries
+        Map<Long, List<Student>> studentsBySchool = studentRepository.findByStatus(StudentStatus.ACTIVE)
+                .stream()
+                .collect(Collectors.groupingBy(Student::getSchoolId));
 
-        try {
-            List<Student> allStudents = studentRepository.findAll();
-            int feesGeneratedCount = 0;
+        for (School school : activeSchools) {
+            try {
+                int startMonth = school.getAcademicYearStartMonth();
+                // Generation month = the calendar month immediately before the academic year starts
+                int generationMonth = ((startMonth - 2 + 12) % 12) + 1;
 
-            for (Student student : allStudents) {
-                LocalDateTime createdAt = student.getCreatedAt();
-                String currentClass = student.getClassName();
-                String nextClass = determineNextClass(currentClass);
+                if (today.getMonthValue() != generationMonth) continue;
 
-                // Only generate fees for students enrolled before the current year AND who are not graduating
-                boolean isNewEnrollment = createdAt != null && createdAt.getYear() >= currentYearValue;
+                // Compute next academic year label
+                // For non-January starts: next year begins in startMonth of THIS calendar year
+                // For January start: next year begins in January of NEXT calendar year
+                int nextStartYear = (startMonth > today.getMonthValue()) ? today.getYear() : today.getYear() + 1;
+                String nextAcademicYear = nextStartYear + "-" + (nextStartYear + 1);
 
-                if (!isNewEnrollment) {
-                    if (nextClass != null) {
-                        for (int month = 1; month <= 12; month++) {
-                            StudentFees studentFees = new StudentFees();
-                            studentFees.setStudentId(student.getStudentId());
-                            studentFees.setClassName(nextClass);
-                            studentFees.setMonth(month);
-                            studentFees.setPaid(false);
-                            studentFees.setTakesBus(student.getTakesBus());
-                            studentFees.setYear(nextAcademicYear);
-                            studentFees.setDistance(student.getDistance());
-                            studentFees.setManuallyPaid(false);
-                            studentFees.setManualPaymentReceived(null);
-                            studentFees.setSchoolId(student.getSchoolId());
-                            studentFeesRepository.save(studentFees);
-                        }
-                        log.debug("Generated 12 months of fees for student ID: {} (Class: {}) for year: {}", student.getStudentId(), nextClass, nextAcademicYear);
-                        feesGeneratedCount++;
-                    } else {
-                        log.info("Skipping fee generation for student ID: {} as they are in Class 12 or beyond (Graduating).", student.getStudentId());
+                log.info("School {} generating fees for academic year {}", school.getId(), nextAcademicYear);
+
+                List<String> classSequence = getSchoolClassSequence(school.getId());
+                List<Student> students = studentsBySchool.getOrDefault(school.getId(), List.of());
+
+                int feesGeneratedCount = 0;
+                for (Student student : students) {
+                    // Skip students enrolled during the current calendar year — their fees
+                    // are generated at registration time, not here.
+                    if (student.getCreatedAt() != null && student.getCreatedAt().getYear() >= today.getYear()) {
+                        log.debug("Skipping new enrollment: student {}", student.getStudentId());
+                        continue;
                     }
-                } else {
-                    log.debug("Skipping fee generation for student ID: {} as they were created in the current year ({}).", student.getStudentId(), currentYearValue);
+
+                    String nextClass = determineNextClass(student.getClassName(), classSequence);
+                    if (nextClass == null) {
+                        log.info("Skipping graduating student {} (class {})", student.getStudentId(), student.getClassName());
+                        continue;
+                    }
+
+                    // Skip if fees already generated (guard against double-runs)
+                    if (studentFeesRepository.existsByStudentIdAndYearAndSchoolId(
+                            student.getStudentId(), nextAcademicYear, school.getId())) {
+                        log.debug("Fees already generated for student {} year {}", student.getStudentId(), nextAcademicYear);
+                        continue;
+                    }
+
+                    for (int month = 1; month <= 12; month++) {
+                        StudentFees studentFees = new StudentFees();
+                        studentFees.setStudentId(student.getStudentId());
+                        studentFees.setClassName(nextClass);
+                        studentFees.setMonth(month);
+                        studentFees.setPaid(false);
+                        studentFees.setTakesBus(student.getTakesBus());
+                        studentFees.setYear(nextAcademicYear);
+                        studentFees.setDistance(student.getDistance());
+                        studentFees.setManuallyPaid(false);
+                        studentFees.setManualPaymentReceived(null);
+                        studentFees.setSchoolId(school.getId());
+                        studentFeesRepository.save(studentFees);
+                    }
+
+                    log.debug("Generated 12 months of fees for student {} (class {}) for year {}",
+                            student.getStudentId(), nextClass, nextAcademicYear);
+                    feesGeneratedCount++;
                 }
+
+                auditService.log(
+                        "SYSTEM", "SYSTEM",
+                        "GENERATE_STUDENT_FEES",
+                        "StudentFees",
+                        nextAcademicYear,
+                        null,
+                        "School " + school.getId() + ": generated fees for " + feesGeneratedCount + " students",
+                        "SYSTEM"
+                );
+
+                log.info("School {}: fee generation complete — {} students for year {}",
+                        school.getId(), feesGeneratedCount, nextAcademicYear);
+
+            } catch (DataAccessException e) {
+                log.error("DB error generating fees for school {}", school.getId(), e);
+            } catch (Exception e) {
+                log.error("Unexpected error generating fees for school {}", school.getId(), e);
             }
-
-            auditService.log(
-                    "SYSTEM",
-                    "SYSTEM",
-                    "GENERATE_STUDENT_FEES",
-                    "StudentFees",
-                    nextAcademicYear,
-                    null,
-                    "Generated fees for " + feesGeneratedCount + " students",
-                    "SYSTEM"
-            );
-
-            log.info("Student fees generation completed. Fees generated for {} students for year {}.", feesGeneratedCount, nextAcademicYear);
-        } catch (DataAccessException e) {
-            log.error("Data access error during student fees generation schedule.", e);
-            // Transactional rollback handles the partial update failure
-        } catch (Exception e) {
-            log.error("Unexpected error during student fees generation schedule.", e);
         }
     }
 
-    private String determineNextClass(String currentClass) {
-        if (currentClass == null || currentClass.trim().isEmpty()) {
-            return null;
-        }
+    private List<String> getSchoolClassSequence(Long schoolId) {
+        List<String> classes = schoolClassRepository
+                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
+                .stream()
+                .map(c -> c.getName())
+                .collect(Collectors.toList());
+        return classes.isEmpty() ? DEFAULT_CLASS_SEQUENCE : classes;
+    }
 
-        if ("Nursery".equalsIgnoreCase(currentClass)) {
-            return "LKG";
-        } else if ("LKG".equalsIgnoreCase(currentClass)) {
-            return "UKG";
-        } else if ("UKG".equalsIgnoreCase(currentClass)) {
-            return "1";
-        } else {
-            try {
-                int classLevel = Integer.parseInt(currentClass);
-                if (classLevel < 12) {
-                    return String.valueOf(classLevel + 1);
-                } else {
-                    return null; // Class 12 or higher -> graduating/finished
-                }
-            } catch (NumberFormatException e) {
-                log.warn("Invalid class format '{}' encountered for fees generation.", currentClass);
-                return null;
+    private String determineNextClass(String currentClass, List<String> classSequence) {
+        if (currentClass == null || currentClass.trim().isEmpty()) return null;
+        for (int i = 0; i < classSequence.size(); i++) {
+            if (classSequence.get(i).equalsIgnoreCase(currentClass)) {
+                return (i == classSequence.size() - 1) ? null : classSequence.get(i + 1);
             }
         }
+        log.warn("Class '{}' not found in school's class sequence", currentClass);
+        return null;
     }
 }

@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.dto.PromotionResultDTO;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,16 +28,29 @@ public class StudentPromotionService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentPromotionService.class);
 
-    // Canonical progression order. classOrder() maps each name to its index.
-    // Play Group → Nursery → LKG → UKG → 1 → 2 → … → 12
-    private static final List<String> CLASS_SEQUENCE = List.of(
-            "Play Group", "Nursery", "LKG", "UKG",
-            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"
-    );
-
     @Autowired private StudentRepository studentRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+
+    /**
+     * Returns the school's active class names in display order (from DB).
+     * Falls back to a default Indian sequence if the school has no classes configured.
+     */
+    private List<String> getSchoolClassSequence() {
+        Long schoolId = securityUtil.getSchoolId();
+        List<String> classes = schoolClassRepository
+                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
+                .stream()
+                .map(c -> c.getName())
+                .collect(Collectors.toList());
+        if (classes.isEmpty()) {
+            // Fallback for schools with no class management data
+            return List.of("Play Group", "Nursery", "LKG", "UKG",
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+        }
+        return classes;
+    }
 
     // ─── Preview ─────────────────────────────────────────────────────────────
 
@@ -44,11 +58,12 @@ public class StudentPromotionService {
     public List<PromotionPreviewDTO> getPromotionPreview() {
         List<Student> activeStudents = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, securityUtil.getSchoolId());
 
+        List<String> classSequence = getSchoolClassSequence();
         Map<String, List<Student>> byClass = activeStudents.stream()
                 .collect(Collectors.groupingBy(Student::getClassName));
 
         return byClass.entrySet().stream()
-                .sorted(Comparator.comparingInt(e -> classOrder(e.getKey())))
+                .sorted(Comparator.comparingInt(e -> classOrder(e.getKey(), classSequence)))
                 .map(e -> {
                     List<StudentLeaveDTO> stubs = e.getValue().stream()
                             .sorted(Comparator.comparing(Student::getName))
@@ -83,8 +98,9 @@ public class StudentPromotionService {
                 Student student  = opt.get();
                 String oldClass  = student.getClassName();
 
+                List<String> seq = getSchoolClassSequence();
                 if ("PROMOTE".equalsIgnoreCase(action)) {
-                    String nextClass = determineNextClass(oldClass);
+                    String nextClass = determineNextClass(oldClass, seq);
                     if (nextClass == null) {
                         errors.add(new PromotionResultDTO.PromotionError(studentId,
                                 "Cannot promote: '" + oldClass + "' is the final class in the sequence"));
@@ -134,31 +150,31 @@ public class StudentPromotionService {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     /**
-     * Returns the class that follows {@code currentClass} in the progression sequence,
-     * or {@code null} if {@code currentClass} is the last class (12) or unrecognised.
+     * Returns the class that follows {@code currentClass} in the school's class sequence,
+     * or {@code null} if it is the last class or unrecognised.
      */
-    private String determineNextClass(String currentClass) {
+    private String determineNextClass(String currentClass, List<String> classSequence) {
         if (currentClass == null) return null;
-        int idx = indexOfClass(currentClass);
-        if (idx < 0 || idx >= CLASS_SEQUENCE.size() - 1) return null;
-        return CLASS_SEQUENCE.get(idx + 1);
+        int idx = indexOfClass(currentClass, classSequence);
+        if (idx < 0 || idx >= classSequence.size() - 1) return null;
+        return classSequence.get(idx + 1);
     }
 
     /**
-     * Returns a sort key for the class name so groups appear in progression order.
+     * Returns a sort key for the class name based on the school's class order.
      * Unrecognised classes sort to the end.
      */
-    private int classOrder(String className) {
-        int idx = indexOfClass(className);
+    private int classOrder(String className, List<String> classSequence) {
+        int idx = indexOfClass(className, classSequence);
         return idx < 0 ? Integer.MAX_VALUE : idx;
     }
 
-    /** Case-insensitive lookup of {@code className} in {@link #CLASS_SEQUENCE}. */
-    private int indexOfClass(String className) {
+    /** Case-insensitive lookup of {@code className} in the provided sequence. */
+    private int indexOfClass(String className, List<String> classSequence) {
         if (className == null) return -1;
         String normalised = className.trim();
-        for (int i = 0; i < CLASS_SEQUENCE.size(); i++) {
-            if (CLASS_SEQUENCE.get(i).equalsIgnoreCase(normalised)) return i;
+        for (int i = 0; i < classSequence.size(); i++) {
+            if (classSequence.get(i).equalsIgnoreCase(normalised)) return i;
         }
         return -1;
     }

@@ -36,6 +36,7 @@ public class DashboardService {
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private LeaveRepository leaveRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private SecurityUtil securityUtil;
 
     // ─── /api/dashboard/stats ─────────────────────────────────────────────────
@@ -44,6 +45,8 @@ public class DashboardService {
     public DashboardStatsDto getStats() {
         LocalDate today = LocalDate.now();
         Long schoolId = securityUtil.getSchoolId();
+        int academicStartMonth = schoolRepository.findById(schoolId)
+                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
 
         long totalStudents = studentRepository.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
         long totalTeachers = teacherRepository.countBySchoolId(schoolId);
@@ -53,8 +56,8 @@ public class DashboardService {
                 .sumAmountCollectedBySchoolIdAndMonthAndYear(schoolId, today.getMonthValue(), today.getYear());
 
         // Overdue: distinct active students with any unpaid fee up to the current academic month
-        String currentSession = currentSession(today);
-        int currentAcademicMonth = calendarToAcademicMonth(today.getMonthValue());
+        String currentSession = currentSession(today, academicStartMonth);
+        int currentAcademicMonth = calendarToAcademicMonth(today.getMonthValue(), academicStartMonth);
         long overdueStudents = studentFeesRepository
                 .countDistinctOverdueStudents(schoolId, currentSession, currentAcademicMonth);
 
@@ -167,6 +170,15 @@ public class DashboardService {
     public List<AttendanceTrendDto> getAttendanceTrend(String className, String mode) {
         LocalDate today = LocalDate.now();
         Long schoolId = securityUtil.getSchoolId();
+        com.indraacademy.ias_management.entity.School school = schoolRepository.findById(schoolId).orElse(null);
+
+        // Count working days based on school's configured working days
+        int workingDayCount = 6; // default Mon-Sat
+        if (school != null && school.getWorkingDays() != null) {
+            workingDayCount = (int) java.util.Arrays.stream(school.getWorkingDays().split(","))
+                    .filter(d -> !d.isBlank()).count();
+            workingDayCount = Math.max(1, Math.min(workingDayCount, 7));
+        }
 
         long studentCount = studentRepository
                 .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
@@ -175,13 +187,14 @@ public class DashboardService {
         List<AttendanceTrendDto> result = new ArrayList<>();
 
         if ("weekly".equalsIgnoreCase(mode)) {
-            // Last 8 complete weeks (Mon → Sat, skip Sunday)
+            // Last 8 complete weeks (Mon → Mon+workingDays-1)
             LocalDate weekStart = today.with(DayOfWeek.MONDAY).minusWeeks(7);
             DateTimeFormatter weekLabelFmt = DateTimeFormatter.ofPattern("d MMM");
+            final int wdCount = workingDayCount;
 
             for (int i = 0; i < 8; i++) {
                 LocalDate wStart = weekStart.plusWeeks(i);
-                LocalDate wEnd   = wStart.plusDays(5); // Mon–Sat
+                LocalDate wEnd   = wStart.plusDays(wdCount - 1);
 
                 long workingDays = attendanceRepository.countDistinctWorkingDays(className, schoolId, wStart, wEnd);
                 double rate = 0.0;
@@ -224,19 +237,19 @@ public class DashboardService {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     /**
-     * Returns the academic session for the given date.
-     * April onwards → current-year to next-year (e.g. April 2026 → "2026-2027")
-     * Jan–Mar       → prev-year to current-year (e.g. Jan 2026  → "2025-2026")
+     * Returns the academic session for the given date, using the school's configured start month.
+     * e.g. startMonth=4 (April): April 2026 → "2026-2027", Jan 2026 → "2025-2026"
+     *      startMonth=7 (July):  July 2026  → "2026-2027", May 2026 → "2025-2026"
      */
-    private String currentSession(LocalDate date) {
+    private String currentSession(LocalDate date, int startMonth) {
         int year = date.getYear();
-        return date.getMonthValue() >= 4
+        return date.getMonthValue() >= startMonth
                 ? year + "-" + (year + 1)
                 : (year - 1) + "-" + year;
     }
 
-    /** Calendar month (1=Jan…12=Dec) → academic month (1=Apr…12=Mar). */
-    private int calendarToAcademicMonth(int calendarMonth) {
-        return calendarMonth >= 4 ? calendarMonth - 3 : calendarMonth + 9;
+    /** Calendar month (1=Jan…12=Dec) → academic month (1 = startMonth). */
+    private int calendarToAcademicMonth(int calendarMonth, int startMonth) {
+        return ((calendarMonth - startMonth + 12) % 12) + 1;
     }
 }

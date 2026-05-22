@@ -36,9 +36,9 @@ public class FeeReminderService {
 
     private static final Logger log = LoggerFactory.getLogger(FeeReminderService.class);
 
-    private static final String[] MONTH_NAMES = {
-            "April", "May", "June", "July", "August", "September",
-            "October", "November", "December", "January", "February", "March"
+    private static final String[] CALENDAR_MONTH_NAMES = {
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
     };
 
     @Autowired private StudentFeesRepository studentFeesRepository;
@@ -53,36 +53,50 @@ public class FeeReminderService {
 
     // ─── Scheduled reminder ───────────────────────────────────────────────────
 
-    @Scheduled(cron = "0 0 6 28 * *")
+    @Scheduled(cron = "0 0 6 28 * *", zone = "Asia/Kolkata")
     public void sendMonthlyFeeReminders() {
         LocalDate today = LocalDate.now();
-        String academicYear = getAcademicYear(today);
-        int academicMonth = getAcademicMonth(today.getMonthValue());
+        log.info("Starting monthly fee reminder run for date: {}", today);
 
-        log.info("Checking unpaid fees for Session: {} | Month: {}", academicYear, academicMonth);
+        // Process per school so each school's academic calendar is respected
+        List<School> activeSchools = schoolRepository.findAll().stream()
+                .filter(School::isActive)
+                .collect(java.util.stream.Collectors.toList());
 
-        // NOTE: Scheduler runs platform-wide (all schools) — no schoolId filtering here
-        List<StudentFees> unpaidFees = studentFeesRepository.findAllUnpaidByYearAndMonth(academicYear, academicMonth);
-
-        for (StudentFees fee : unpaidFees) {
+        for (School school : activeSchools) {
             try {
-                processScheduledReminder(fee);
+                int startMonth = school.getAcademicYearStartMonth();
+                String academicYear = getAcademicYear(today, startMonth);
+                int academicMonth = getAcademicMonth(today.getMonthValue(), startMonth);
+                log.info("School {} — academicYear={}, academicMonth={}", school.getId(), academicYear, academicMonth);
+
+                List<StudentFees> unpaidFees = studentFeesRepository
+                        .findAllUnpaidBySchoolIdAndYearAndMonth(school.getId(), academicYear, academicMonth);
+
+                for (StudentFees fee : unpaidFees) {
+                    try {
+                        processScheduledReminder(fee, startMonth);
+                    } catch (Exception e) {
+                        log.error("Error processing reminder for student {}: {}", fee.getStudentId(), e.getMessage());
+                    }
+                }
             } catch (Exception e) {
-                log.error("Error processing reminder for student {}: {}", fee.getStudentId(), e.getMessage());
+                log.error("Error processing school {} in fee reminder run: {}", school.getId(), e.getMessage());
             }
         }
     }
 
-    private void processScheduledReminder(StudentFees fee) {
-        studentRepository.findById(fee.getStudentId()).ifPresentOrElse(student -> {
+    private void processScheduledReminder(StudentFees fee, int startMonth) {
+        studentRepository.findByStudentIdAndSchoolId(fee.getStudentId(), fee.getSchoolId()).ifPresentOrElse(student -> {
             String email = student.getEmail();
             if (email == null || email.isEmpty()) {
                 log.warn("Skipping: Student {} has no email address.", student.getStudentId());
                 return;
             }
-            String schoolName = schoolRepository.findById(student.getSchoolId() != null ? student.getSchoolId() : -1L)
-                    .map(School::getName).orElse("School");
-            String monthName = getMonthName(fee.getMonth());
+            School school = schoolRepository.findById(student.getSchoolId() != null ? student.getSchoolId() : -1L)
+                    .orElse(null);
+            String schoolName = school != null ? school.getName() : "School";
+            String monthName = getMonthName(fee.getMonth(), startMonth);
             String subject = "Fee Payment Reminder – " + monthName + " (" + fee.getYear() + ")";
             String studentName = student.getName() != null ? student.getName() : "Student";
             String htmlBody = buildFeeReminderHtml(studentName, monthName, fee.getYear(), schoolName);
@@ -106,6 +120,9 @@ public class FeeReminderService {
         int endYear   = years[1];
 
         Long schoolId = securityUtil.getSchoolId();
+        int startMonth = schoolRepository.findById(schoolId)
+                .map(School::getAcademicYearStartMonth).orElse(4);
+
         // Fetch all unpaid fee records for the session (optionally filtered by class)
         List<StudentFees> unpaid = (className != null && !className.isBlank())
                 ? studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(schoolId, session, className)
@@ -114,7 +131,7 @@ public class FeeReminderService {
         // Filter to months that have already started (1st day <= start of current month)
         LocalDate currentMonthStart = today.withDayOfMonth(1);
         List<StudentFees> overdue = unpaid.stream()
-                .filter(sf -> !academicMonthStart(sf.getMonth(), startYear, endYear).isAfter(currentMonthStart))
+                .filter(sf -> !academicMonthStart(sf.getMonth(), startYear, endYear, startMonth).isAfter(currentMonthStart))
                 .collect(Collectors.toList());
 
         // Group by studentId
@@ -141,7 +158,7 @@ public class FeeReminderService {
             fees.sort(Comparator.comparingInt(StudentFees::getMonth));
 
             List<String> unpaidMonthNames = fees.stream()
-                    .map(sf -> getMonthName(sf.getMonth()))
+                    .map(sf -> getMonthName(sf.getMonth(), startMonth))
                     .collect(Collectors.toList());
 
             // totalDue: sum each month's exact amount due (mirrors what the student sees on their receipt)
@@ -159,7 +176,7 @@ public class FeeReminderService {
                     .orElse(null);
 
             // daysOverdue = today − 1st of the oldest overdue month
-            LocalDate oldestMonthStart = academicMonthStart(fees.get(0).getMonth(), startYear, endYear);
+            LocalDate oldestMonthStart = academicMonthStart(fees.get(0).getMonth(), startYear, endYear, startMonth);
             int daysOverdue = (int) ChronoUnit.DAYS.between(oldestMonthStart, today);
 
             OverdueStudentDto dto = new OverdueStudentDto();
@@ -255,16 +272,18 @@ public class FeeReminderService {
         int[] years = parseSession(session);
         LocalDate currentMonthStart = LocalDate.now().withDayOfMonth(1);
 
+        int reminderStartMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                .map(School::getAcademicYearStartMonth).orElse(4);
+
         List<StudentFees> overdueMonths = studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(securityUtil.getSchoolId(), session, student.getClassName())
                 .stream()
                 .filter(sf -> sf.getStudentId().equals(studentId))
-                .filter(sf -> !academicMonthStart(sf.getMonth(), years[0], years[1]).isAfter(currentMonthStart))
+                .filter(sf -> !academicMonthStart(sf.getMonth(), years[0], years[1], reminderStartMonth).isAfter(currentMonthStart))
                 .sorted(Comparator.comparingInt(StudentFees::getMonth))
                 .collect(Collectors.toList());
-
         String monthList = overdueMonths.isEmpty()
                 ? "upcoming months"
-                : overdueMonths.stream().map(sf -> getMonthName(sf.getMonth())).collect(Collectors.joining(", "));
+                : overdueMonths.stream().map(sf -> getMonthName(sf.getMonth(), reminderStartMonth)).collect(Collectors.joining(", "));
 
         String subject = "Fee Payment Reminder – " + session;
         String studentName = student.getName() != null ? student.getName() : "Parent/Guardian";
@@ -420,13 +439,14 @@ public class FeeReminderService {
         return amount;
     }
 
-    /** Maps academic month number (1=April … 12=March) to the 1st day of that calendar month. */
-    private LocalDate academicMonthStart(int academicMonth, int startYear, int endYear) {
-        if (academicMonth <= 9) {
-            return LocalDate.of(startYear, academicMonth + 3, 1);
-        } else {
-            return LocalDate.of(endYear, academicMonth - 9, 1);
-        }
+    /**
+     * Maps an academic month number (1 = startMonth … 12 = startMonth-1) to the 1st day
+     * of that calendar month, using the session's start and end years.
+     */
+    private LocalDate academicMonthStart(int academicMonth, int startYear, int endYear, int startMonth) {
+        int calendarMonth = ((startMonth - 1 + academicMonth - 1) % 12) + 1;
+        int year = calendarMonth >= startMonth ? startYear : endYear;
+        return LocalDate.of(year, calendarMonth, 1);
     }
 
     /** Parses "2025-2026" → [2025, 2026]. */
@@ -436,18 +456,24 @@ public class FeeReminderService {
         return new int[]{ Integer.parseInt(parts[0]), Integer.parseInt(parts[1]) };
     }
 
-    private String getMonthName(int month) {
-        return (month >= 1 && month <= 12) ? MONTH_NAMES[month - 1] : "Unknown";
+    /** Returns the display name for an academic month (1 = first month of academic year). */
+    private String getMonthName(int academicMonth, int startMonth) {
+        if (academicMonth < 1 || academicMonth > 12) return "Unknown";
+        // academicMonth 1 = startMonth, 2 = startMonth+1, etc. (wrapping around December)
+        int calendarMonthIndex = (startMonth - 1 + academicMonth - 1) % 12;
+        return CALENDAR_MONTH_NAMES[calendarMonthIndex];
     }
 
-    private String getAcademicYear(LocalDate date) {
+    /** Returns the academic year label (e.g. "2026-2027") for a given date and school start month. */
+    private String getAcademicYear(LocalDate date, int startMonth) {
         int year = date.getYear();
-        // April–December belongs to current year's academic session (e.g. April 2026 → "2026-2027")
-        // January–March belongs to previous year's session (e.g. March 2026 → "2025-2026")
-        return (date.getMonthValue() >= 4) ? year + "-" + (year + 1) : (year - 1) + "-" + year;
+        return (date.getMonthValue() >= startMonth)
+                ? year + "-" + (year + 1)
+                : (year - 1) + "-" + year;
     }
 
-    private int getAcademicMonth(int month) {
-        return (month >= 4) ? (month - 3) : (month + 9);
+    /** Calendar month (1=Jan…12=Dec) → academic month (1 = startMonth). */
+    private int getAcademicMonth(int calendarMonth, int startMonth) {
+        return ((calendarMonth - startMonth + 12) % 12) + 1;
     }
 }

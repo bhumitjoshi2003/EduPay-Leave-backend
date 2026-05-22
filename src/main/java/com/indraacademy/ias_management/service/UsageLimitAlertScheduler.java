@@ -37,7 +37,7 @@ public class UsageLimitAlertScheduler {
     @Autowired private TeacherRepository teacherRepo;
     @Autowired private EmailService emailService;
 
-    @Scheduled(cron = "0 0 10 * * *")
+    @Scheduled(cron = "0 0 10 * * *", zone = "Asia/Kolkata")
     public void sendUsageLimitAlerts() {
         log.info("Starting scheduled job: sendUsageLimitAlerts at {}", LocalDateTime.now());
 

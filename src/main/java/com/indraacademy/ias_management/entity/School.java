@@ -81,6 +81,35 @@ public class School {
     @Column(name = "onboarded_by")
     private String onboardedBy;
 
+    /**
+     * First calendar month of the academic year (1=Jan, 4=Apr, 7=Jul, etc.).
+     * Default: 4 (April) — the standard Indian academic year start.
+     */
+    @Column(name = "academic_year_start_month", nullable = false)
+    private int academicYearStartMonth = 4;
+
+    /**
+     * Comma-separated working days, e.g. "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY".
+     * Used for timetable and attendance trend calculations.
+     */
+    @Column(name = "working_days", length = 100)
+    private String workingDays = "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY";
+
+    /**
+     * Number of periods per school day shown in the timetable UI.
+     * Default: 8.
+     */
+    @Column(name = "periods_per_day", nullable = false)
+    private int periodsPerDay = 8;
+
+    /**
+     * Grading system used in report cards.
+     * Supported values: CBSE, PERCENTAGE, LETTER.
+     * Default: CBSE.
+     */
+    @Column(name = "grading_system", length = 20)
+    private String gradingSystem = "CBSE";
+
     public School() {}
 
     public Long getId() { return id; }
@@ -148,4 +177,16 @@ public class School {
 
     public String getOnboardedBy() { return onboardedBy; }
     public void setOnboardedBy(String onboardedBy) { this.onboardedBy = onboardedBy; }
+
+    public int getAcademicYearStartMonth() { return academicYearStartMonth; }
+    public void setAcademicYearStartMonth(int academicYearStartMonth) { this.academicYearStartMonth = academicYearStartMonth; }
+
+    public String getWorkingDays() { return workingDays; }
+    public void setWorkingDays(String workingDays) { this.workingDays = workingDays; }
+
+    public int getPeriodsPerDay() { return periodsPerDay; }
+    public void setPeriodsPerDay(int periodsPerDay) { this.periodsPerDay = periodsPerDay; }
+
+    public String getGradingSystem() { return gradingSystem; }
+    public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }
 }

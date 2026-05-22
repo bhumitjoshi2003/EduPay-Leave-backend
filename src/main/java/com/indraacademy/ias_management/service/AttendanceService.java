@@ -4,8 +4,10 @@ import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -39,6 +41,7 @@ public class AttendanceService {
 
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private StudentRepository studentRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -245,9 +248,12 @@ public class AttendanceService {
                 return 0L;
             }
             int startYear = Integer.parseInt(years[0]);
-            int endYear = Integer.parseInt(years[1]);
+            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                    .map(School::getAcademicYearStartMonth).orElse(4);
+            LocalDate startDate = LocalDate.of(startYear, startMonth, 1);
+            LocalDate endDate = startDate.plusYears(1).minusDays(1);
 
-            long count = attendanceRepository.countUnappliedLeavesForAcademicYear(studentId, securityUtil.getSchoolId(), startYear, endYear);
+            long count = attendanceRepository.countUnappliedLeavesForAcademicYear(studentId, securityUtil.getSchoolId(), startDate, endDate);
             log.info("Total unapplied leave count for student ID: {} is {}", studentId, count);
             return count;
         } catch (NumberFormatException e) {
@@ -273,10 +279,11 @@ public class AttendanceService {
         try {
             String[] years = session.split("-");
             int startYear = Integer.parseInt(years[0]);
-            int endYear = Integer.parseInt(years[1]);
 
-            LocalDate startDate = LocalDate.of(startYear, 4, 1);
-            LocalDate endDate = LocalDate.of(endYear, 3, 31);
+            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                    .map(s -> s.getAcademicYearStartMonth()).orElse(4);
+            LocalDate startDate = LocalDate.of(startYear, startMonth, 1);
+            LocalDate endDate = startDate.plusYears(1).minusDays(1);
 
             attendanceRepository.updateChargePaidForSession(studentId, securityUtil.getSchoolId(), startDate, endDate);
 
@@ -413,20 +420,21 @@ public class AttendanceService {
             }
             int startYear = Integer.parseInt(session.substring(0, 4));
             int endYear   = Integer.parseInt(session.substring(5));
-            LocalDate start = LocalDate.of(startYear, 4, 1);
-            LocalDate end   = LocalDate.of(endYear, 3, 31);
+            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                    .map(s -> s.getAcademicYearStartMonth()).orElse(4);
+            LocalDate start = LocalDate.of(startYear, startMonth, 1);
+            LocalDate end   = start.plusYears(1).minusDays(1);
 
             long totalWorkingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
             long totalAbsences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
             long totalPresent     = Math.max(0, totalWorkingDays - totalAbsences);
 
-            // Monthly breakdown: Apr(startYear)…Dec(startYear), Jan(endYear)…Mar(endYear)
+            // Monthly breakdown: iterate all 12 academic months in order for this school's calendar
             List<AttendanceSummaryDTO.MonthlyBreakdown> breakdown = new ArrayList<>();
-            for (int m = 4; m <= 12; m++) {
-                breakdown.add(buildMonthBreakdown(studentId, className, startYear, m));
-            }
-            for (int m = 1; m <= 3; m++) {
-                breakdown.add(buildMonthBreakdown(studentId, className, endYear, m));
+            for (int am = 1; am <= 12; am++) {
+                int calMonth = ((startMonth - 1 + am - 1) % 12) + 1;
+                int calYear  = (calMonth >= startMonth) ? startYear : endYear;
+                breakdown.add(buildMonthBreakdown(studentId, className, calYear, calMonth));
             }
 
             AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
@@ -465,9 +473,10 @@ public class AttendanceService {
                 throw new IllegalArgumentException("session is required in format YYYY-YYYY when type=year");
             }
             int startYear = Integer.parseInt(session.substring(0, 4));
-            int endYear   = Integer.parseInt(session.substring(5));
-            start = LocalDate.of(startYear, 4, 1);
-            end   = LocalDate.of(endYear, 3, 31);
+            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                    .map(s -> s.getAcademicYearStartMonth()).orElse(4);
+            start = LocalDate.of(startYear, startMonth, 1);
+            end   = start.plusYears(1).minusDays(1);
         } else {
             throw new IllegalArgumentException("type must be 'month' or 'year'");
         }

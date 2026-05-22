@@ -30,7 +30,7 @@ public class StudentStatusScheduler {
 
 //    @Scheduled(cron = "0 26 14 19 11 *")
     // Runs every day at 4:00 AM IST
-    @Scheduled(cron = "0 0 4 * * *")
+    @Scheduled(cron = "0 0 4 * * *", zone = "Asia/Kolkata")
     @Transactional
     public void updateStudentStatuses() {
         if (!isRunning.compareAndSet(false, true)) {

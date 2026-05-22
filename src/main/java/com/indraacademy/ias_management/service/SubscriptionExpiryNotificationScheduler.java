@@ -41,7 +41,7 @@ public class SubscriptionExpiryNotificationScheduler {
     @Autowired private GlobalSubscriptionConfigRepository configRepo;
     @Autowired private EmailService emailService;
 
-    @Scheduled(cron = "0 0 9 * * *")
+    @Scheduled(cron = "0 0 9 * * *", zone = "Asia/Kolkata")
     public void sendExpiryNotifications() {
         log.info("Starting scheduled job: sendExpiryNotifications at {}", LocalDateTime.now());
 

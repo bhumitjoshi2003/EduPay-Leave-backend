@@ -36,4 +36,6 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
 
     @Query("SELECT COUNT(DISTINCT sf.studentId) FROM StudentFees sf WHERE sf.schoolId = :schoolId AND sf.year = :session AND sf.paid = false AND sf.month <= :currentAcademicMonth")
     long countDistinctOverdueStudents(@Param("schoolId") Long schoolId, @Param("session") String session, @Param("currentAcademicMonth") int currentAcademicMonth);
+
+    boolean existsByStudentIdAndYearAndSchoolId(String studentId, String year, Long schoolId);
 }

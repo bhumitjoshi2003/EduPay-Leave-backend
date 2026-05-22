@@ -28,7 +28,7 @@ public class AttendanceEmailScheduler {
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private EmailService emailService;
 
-    @Scheduled(cron = "0 15 12 * * *")
+    @Scheduled(cron = "0 15 12 * * *", zone = "Asia/Kolkata")
     public void sendAttendanceEmails() {
         log.info("Starting scheduled job: sendAttendanceEmails at {}", LocalDate.now());
         final LocalDate today = LocalDate.now();
@@ -56,7 +56,8 @@ public class AttendanceEmailScheduler {
 
             Optional<Student> studentOptional = Optional.empty();
             try {
-                studentOptional = studentRepository.findById(studentId);
+                // Use schoolId from the attendance record to avoid cross-school student lookup
+                studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, attendance.getSchoolId());
             } catch (DataAccessException e) {
                 log.error("Data access error while fetching Student ID: {}. Skipping email for this student.", studentId, e);
                 continue;

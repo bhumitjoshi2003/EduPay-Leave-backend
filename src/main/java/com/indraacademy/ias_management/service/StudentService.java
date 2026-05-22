@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.LeaveRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
@@ -30,8 +31,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
-import java.time.Year;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -41,13 +40,13 @@ import java.util.Optional;
 public class StudentService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentService.class);
-    private static final DateTimeFormatter YEAR_FORMATTER = DateTimeFormatter.ofPattern("yyyy");
 
     @Value("${student.photo.directory:./uploads/student-photos}")
     private String photoDirectory;
 
     @Autowired private StudentRepository studentRepository;
     @Autowired private StudentFeesService studentFeesService;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private UserDetailsServiceImpl userDetailsService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private AuditService auditService;
@@ -60,14 +59,12 @@ public class StudentService {
     @Autowired private UserRepository userRepository;
 
     private String getAcademicYear(LocalDate date) {
-        Year currentYear = Year.of(date.getYear());
-        if (date.getMonthValue() >= 4) {
-            return currentYear.format(YEAR_FORMATTER) + "-" +
-                    currentYear.plusYears(1).format(YEAR_FORMATTER);
-        } else {
-            return currentYear.minusYears(1).format(YEAR_FORMATTER) + "-" +
-                    currentYear.format(YEAR_FORMATTER);
-        }
+        int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
+        int year = date.getYear();
+        return (date.getMonthValue() >= startMonth)
+                ? year + "-" + (year + 1)
+                : (year - 1) + "-" + year;
     }
 
     @Transactional(readOnly = true)
