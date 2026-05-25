@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.service.TeacherBulkImportService;
 import com.indraacademy.ias_management.service.TeacherService;
 import com.indraacademy.ias_management.service.UserDetailsServiceImpl;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -38,7 +39,7 @@ public class TeacherController {
     @Autowired private AuthService authService;
 
     @PostMapping
-    public ResponseEntity<?> registerTeacher(@RequestBody Teacher newTeacher, HttpServletRequest request) {
+    public ResponseEntity<?> registerTeacher(@Valid @RequestBody Teacher newTeacher, HttpServletRequest request) {
         log.info("Request to register new teacher: {}", newTeacher.getTeacherId());
         try {
             Teacher savedTeacher = teacherService.addTeacher(newTeacher, request);
@@ -103,7 +104,7 @@ public class TeacherController {
     }
 
     @PutMapping("/{teacherId}")
-    public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @RequestBody Teacher updatedTeacher, HttpServletRequest request) {
+    public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @Valid @RequestBody Teacher updatedTeacher, HttpServletRequest request) {
         log.info("Request to update teacher ID: {}", teacherId);
         Optional<Teacher> existingTeacherOptional = teacherService.getTeacher(teacherId);
 

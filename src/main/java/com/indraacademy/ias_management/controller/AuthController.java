@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.config.RateLimiter;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.ChangePasswordRequest;
 import com.indraacademy.ias_management.dto.LoginRequest;
@@ -35,9 +36,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.WebUtils;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.HexFormat;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -59,6 +63,7 @@ public class AuthController {
     @Autowired private AdminRepository adminRepository;
     @Autowired private com.indraacademy.ias_management.service.EntitlementService entitlementService;
     @Autowired private com.indraacademy.ias_management.repository.SchoolEffectiveEntitlementRepository entitlementRepo;
+    @Autowired private RateLimiter rateLimiter;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -68,6 +73,12 @@ public class AuthController {
 
     @Value("${auth.cookie.sameSite}")
     private String sameSite;
+
+    @Value("${jwt.access-token.expiry-minutes}")
+    private long accessTokenExpiryMinutes;
+
+    @Value("${jwt.refresh-token.expiry-days}")
+    private long refreshTokenExpiryDays;
 
     /** Cookie domain — must cover all school subdomains (e.g. "edunexify.co.in"). */
     @Value("${app.base-domain:edunexify.co.in}")
@@ -149,8 +160,17 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest req, HttpServletResponse response) {
+        if (rateLimiter.isRateLimited("login:" + req.getUserId(), 5, 300000)) {
+            return ResponseEntity.status(429).body("Too many login attempts. Try again in 5 minutes.");
+        }
+
         Optional<User> found = userRepository.findByUserId(req.getUserId());
-        if (found.isEmpty() || !passwordEncoder.matches(req.getPassword(), found.get().getPassword())) {
+        if (found.isEmpty()) {
+            log.warn("Login failed: userId={} not found", req.getUserId());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid credentials");
+        }
+        if (!passwordEncoder.matches(req.getPassword(), found.get().getPassword())) {
+            log.warn("Login failed: wrong password for userId={}", req.getUserId());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid credentials");
         }
 
@@ -199,7 +219,7 @@ public class AuthController {
                 .claim("userId", loggedIn.getUserId())
                 .claim("schoolId", loggedIn.getSchoolId())
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60)))
+                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes)))
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
@@ -212,7 +232,7 @@ public class AuthController {
                 .setSubject(loggedIn.getUserId())
                 .setId(jti)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 7)))
+                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays)))
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
@@ -221,8 +241,10 @@ public class AuthController {
         // without Domain (covers legacy host-only cookies set before the Domain fix).
         clearCookies(response);
 
-        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", accessToken, Duration.ofHours(1)).toString());
-        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", refreshToken, Duration.ofDays(7)).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", accessToken, Duration.ofMinutes(accessTokenExpiryMinutes)).toString());
+        response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", refreshToken, Duration.ofDays(refreshTokenExpiryDays)).toString());
+
+        log.info("Login success: userId={}, role={}, schoolId={}", loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId());
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("userId", loggedIn.getUserId());
@@ -432,12 +454,12 @@ public class AuthController {
                     .setSubject(userId)
                     .setId(newJti)
                     .setIssuedAt(new Date())
-                    .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * 7)))
+                    .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays)))
                     .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                     .compact();
 
-            response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", newAccessToken, Duration.ofHours(1)).toString());
-            response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", newRefreshToken, Duration.ofDays(7)).toString());
+            response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", newAccessToken, Duration.ofMinutes(accessTokenExpiryMinutes)).toString());
+            response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", newRefreshToken, Duration.ofDays(refreshTokenExpiryDays)).toString());
 
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("userId", loggedIn.getUserId());
@@ -557,6 +579,11 @@ public class AuthController {
             log.warn("Request password reset failed: User ID and Email are required.");
             return ResponseEntity.badRequest().body("User ID and Email are required.");
         }
+
+        if (rateLimiter.isRateLimited("reset:" + email, 3, 3600000)) {
+            return ResponseEntity.status(429).body("Too many reset requests. Try again in 1 hour.");
+        }
+
         log.info("Request to initiate password reset for user ID: {}", userId);
 
         Optional<User> userOptional = userRepository.findByUserId(userId);
@@ -572,12 +599,12 @@ public class AuthController {
         }
 
         try {
-            String resetToken = UUID.randomUUID().toString();
-            user.setResetToken(resetToken);
+            String rawToken = UUID.randomUUID().toString();
+            user.setResetToken(hashToken(rawToken));
             user.setResetTokenExpiry(new Date(System.currentTimeMillis() + 3600000));
             userRepository.save(user);
 
-            String resetLink = frontendUrl + "/reset-password?token=" + resetToken;
+            String resetLink = frontendUrl + "/reset-password?token=" + rawToken;
             String subject   = "Password Reset Request – Edunexify";
             String htmlBody  = buildPasswordResetHtml(resetLink);
             emailService.sendHtmlEmail(user.getEmail(), subject, htmlBody);
@@ -604,7 +631,7 @@ public class AuthController {
         log.info("Attempting to reset password using token.");
 
         try {
-            Optional<User> userOptional = userRepository.findByResetToken(token);
+            Optional<User> userOptional = userRepository.findByResetToken(hashToken(token));
             if (userOptional.isEmpty()) {
                 log.warn("Password reset failed: Invalid reset token.");
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid reset token.");
@@ -626,6 +653,16 @@ public class AuthController {
         } catch (Exception e) {
             log.error("Unexpected error during password reset.", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to reset password.");
+        }
+    }
+
+    private String hashToken(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to hash token", e);
         }
     }
 

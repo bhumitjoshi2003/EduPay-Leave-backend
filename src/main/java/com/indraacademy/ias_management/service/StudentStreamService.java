@@ -95,7 +95,8 @@ public class StudentStreamService {
                         null, null, null, null);
             }
 
-            StudentStreamSelection s = sel.get();
+            StudentStreamSelection s = sel.orElseThrow(() -> new IllegalArgumentException(
+                    "Stream selection not found for student " + student.getStudentId()));
             String streamName = streamRepository.findById(s.getStreamId())
                     .map(AcademicStream::getStreamName).orElse(null);
             String optSubjectName = null;
@@ -129,7 +130,8 @@ public class StudentStreamService {
                         return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
                                 null, null, null, null);
                     }
-                    StudentStreamSelection s = sel.get();
+                    StudentStreamSelection s = sel.orElseThrow(() -> new IllegalArgumentException(
+                            "Stream selection not found for student " + student.getStudentId()));
                     String streamName = streamRepository.findById(s.getStreamId())
                             .map(AcademicStream::getStreamName).orElse(null);
                     String optSubjectName = null;

@@ -11,6 +11,7 @@ import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.service.SchoolService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +41,7 @@ public class SchoolController {
      */
     @PostMapping("/api/super-admin/schools")
     @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
-    public ResponseEntity<?> onboardSchool(@RequestBody SchoolOnboardRequest req,
+    public ResponseEntity<?> onboardSchool(@Valid @RequestBody SchoolOnboardRequest req,
                                            HttpServletRequest request) {
         log.info("POST /api/super-admin/schools — onboarding school '{}'", req.getName());
         try {
@@ -161,7 +162,7 @@ public class SchoolController {
      */
     @PutMapping("/api/school/settings")
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
-    public ResponseEntity<?> updateSettings(@RequestBody SchoolSettingsUpdateRequest req,
+    public ResponseEntity<?> updateSettings(@Valid @RequestBody SchoolSettingsUpdateRequest req,
                                             HttpServletRequest request) {
         log.info("PUT /api/school/settings");
         try {

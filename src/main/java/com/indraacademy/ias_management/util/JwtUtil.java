@@ -27,6 +27,9 @@ public class JwtUtil {
     @Value("${jwt.public-key}")
     private String publicKey;
 
+    @Value("${jwt.access-token.expiry-minutes}")
+    private long accessTokenExpiryMinutes;
+
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
     }
@@ -74,7 +77,7 @@ public class JwtUtil {
                 .setClaims(claims)
                 .setSubject(username)
                 .setIssuedAt(new Date(System.currentTimeMillis()))
-                .setExpiration(new Date(System.currentTimeMillis() + 1000 * 60 * 60))
+                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes)))
                 .signWith(getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
     }
@@ -116,7 +119,7 @@ public class JwtUtil {
                 .claim("userId", userId)
                 .claim("schoolId", schoolId)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + (1000 * 60 * 60))) // 60 min
+                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes)))
                 .signWith(getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
     }

@@ -134,7 +134,7 @@ public class AttendanceService {
                 log.warn("Student not found with ID: {}", studentId);
                 return counts;
             }
-            student = studentOptional.get();
+            student = studentOptional.orElseThrow(() -> new IllegalArgumentException("Student not found: " + studentId));
             className = student.getClassName();
         } catch (DataAccessException e) {
             log.error("Data access error fetching student ID: {}", studentId, e);

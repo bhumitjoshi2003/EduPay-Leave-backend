@@ -16,6 +16,7 @@ import com.indraacademy.ias_management.service.StudentBulkImportService;
 import com.indraacademy.ias_management.service.StudentPromotionService;
 import com.indraacademy.ias_management.service.StudentService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -60,7 +61,7 @@ public class StudentController {
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> registerStudent(@RequestBody Student newStudent, HttpServletRequest request) {
+    public ResponseEntity<?> registerStudent(@Valid @RequestBody Student newStudent, HttpServletRequest request) {
         log.info("Request to register new student: {}", newStudent.getStudentId());
         try {
             Student savedStudent = studentService.addStudent(newStudent, request);

@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
+import jakarta.validation.Valid;
 import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
@@ -38,7 +39,7 @@ public class AttendanceController {
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<String> saveAttendance(@RequestBody List<Attendance> attendanceList, HttpServletRequest request) {
+    public ResponseEntity<String> saveAttendance(@Valid @RequestBody List<Attendance> attendanceList, HttpServletRequest request) {
         log.info("Request to save attendance for {} records.", attendanceList != null ? attendanceList.size() : 0);
         attendanceService.saveAttendance(attendanceList, request);
         log.info("Attendance data saved successfully.");

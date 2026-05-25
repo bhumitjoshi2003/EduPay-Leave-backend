@@ -1,7 +1,9 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.dto.CreateOrderRequest;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
+import jakarta.validation.Valid;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PaymentService;
@@ -35,47 +37,28 @@ public class PaymentController {
 
     @PostMapping("/create")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
-    public ResponseEntity<Map<String, Object>> createOrder(@RequestBody Map<String, Object> requestBody) {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> paymentData = (Map<String, Object>) requestBody.get("paymentData");
+    public ResponseEntity<Map<String, Object>> createOrder(@Valid @RequestBody CreateOrderRequest req) {
+        log.info("Request to create payment order for student: {}", req.getStudentId());
 
-        if (paymentData == null) {
-            log.warn("createOrder called with missing 'paymentData' field in request body.");
-            return ResponseEntity.badRequest().body(Map.of("error", "Request body must contain a 'paymentData' object."));
-        }
-
-        log.info("Request to create payment order for student: {}", paymentData.get("studentId"));
-
-        try {
-            // Robust parsing with proper casting and null checks
-            int amount = (int) paymentData.get("totalAmount");
-            String studentId = (String) paymentData.get("studentId");
-
-            // Extracting fields robustly. Assumes the incoming data structure is mostly correct.
-            String studentName = (String) paymentData.get("studentName");
-            String className = (String) paymentData.get("className");
-            String session = (String) paymentData.get("session");
-            String month = (String) paymentData.get("monthSelectionString");
-            int busFee = (int) paymentData.get("totalBusFee");
-            int tuitionFee = (int) paymentData.get("totalTuitionFee");
-            int annualCharges = (int) paymentData.get("totalAnnualCharges");
-            int labCharges = (int) paymentData.get("totalLabCharges");
-            int ecaProject = (int) paymentData.get("totalEcaProject");
-            int examinationFee = (int) paymentData.get("totalExaminationFee");
-
-            // Robustly handling optional/nullable integer fields
-            int additionalCharges = ((Number) paymentData.getOrDefault("additionalCharges", 0)).intValue();
-            int lateFees = ((Number) paymentData.getOrDefault("lateFees", 0)).intValue();
-
-            int platformFee = ((Number) paymentData.getOrDefault("platformFee", 0)).intValue();
-
-            Map<String, Object> order = razorpayService.createOrder(amount, studentId, studentName, className, session, month, busFee, tuitionFee, annualCharges, labCharges, ecaProject, examinationFee, additionalCharges, lateFees, platformFee);
-            log.info("Razorpay order created successfully for student {}.", studentId);
-            return ResponseEntity.ok(order);
-        } catch (ClassCastException | NullPointerException e) {
-            log.error("Invalid data format in order creation request.", e);
-            return ResponseEntity.badRequest().body(Map.of("error", "Invalid data format in payment request."));
-        }
+        Map<String, Object> order = razorpayService.createOrder(
+                req.getTotalAmount(),
+                req.getStudentId(),
+                req.getStudentName(),
+                req.getClassName(),
+                req.getSession(),
+                req.getMonthSelectionString(),
+                req.getTotalBusFee(),
+                req.getTotalTuitionFee(),
+                req.getTotalAnnualCharges(),
+                req.getTotalLabCharges(),
+                req.getTotalEcaProject(),
+                req.getTotalExaminationFee(),
+                req.getAdditionalCharges(),
+                req.getLateFees(),
+                req.getPlatformFee()
+        );
+        log.info("Razorpay order created successfully for student {}.", req.getStudentId());
+        return ResponseEntity.ok(order);
     }
 
     @PostMapping("/verify")

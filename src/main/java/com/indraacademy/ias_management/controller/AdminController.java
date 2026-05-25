@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.service.AdminService;
 import com.indraacademy.ias_management.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -30,7 +31,7 @@ public class AdminController {
 
     @PostMapping
     @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
-    public ResponseEntity<Admin> registerNewAdmin(@RequestBody Admin admin, HttpServletRequest request) {
+    public ResponseEntity<Admin> registerNewAdmin(@Valid @RequestBody Admin admin, HttpServletRequest request) {
         log.info("Request from Super Admin to create a new admin with email: {}", admin.getEmail());
         Admin savedAdmin = adminService.createAdmin(admin, request);
         log.info("Successfully created new Admin with ID: {}", savedAdmin.getAdminId());
@@ -57,7 +58,7 @@ public class AdminController {
     }
 
     @PutMapping("/{adminId}")
-    public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @RequestBody Admin admin, HttpServletRequest request) {
+    public ResponseEntity<Admin> updateAdmin(@PathVariable String adminId, @Valid @RequestBody Admin admin, HttpServletRequest request) {
         log.info("Request to update Admin with ID: {}", adminId);
         Admin updatedAdmin = adminService.updateAdmin(adminId, admin, request);
         log.info("Successfully updated Admin with ID: {}", adminId);

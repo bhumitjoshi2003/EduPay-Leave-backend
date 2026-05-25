@@ -19,31 +19,31 @@ public class Student {
     private Long schoolId;
 
     @Id
-    @Column(name = "student_id")
+    @Column(name = "student_id", length = 50)
     private String studentId;
 
-    @Column(name = "name")
+    @Column(name = "name", length = 200)
     private String name;
 
-    @Column(name = "email")
+    @Column(name = "email", length = 255)
     private String email;
 
-    @Column(name = "phone_number")
+    @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
     @Column(name = "dob")
     private LocalDate dob;
 
-    @Column(name = "class_name")
+    @Column(name = "class_name", length = 50)
     private String className;
 
-    @Column(name = "gender")
+    @Column(name = "gender", length = 10)
     private String gender;
 
-    @Column(name = "father_name")
+    @Column(name = "father_name", length = 200)
     private String fatherName;
 
-    @Column(name = "mother_name")
+    @Column(name = "mother_name", length = 200)
     private String motherName;
 
     @Column(name = "takes_bus")

@@ -12,15 +12,19 @@ public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    @Column(unique = true)
+    @Column(unique = true, length = 100)
     private String userId;
 
+    @Column(length = 255)
     private String password;
 
+    @Column(length = 20)
     private String role;
 
+    @Column(length = 255)
     private String email;
 
+    @Column(length = 100)
     private String resetToken;
 
     @Temporal(TemporalType.TIMESTAMP)

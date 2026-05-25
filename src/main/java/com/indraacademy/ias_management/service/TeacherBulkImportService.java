@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStreamReader;
@@ -71,6 +72,7 @@ public class TeacherBulkImportService {
      * Parses the uploaded CSV, attempts to save each data row, and returns
      * an aggregated result containing success/failure counts and per-row errors.
      */
+    @Transactional
     public BulkImportResultDTO bulkImport(MultipartFile file, HttpServletRequest request) {
         List<BulkImportResultDTO.RowError> errors = new ArrayList<>();
         int successful = 0;
