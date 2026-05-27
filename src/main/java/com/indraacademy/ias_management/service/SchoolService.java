@@ -70,6 +70,7 @@ public class SchoolService {
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private AcademicSessionService academicSessionService;
     @Autowired private SlugResolutionService slugResolutionService;
 
     /**
@@ -191,7 +192,11 @@ public class SchoolService {
         adminRepository.save(adminProfile);
         log.info("Admin profile created: adminId={} for schoolId={}", req.getAdminUserId(), saved.getId());
 
-        // 4. Auto-create a trial subscription if a plan was specified
+        // 4. Auto-create the first academic session based on academicYearStartMonth
+        academicSessionService.getOrCreateCurrentSession(saved.getId());
+        log.info("Initial academic session created for schoolId={}", saved.getId());
+
+        // 5. Auto-create a trial subscription if a plan was specified
         if (req.getTrialPlanId() != null) {
             Plan plan = planRepository.findById(req.getTrialPlanId()).orElse(null);
             if (plan != null) {
