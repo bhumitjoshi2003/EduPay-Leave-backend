@@ -73,6 +73,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login",
+                                "/api/auth/logout",
                                 "/api/auth/register",
                                 "/api/auth/reset-password",
                                 "/api/auth/request-password-reset",
