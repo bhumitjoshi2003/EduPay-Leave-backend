@@ -38,6 +38,10 @@ public class Notification {
     @Column(name = "school_id")
     private Long schoolId;
 
+    /** Delivery channel: PUSH, SMS, EMAIL, WHATSAPP. Null treated as PUSH for backward compatibility. */
+    @Column(name = "channel", length = 20)
+    private String channel;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) {
@@ -115,4 +119,7 @@ public class Notification {
 
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
+
+    public String getChannel() { return channel; }
+    public void setChannel(String channel) { this.channel = channel; }
 }

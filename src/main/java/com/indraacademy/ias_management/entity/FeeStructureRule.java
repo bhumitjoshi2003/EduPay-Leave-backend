@@ -32,6 +32,9 @@ public class FeeStructureRule {
     @Column(name = "class_name", nullable = false, length = 50)
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
     /** Amount in paise (INR). e.g. 150000 = Rs 1500.00 */
     @Column(name = "amount", nullable = false)
     private long amount;
@@ -69,6 +72,9 @@ public class FeeStructureRule {
 
     public String getClassName() { return className; }
     public void setClassName(String className) { this.className = className; }
+
+    public Long getClassId() { return classId; }
+    public void setClassId(Long classId) { this.classId = classId; }
 
     public long getAmount() { return amount; }
     public void setAmount(long amount) { this.amount = amount; }

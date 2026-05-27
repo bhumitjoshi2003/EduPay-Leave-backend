@@ -22,6 +22,9 @@ public class ExamConfig {
     @Column(name = "class_name", nullable = false)
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
     @Column(name = "exam_name", nullable = false)
     private String examName;
 

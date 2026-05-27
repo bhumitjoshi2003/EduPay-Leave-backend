@@ -33,6 +33,9 @@ public class Leave {
     @Column(name = "class_name", nullable = false)
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
     @Column(name = "reason", nullable = false, columnDefinition = "TEXT")
     private String reason;
 

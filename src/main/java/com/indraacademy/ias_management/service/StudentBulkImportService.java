@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.BulkImportResultDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.opencsv.CSVReader;
@@ -73,6 +74,7 @@ public class StudentBulkImportService {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private SchoolClassRepository schoolClassRepository;
 
     /**
      * Parses the uploaded CSV, attempts to save each data row, and returns
@@ -305,6 +307,9 @@ public class StudentBulkImportService {
         student.setPhoneNumber(phoneNumber.isEmpty()  ? null : phoneNumber);
         student.setDob(dob);
         student.setClassName(className);
+        // Dual-write: resolve className → classId
+        schoolClassRepository.findBySchoolIdAndName(securityUtil.getSchoolId(), className)
+                .ifPresent(sc -> student.setClassId(sc.getId()));
         student.setGender(gender.isEmpty()             ? null : gender);
         student.setFatherName(fatherName.isEmpty()     ? null : fatherName);
         student.setMotherName(motherName.isEmpty()     ? null : motherName);

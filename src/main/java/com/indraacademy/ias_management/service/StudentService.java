@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.repository.LeaveRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -57,6 +58,7 @@ public class StudentService {
     @Autowired private LeaveRepository leaveRepository;
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
 
     private String getAcademicYear(LocalDate date) {
         int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
@@ -104,6 +106,11 @@ public class StudentService {
                 student.setStatus(StudentStatus.ACTIVE);
             }
             student.setSchoolId(schoolId);
+            // Dual-write: resolve className → classId
+            if (student.getClassId() == null && student.getClassName() != null) {
+                schoolClassRepository.findBySchoolIdAndName(schoolId, student.getClassName())
+                        .ifPresent(sc -> student.setClassId(sc.getId()));
+            }
             Student savedStudent = studentRepository.save(student);
 
             auditService.log(
@@ -258,6 +265,11 @@ public class StudentService {
 
             String oldValue = objectMapper.writeValueAsString(existingStudentOptional.get());
 
+            // Dual-write: resolve className → classId
+            if (updatedStudent.getClassName() != null) {
+                schoolClassRepository.findBySchoolIdAndName(schoolId, updatedStudent.getClassName())
+                        .ifPresent(sc -> updatedStudent.setClassId(sc.getId()));
+            }
             Student savedStudent = studentRepository.save(updatedStudent);
 
             auditService.logUpdate(

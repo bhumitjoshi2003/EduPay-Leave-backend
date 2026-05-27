@@ -45,4 +45,6 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
     long countByStatusAndSchoolIdAndAppliedDateBetween(LeaveStatus status, Long schoolId, java.time.LocalDateTime start, java.time.LocalDateTime end);
 
     long countByStatusAndSchoolId(LeaveStatus status, Long schoolId);
+
+    List<Leave> findBySchoolId(Long schoolId);
 }

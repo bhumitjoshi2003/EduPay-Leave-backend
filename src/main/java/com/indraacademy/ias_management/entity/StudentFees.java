@@ -23,6 +23,9 @@ public class StudentFees {
     @Column(name = "class_name")
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
     @Column(name = "month")
     private Integer month;
 

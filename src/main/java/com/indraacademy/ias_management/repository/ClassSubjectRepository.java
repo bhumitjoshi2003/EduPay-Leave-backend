@@ -12,4 +12,6 @@ public interface ClassSubjectRepository extends JpaRepository<ClassSubject, Long
     List<ClassSubject> findByClassNameAndSchoolId(String className, Long schoolId);
 
     boolean existsByClassNameAndSubjectNameAndSchoolId(String className, String subjectName, Long schoolId);
+
+    List<ClassSubject> findBySchoolId(Long schoolId);
 }

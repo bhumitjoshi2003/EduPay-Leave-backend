@@ -38,4 +38,6 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
     long countDistinctOverdueStudents(@Param("schoolId") Long schoolId, @Param("session") String session, @Param("currentAcademicMonth") int currentAcademicMonth);
 
     boolean existsByStudentIdAndYearAndSchoolId(String studentId, String year, Long schoolId);
+
+    List<StudentFees> findBySchoolId(Long schoolId);
 }

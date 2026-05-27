@@ -5,10 +5,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface SchoolClassRepository extends JpaRepository<SchoolClass, Long> {
     List<SchoolClass> findBySchoolIdAndActiveOrderByDisplayOrderAsc(Long schoolId, boolean active);
     List<SchoolClass> findBySchoolIdOrderByDisplayOrderAsc(Long schoolId);
     List<SchoolClass> findBySchoolIdAndStreamEligibleAndActiveOrderByDisplayOrderAsc(Long schoolId, boolean streamEligible, boolean active);
+    Optional<SchoolClass> findBySchoolIdAndName(Long schoolId, String name);
 }

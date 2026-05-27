@@ -12,9 +12,11 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.indraacademy.ias_management.repository.RolePermissionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -24,6 +26,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
@@ -36,6 +39,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     @Autowired
     private UserDetailsService userDetailsService;
+
+    @Autowired
+    private RolePermissionRepository rolePermissionRepository;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -114,10 +120,22 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
 
                 if (jwtUtil.validateToken(token, userDetails)) {
+                    // Build authorities: ROLE_ + permission keys
+                    List<GrantedAuthority> authorities = new ArrayList<>();
+                    authorities.add(new SimpleGrantedAuthority("ROLE_" + role));
+                    try {
+                        List<String> permKeys = rolePermissionRepository.findPermissionKeysByRoleAndSchool(role, schoolId);
+                        for (String key : permKeys) {
+                            authorities.add(new SimpleGrantedAuthority(key));
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to load permissions for role={}, schoolId={}: {}", role, schoolId, e.getMessage());
+                    }
+
                     UsernamePasswordAuthenticationToken authentication =
                             new UsernamePasswordAuthenticationToken(
                                     userDetails, null,
-                                    List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                                    authorities
                             );
 
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

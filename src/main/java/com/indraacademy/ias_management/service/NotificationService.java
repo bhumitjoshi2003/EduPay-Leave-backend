@@ -60,6 +60,9 @@ public class NotificationService {
             notification.setCreatedBy(securityUtil.getUsername());
             notification.setCreatedAt(LocalDateTime.now());
             notification.setSchoolId(securityUtil.getSchoolId());
+            if (notification.getChannel() == null) {
+                notification.setChannel("PUSH");
+            }
 
             Notification savedNotification = notificationRepository.save(notification);
 
@@ -108,6 +111,7 @@ public class NotificationService {
             notification.setAudience(userId);
             notification.setCreatedAt(LocalDateTime.now());
             notification.setSchoolId(schoolId);
+            notification.setChannel("PUSH");
             Notification savedNotification = notificationRepository.save(notification);
 
             // 2. Create and save the UserNotification entity

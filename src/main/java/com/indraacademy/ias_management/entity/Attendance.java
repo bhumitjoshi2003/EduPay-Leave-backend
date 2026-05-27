@@ -28,6 +28,20 @@ public class Attendance {
     private LocalDate date;
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
+    @Column(name = "section_id")
+    private Long sectionId;
+
+    /** ABSENT, PRESENT, HALF_DAY, LATE, EXCUSED. Null treated as ABSENT for backward compatibility. */
+    @Column(name = "status", length = 20)
+    private String status;
+
+    /** userId of the teacher/admin who marked this record. */
+    @Column(name = "marked_by", length = 100)
+    private String markedBy;
+
     public Attendance() {}
 
     public Attendance(boolean chargePaid, LocalDate date, String className) {
@@ -77,6 +91,18 @@ public class Attendance {
         this.className = className;
     }
 
+    public Long getClassId() { return classId; }
+    public void setClassId(Long classId) { this.classId = classId; }
+
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
+    public String getMarkedBy() { return markedBy; }
+    public void setMarkedBy(String markedBy) { this.markedBy = markedBy; }
+
+    public Long getSectionId() { return sectionId; }
+    public void setSectionId(Long sectionId) { this.sectionId = sectionId; }
 }

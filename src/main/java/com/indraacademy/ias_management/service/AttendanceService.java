@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -42,6 +43,7 @@ public class AttendanceService {
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -62,9 +64,23 @@ public class AttendanceService {
         try {
             Long schoolId = securityUtil.getSchoolId();
 
-            // Set schoolId on each attendance record before saving
+            // Set schoolId and markedBy on each attendance record before saving
+            String markedBy = securityUtil.getUsername();
             for (Attendance a : attendanceList) {
                 a.setSchoolId(schoolId);
+                if (a.getMarkedBy() == null) {
+                    a.setMarkedBy(markedBy);
+                }
+                if (a.getStatus() == null) {
+                    a.setStatus("ABSENT");
+                }
+            }
+
+            // Dual-write: resolve className → classId
+            Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className)
+                    .map(sc -> sc.getId()).orElse(null);
+            if (classId != null) {
+                for (Attendance a : attendanceList) { a.setClassId(classId); }
             }
 
             // Capture old state before deletion

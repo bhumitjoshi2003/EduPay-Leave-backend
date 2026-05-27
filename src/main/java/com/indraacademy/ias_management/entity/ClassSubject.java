@@ -19,6 +19,9 @@ public class ClassSubject {
     @Column(name = "class_name", nullable = false)
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
     @Column(name = "subject_name", nullable = false)
     private String subjectName;
 

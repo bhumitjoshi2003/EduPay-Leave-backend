@@ -20,6 +20,12 @@ public class TimetableEntry {
     @Column(name = "class_name", nullable = false)
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
+    @Column(name = "section_id")
+    private Long sectionId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Day day;
@@ -48,6 +54,9 @@ public class TimetableEntry {
     public String getClassName() { return className; }
     public void setClassName(String className) { this.className = className; }
 
+    public Long getClassId() { return classId; }
+    public void setClassId(Long classId) { this.classId = classId; }
+
     public Day getDay() { return day; }
     public void setDay(Day day) { this.day = day; }
 
@@ -71,4 +80,7 @@ public class TimetableEntry {
 
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
+
+    public Long getSectionId() { return sectionId; }
+    public void setSectionId(Long sectionId) { this.sectionId = sectionId; }
 }

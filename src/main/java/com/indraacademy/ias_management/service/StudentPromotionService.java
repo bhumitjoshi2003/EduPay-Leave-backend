@@ -107,6 +107,9 @@ public class StudentPromotionService {
                         continue;
                     }
                     student.setClassName(nextClass);
+                    // Dual-write: resolve className → classId
+                    schoolClassRepository.findBySchoolIdAndName(securityUtil.getSchoolId(), nextClass)
+                            .ifPresent(sc -> student.setClassId(sc.getId()));
                     studentRepository.save(student);
                     auditService.log(
                             securityUtil.getUsername(), securityUtil.getRole(),

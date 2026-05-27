@@ -15,6 +15,7 @@ import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.PermissionService;
 import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.util.JwtUtil;
 import com.indraacademy.ias_management.util.SchoolContext;
@@ -64,6 +65,7 @@ public class AuthController {
     @Autowired private com.indraacademy.ias_management.service.EntitlementService entitlementService;
     @Autowired private com.indraacademy.ias_management.repository.SchoolEffectiveEntitlementRepository entitlementRepo;
     @Autowired private RateLimiter rateLimiter;
+    @Autowired private PermissionService permissionService;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -113,6 +115,14 @@ public class AuthController {
 
         // Entitlement fields — only for school-scoped users (not SUPER_ADMIN)
         appendEntitlementFields(body, user.getSchoolId());
+
+        // Permission keys for the user's role at their school
+        try {
+            List<String> permKeys = permissionService.getPermissionKeysForRole(user.getRole(), user.getSchoolId());
+            body.put("permissionKeys", permKeys);
+        } catch (Exception e) {
+            body.put("permissionKeys", List.of());
+        }
 
         return ResponseEntity.ok(body);
     }

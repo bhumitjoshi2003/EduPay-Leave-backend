@@ -23,6 +23,9 @@ public class FeeStructure {
     @Column(name = "class_name")
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
     @Column(name = "tuition_fee")
     private double tuitionFee;
 

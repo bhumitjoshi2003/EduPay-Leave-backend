@@ -17,4 +17,6 @@ public interface TimetableRepository extends JpaRepository<TimetableEntry, Long>
     boolean existsByClassNameAndDayAndPeriodNumberAndSchoolId(String className, Day day, Integer periodNumber, Long schoolId);
 
     boolean existsByClassNameAndDayAndPeriodNumberAndSchoolIdAndIdNot(String className, Day day, Integer periodNumber, Long schoolId, Long id);
+
+    List<TimetableEntry> findBySchoolId(Long schoolId);
 }

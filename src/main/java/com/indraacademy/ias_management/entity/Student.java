@@ -37,6 +37,12 @@ public class Student {
     @Column(name = "class_name", length = 50)
     private String className;
 
+    @Column(name = "class_id")
+    private Long classId;
+
+    @Column(name = "section_id")
+    private Long sectionId;
+
     @Column(name = "gender", length = 10)
     private String gender;
 
