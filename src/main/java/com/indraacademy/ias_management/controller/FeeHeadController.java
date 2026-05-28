@@ -45,4 +45,11 @@ public class FeeHeadController {
             HttpServletRequest request) {
         return ResponseEntity.ok(feeHeadService.updateFeeHead(id, dto, request));
     }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteFeeHead(@PathVariable Long id, HttpServletRequest request) {
+        feeHeadService.deleteFeeHead(id, request);
+        return ResponseEntity.noContent().build();
+    }
 }

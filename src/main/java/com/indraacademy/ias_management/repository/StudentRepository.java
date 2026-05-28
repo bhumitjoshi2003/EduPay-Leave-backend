@@ -24,6 +24,8 @@ public interface StudentRepository extends JpaRepository<Student, String> {
 
     List<Student> findByClassNameAndStatusAndSchoolId(String className, StudentStatus status, Long schoolId);
 
+    List<Student> findByClassNameAndSectionIdAndStatusAndSchoolId(String className, Long sectionId, StudentStatus status, Long schoolId);
+
     // Platform-wide status lookup (used by scheduler — no schoolId filter)
     List<Student> findByStatus(StudentStatus status);
 

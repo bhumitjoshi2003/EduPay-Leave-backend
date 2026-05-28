@@ -30,4 +30,6 @@ public interface StudentFeeConfigRepository extends JpaRepository<StudentFeeConf
 
     void deleteBySchoolIdAndStudentIdAndAcademicSessionId(
             Long schoolId, String studentId, Long academicSessionId);
+
+    void deleteBySchoolIdAndAcademicSessionId(Long schoolId, Long academicSessionId);
 }

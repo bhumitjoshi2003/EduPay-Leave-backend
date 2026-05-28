@@ -4,7 +4,10 @@ import com.indraacademy.ias_management.dto.AcademicSessionDto;
 import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.repository.AcademicSessionRepository;
+import com.indraacademy.ias_management.repository.FeeStructureRuleRepository;
+import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.StudentFeeConfigRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -22,6 +25,15 @@ public class AcademicSessionService {
 
     @Autowired
     private SchoolRepository schoolRepository;
+
+    @Autowired
+    private FeeStructureRuleRepository feeStructureRuleRepository;
+
+    @Autowired
+    private StudentFeeConfigRepository studentFeeConfigRepository;
+
+    @Autowired
+    private InvoiceRepository invoiceRepository;
 
     @Autowired
     private SecurityUtil securityUtil;
@@ -129,6 +141,29 @@ public class AcademicSessionService {
     public LocalDate academicMonthToDate(AcademicSession session, int academicMonth) {
         LocalDate start = session.getStartDate();
         return start.plusMonths(academicMonth - 1);
+    }
+
+    @Transactional
+    public void deleteSession(Long sessionId) {
+        Long schoolId = securityUtil.getSchoolId();
+
+        AcademicSession session = sessionRepository.findById(sessionId)
+                .filter(s -> s.getSchoolId().equals(schoolId))
+                .orElseThrow(() -> new IllegalArgumentException("Session not found."));
+
+        if (session.isCurrent()) {
+            throw new IllegalStateException("Cannot delete the current academic session. Set another session as current first.");
+        }
+
+        if (invoiceRepository.existsBySchoolIdAndAcademicSessionId(schoolId, sessionId)) {
+            throw new IllegalStateException("Cannot delete this session because invoices exist for it. Archive the session instead.");
+        }
+
+        // Cascade delete fee structure rules and student fee configs
+        feeStructureRuleRepository.deleteBySchoolIdAndAcademicSessionId(schoolId, sessionId);
+        studentFeeConfigRepository.deleteBySchoolIdAndAcademicSessionId(schoolId, sessionId);
+
+        sessionRepository.delete(session);
     }
 
     private AcademicSessionDto toDto(AcademicSession entity) {

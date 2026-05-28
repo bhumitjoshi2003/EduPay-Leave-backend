@@ -125,27 +125,42 @@ public class StudentController {
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/new/class/{className}")
-    public List<StudentLeaveDTO> getNewStudentsByClass(@PathVariable String className) {
-        log.info("Request to get UPCOMING students for class: {}", className);
-        return studentService.getUpcomingStudentsByClass(className).stream()
+    public List<StudentLeaveDTO> getNewStudentsByClass(
+            @PathVariable String className,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("Request to get UPCOMING students for class: {}, section: {}", className, sectionId);
+        List<Student> students = sectionId != null
+                ? studentService.getUpcomingStudentsByClassAndSection(className, sectionId)
+                : studentService.getUpcomingStudentsByClass(className);
+        return students.stream()
                 .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
                 .collect(Collectors.toList());
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping("/active/class/{className}")
-    public List<StudentLeaveDTO> findActiveStudentsByClass(@PathVariable String className) {
-        log.info("Request to get ACTIVE students for class: {}", className);
-        return studentService.getActiveStudentsByClass(className).stream()
+    public List<StudentLeaveDTO> findActiveStudentsByClass(
+            @PathVariable String className,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("Request to get ACTIVE students for class: {}, section: {}", className, sectionId);
+        List<Student> students = sectionId != null
+                ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
+                : studentService.getActiveStudentsByClass(className);
+        return students.stream()
                 .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
                 .collect(Collectors.toList());
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/inactive/class/{className}")
-    public List<StudentLeaveDTO> getInactiveStudentsByClass(@PathVariable String className) {
-        log.info("Request to get INACTIVE students for class: {}", className);
-        return studentService.getInactiveStudentsByClass(className).stream()
+    public List<StudentLeaveDTO> getInactiveStudentsByClass(
+            @PathVariable String className,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("Request to get INACTIVE students for class: {}, section: {}", className, sectionId);
+        List<Student> students = sectionId != null
+                ? studentService.getInactiveStudentsByClassAndSection(className, sectionId)
+                : studentService.getInactiveStudentsByClass(className);
+        return students.stream()
                 .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
                 .collect(Collectors.toList());
     }

@@ -71,6 +71,9 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
     List<Invoice> findBySchoolIdAndAcademicSessionIdAndStatus(
             Long schoolId, Long academicSessionId, InvoiceStatus status);
 
+    /** Check if any invoices exist for a given session (used before session deletion) */
+    boolean existsBySchoolIdAndAcademicSessionId(Long schoolId, Long academicSessionId);
+
     /** All students with invoices for a session + month (for generation idempotency) */
     @Query("SELECT DISTINCT i.studentId FROM Invoice i " +
             "WHERE i.schoolId = :schoolId " +

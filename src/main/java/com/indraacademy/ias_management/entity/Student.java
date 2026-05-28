@@ -43,6 +43,9 @@ public class Student {
     @Column(name = "section_id")
     private Long sectionId;
 
+    @Column(name = "section_name", length = 50)
+    private String sectionName;
+
     @Column(name = "gender", length = 10)
     private String gender;
 
@@ -227,4 +230,7 @@ public class Student {
 
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
+
+    public String getSectionName() { return sectionName; }
+    public void setSectionName(String sectionName) { this.sectionName = sectionName; }
 }

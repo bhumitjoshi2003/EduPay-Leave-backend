@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.dto.FeeHeadDto;
 import com.indraacademy.ias_management.entity.FeeFrequency;
 import com.indraacademy.ias_management.entity.FeeHead;
 import com.indraacademy.ias_management.repository.FeeHeadRepository;
+import com.indraacademy.ias_management.repository.FeeStructureRuleRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,9 @@ public class FeeHeadService {
 
     @Autowired
     private FeeHeadRepository feeHeadRepository;
+
+    @Autowired
+    private FeeStructureRuleRepository feeStructureRuleRepository;
 
     @Autowired
     private AuditService auditService;
@@ -111,6 +115,34 @@ public class FeeHeadService {
         } catch (JsonProcessingException ignored) {}
 
         return toDto(saved);
+    }
+
+    @Transactional
+    public void deleteFeeHead(Long id, HttpServletRequest request) {
+        Long schoolId = securityUtil.getSchoolId();
+        FeeHead existing = feeHeadRepository.findByIdAndSchoolId(id, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("Fee head not found."));
+
+        String oldJson;
+        try { oldJson = objectMapper.writeValueAsString(existing); }
+        catch (JsonProcessingException e) { oldJson = null; }
+
+        if (feeStructureRuleRepository.existsBySchoolIdAndFeeHeadId(schoolId, id)) {
+            // Soft delete — fee rules reference this fee head
+            existing.setActive(false);
+            feeHeadRepository.save(existing);
+        } else {
+            // Hard delete — no references
+            feeHeadRepository.delete(existing);
+        }
+
+        try {
+            auditService.log(
+                    securityUtil.getUsername(), securityUtil.getRole(),
+                    "DELETE_FEE_HEAD", "FeeHead", String.valueOf(id),
+                    oldJson, null,
+                    request.getRemoteAddr());
+        } catch (JsonProcessingException ignored) {}
     }
 
     private FeeHeadDto toDto(FeeHead entity) {

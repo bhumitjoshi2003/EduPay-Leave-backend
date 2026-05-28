@@ -10,6 +10,7 @@ import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -59,6 +60,7 @@ public class StudentService {
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private SectionRepository sectionRepository;
 
     private String getAcademicYear(LocalDate date) {
         int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
@@ -110,6 +112,11 @@ public class StudentService {
             if (student.getClassId() == null && student.getClassName() != null) {
                 schoolClassRepository.findBySchoolIdAndName(schoolId, student.getClassName())
                         .ifPresent(sc -> student.setClassId(sc.getId()));
+            }
+            // Dual-write: resolve sectionId → sectionName
+            if (student.getSectionId() != null) {
+                sectionRepository.findByIdAndSchoolId(student.getSectionId(), schoolId)
+                        .ifPresent(sec -> student.setSectionName(sec.getName()));
             }
             Student savedStudent = studentRepository.save(student);
 
@@ -177,13 +184,28 @@ public class StudentService {
     }
 
     @Transactional(readOnly = true)
+    public List<Student> getActiveStudentsByClassAndSection(String className, Long sectionId) {
+        return studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, securityUtil.getSchoolId());
+    }
+
+    @Transactional(readOnly = true)
     public List<Student> getUpcomingStudentsByClass(String className) {
         return studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.UPCOMING, securityUtil.getSchoolId());
     }
 
     @Transactional(readOnly = true)
+    public List<Student> getUpcomingStudentsByClassAndSection(String className, Long sectionId) {
+        return studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.UPCOMING, securityUtil.getSchoolId());
+    }
+
+    @Transactional(readOnly = true)
     public List<Student> getInactiveStudentsByClass(String className) {
         return studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.INACTIVE, securityUtil.getSchoolId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Student> getInactiveStudentsByClassAndSection(String className, Long sectionId) {
+        return studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.INACTIVE, securityUtil.getSchoolId());
     }
 
     private StudentStatus calculateStatus(LocalDate joiningDate, LocalDate leavingDate) {
@@ -269,6 +291,13 @@ public class StudentService {
             if (updatedStudent.getClassName() != null) {
                 schoolClassRepository.findBySchoolIdAndName(schoolId, updatedStudent.getClassName())
                         .ifPresent(sc -> updatedStudent.setClassId(sc.getId()));
+            }
+            // Dual-write: resolve sectionId → sectionName
+            if (updatedStudent.getSectionId() != null) {
+                sectionRepository.findByIdAndSchoolId(updatedStudent.getSectionId(), schoolId)
+                        .ifPresent(sec -> updatedStudent.setSectionName(sec.getName()));
+            } else {
+                updatedStudent.setSectionName(null);
             }
             Student savedStudent = studentRepository.save(updatedStudent);
 

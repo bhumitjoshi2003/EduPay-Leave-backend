@@ -168,6 +168,7 @@ public class SchoolService {
             school.setGradingSystem(req.getGradingSystem().toUpperCase());
         }
         School saved = schoolRepository.save(school);
+        slugResolutionService.evictSlug(saved.getSlug());
         log.info("School onboarded: id={}, slug={}", saved.getId(), saved.getSlug());
 
         // 2. Create the first ADMIN user for this school

@@ -40,4 +40,11 @@ public class AcademicSessionController {
     public ResponseEntity<AcademicSessionDto> setCurrentSession(@PathVariable Long sessionId) {
         return ResponseEntity.ok(sessionService.setCurrentSession(sessionId));
     }
+
+    @DeleteMapping("/{sessionId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteSession(@PathVariable Long sessionId) {
+        sessionService.deleteSession(sessionId);
+        return ResponseEntity.noContent().build();
+    }
 }
