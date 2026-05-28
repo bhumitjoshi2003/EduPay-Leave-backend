@@ -472,8 +472,11 @@ public class AttendanceService {
     @Transactional(readOnly = true)
     public List<ClassAttendanceSummaryDTO> getClassSummary(String className, String type,
                                                             Integer month, Integer year,
-                                                            String session) {
-        List<Student> students = studentRepository.findByClassNameAndSchoolId(className, securityUtil.getSchoolId());
+                                                            String session, Long sectionId) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<Student> students = (sectionId != null)
+                ? studentRepository.findByClassNameAndSectionIdAndSchoolId(className, sectionId, schoolId)
+                : studentRepository.findByClassNameAndSchoolId(className, schoolId);
 
         LocalDate start;
         LocalDate end;

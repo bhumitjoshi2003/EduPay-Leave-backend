@@ -38,13 +38,14 @@ public class MarkController {
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping("/exam/{examSubjectEntryId}/students")
     public ResponseEntity<?> getStudentsForSubjectEntry(
-            @PathVariable Long examSubjectEntryId) {
-        log.info("GET /api/marks/exam/{}/students", examSubjectEntryId);
+            @PathVariable Long examSubjectEntryId,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("GET /api/marks/exam/{}/students sectionId={}", examSubjectEntryId, sectionId);
         String className = examConfigService.resolveClassName(examSubjectEntryId).orElse(null);
         ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
         if (authCheck != null) return authCheck;
 
-        List<StudentSubjectMarkDTO> result = markService.getStudentsForSubjectEntry(examSubjectEntryId);
+        List<StudentSubjectMarkDTO> result = markService.getStudentsForSubjectEntry(examSubjectEntryId, sectionId);
         return ResponseEntity.ok(result);
     }
 
@@ -133,12 +134,13 @@ public class MarkController {
     @GetMapping("/class/{className}/exam/{examConfigId}")
     public ResponseEntity<?> getClassResults(
             @PathVariable String className,
-            @PathVariable Long examConfigId) {
-        log.info("GET /api/marks/class/{}/exam/{}", className, examConfigId);
+            @PathVariable Long examConfigId,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("GET /api/marks/class/{}/exam/{} sectionId={}", className, examConfigId, sectionId);
         ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
         if (authCheck != null) return authCheck;
 
-        List<ClassStudentResultDTO> results = markService.getClassResults(className, examConfigId);
+        List<ClassStudentResultDTO> results = markService.getClassResults(className, examConfigId, sectionId);
         return ResponseEntity.ok(results);
     }
 

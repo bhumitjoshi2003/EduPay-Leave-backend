@@ -44,11 +44,18 @@ public class SubjectConfigController {
 
     @PostMapping("/subjects/class")
     public ResponseEntity<?> addClassSubject(@RequestBody Map<String, String> body) {
-        String className   = body.get("className");
-        String subjectName = body.get("subjectName");
-        log.info("POST /api/subjects/class: className={}, subjectName={}", className, subjectName);
-        ClassSubject saved = subjectConfigService.addClassSubject(className, subjectName);
-        return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        String className    = body.get("className");
+        String subjectName  = body.get("subjectName");
+        boolean optional    = "true".equalsIgnoreCase(body.get("optional"));
+        String optionalGroup = body.get("optionalGroup");
+        log.info("POST /api/subjects/class: className={}, subjectName={}, optional={}, group={}",
+                className, subjectName, optional, optionalGroup);
+        try {
+            ClassSubject saved = subjectConfigService.addClassSubject(className, subjectName, optional, optionalGroup);
+            return new ResponseEntity<>(saved, HttpStatus.CREATED);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     @DeleteMapping("/subjects/class/{id}")

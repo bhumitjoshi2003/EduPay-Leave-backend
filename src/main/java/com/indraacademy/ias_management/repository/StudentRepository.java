@@ -26,6 +26,8 @@ public interface StudentRepository extends JpaRepository<Student, String> {
 
     List<Student> findByClassNameAndSectionIdAndStatusAndSchoolId(String className, Long sectionId, StudentStatus status, Long schoolId);
 
+    List<Student> findByClassNameAndSectionIdAndSchoolId(String className, Long sectionId, Long schoolId);
+
     long countBySchoolIdAndSectionId(Long schoolId, Long sectionId);
 
     @Modifying

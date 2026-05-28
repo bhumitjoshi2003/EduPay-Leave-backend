@@ -192,7 +192,8 @@ public class AttendanceController {
             @RequestParam(defaultValue = "month") String type,
             @RequestParam(required = false) Integer month,
             @RequestParam(required = false) Integer year,
-            @RequestParam(required = false) String session) {
+            @RequestParam(required = false) String session,
+            @RequestParam(required = false) Long sectionId) {
 
         String currentUserId = authService.getUserId();
         String currentRole   = authService.getRole();
@@ -218,9 +219,9 @@ public class AttendanceController {
             if (rangeError != null) return rangeError;
         }
 
-        log.info("Class attendance summary request — class: {}, type: {}, month: {}, year: {}, session: {}",
-                className, type, month, year, session);
-        List<ClassAttendanceSummaryDTO> summary = attendanceService.getClassSummary(className, type, month, year, session);
+        log.info("Class attendance summary request — class: {}, type: {}, month: {}, year: {}, session: {}, sectionId: {}",
+                className, type, month, year, session, sectionId);
+        List<ClassAttendanceSummaryDTO> summary = attendanceService.getClassSummary(className, type, month, year, session, sectionId);
         return ResponseEntity.ok(summary);
     }
 

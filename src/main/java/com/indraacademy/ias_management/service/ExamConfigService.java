@@ -134,6 +134,7 @@ public class ExamConfigService {
         }
 
         ExamSubjectEntry entry = new ExamSubjectEntry();
+        entry.setSchoolId(schoolId);
         entry.setExamConfigId(examId);
         entry.setSubjectName(subjectName);
         entry.setMaxMarks(maxMarks);

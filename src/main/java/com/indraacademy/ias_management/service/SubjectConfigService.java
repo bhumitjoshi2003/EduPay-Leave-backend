@@ -39,9 +39,13 @@ public class SubjectConfigService {
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
-    public ClassSubject addClassSubject(String className, String subjectName) {
+    public ClassSubject addClassSubject(String className, String subjectName,
+                                        boolean optional, String optionalGroup) {
         if (className == null || className.isBlank() || subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("className and subjectName are required.");
+        }
+        if (optional && (optionalGroup == null || optionalGroup.isBlank())) {
+            throw new IllegalArgumentException("optionalGroup is required when optional=true.");
         }
         Long schoolId = securityUtil.getSchoolId();
         if (classSubjectRepository.existsByClassNameAndSubjectNameAndSchoolId(className, subjectName, schoolId)) {
@@ -51,9 +55,11 @@ public class SubjectConfigService {
         ClassSubject cs = new ClassSubject();
         cs.setClassName(className);
         cs.setSubjectName(subjectName);
+        cs.setOptional(optional);
+        cs.setOptionalGroup(optional ? optionalGroup.trim() : null);
         cs.setSchoolId(schoolId);
         ClassSubject saved = classSubjectRepository.save(cs);
-        log.info("Added subject '{}' to class {}", subjectName, className);
+        log.info("Added subject '{}' to class {} (optional={}, group={})", subjectName, className, optional, optionalGroup);
         return saved;
     }
 
