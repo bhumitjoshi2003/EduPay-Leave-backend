@@ -32,6 +32,18 @@ public interface StudentRepository extends JpaRepository<Student, String> {
     @Query("UPDATE Student s SET s.sectionId = null, s.sectionName = null WHERE s.schoolId = :schoolId AND s.sectionId = :sectionId")
     void clearSectionBySchoolAndSectionId(@Param("schoolId") Long schoolId, @Param("sectionId") Long sectionId);
 
+    /**
+     * Clears section data for students whose sectionId belongs to a different class
+     * than the student's current class (orphaned after promotion without section resolution).
+     */
+    @Modifying
+    @Query("UPDATE Student s SET s.sectionId = null, s.sectionName = null " +
+           "WHERE s.schoolId = :schoolId AND s.sectionId IS NOT NULL " +
+           "AND s.sectionId NOT IN (" +
+           "  SELECT sec.id FROM Section sec WHERE sec.classId = s.classId" +
+           ")")
+    int clearOrphanedSections(@Param("schoolId") Long schoolId);
+
     // Platform-wide status lookup (used by scheduler — no schoolId filter)
     List<Student> findByStatus(StudentStatus status);
 

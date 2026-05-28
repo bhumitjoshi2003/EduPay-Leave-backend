@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.entity.TimetableEntry;
+import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.TimetableRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -24,13 +25,19 @@ public class TimetableService {
 
     @Autowired private TimetableRepository timetableRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private SectionRepository sectionRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
 
     @Transactional(readOnly = true)
-    public List<TimetableEntry> getByClass(String className) {
-        return timetableRepository.findByClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(className, securityUtil.getSchoolId());
+    public List<TimetableEntry> getByClass(String className, Long sectionId) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (sectionId != null) {
+            return timetableRepository.findByClassNameAndSectionIdAndSchoolIdOrderByDayAscPeriodNumberAsc(className, sectionId, schoolId);
+        }
+        // No section filter → return all entries for the class (all sections)
+        return timetableRepository.findByClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(className, schoolId);
     }
 
     @Transactional(readOnly = true)
@@ -40,15 +47,16 @@ public class TimetableService {
 
     public TimetableEntry create(TimetableEntry entry, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
-        if (timetableRepository.existsByClassNameAndDayAndPeriodNumberAndSchoolId(
-                entry.getClassName(), entry.getDay(), entry.getPeriodNumber(), schoolId)) {
+        if (slotExists(schoolId, entry.getClassName(), entry.getSectionId(), entry.getDay(), entry.getPeriodNumber())) {
             throw new DataIntegrityViolationException(
                     "Period " + entry.getPeriodNumber() + " on " + entry.getDay()
-                            + " is already assigned for class " + entry.getClassName());
+                            + " is already assigned for class " + entry.getClassName()
+                            + (entry.getSectionId() != null ? " (section)" : ""));
         }
 
         entry.setSchoolId(schoolId);
         resolveTeacherName(entry);
+        resolveSectionName(entry);
 
         TimetableEntry saved = timetableRepository.save(entry);
         log.info("Timetable entry created: id={}, class={}, day={}, period={}",
@@ -76,19 +84,22 @@ public class TimetableService {
 
         String oldValue = toJson(existing);
 
-        // Check unique constraint only if day/period/class changed
+        // Check unique constraint only if slot (class/section/day/period) changed
         boolean slotChanged = !existing.getClassName().equals(incoming.getClassName())
+                || !java.util.Objects.equals(existing.getSectionId(), incoming.getSectionId())
                 || !existing.getDay().equals(incoming.getDay())
                 || !existing.getPeriodNumber().equals(incoming.getPeriodNumber());
 
-        if (slotChanged && timetableRepository.existsByClassNameAndDayAndPeriodNumberAndSchoolIdAndIdNot(
-                incoming.getClassName(), incoming.getDay(), incoming.getPeriodNumber(), securityUtil.getSchoolId(), id)) {
+        if (slotChanged && slotExistsExcluding(schoolId, incoming.getClassName(), incoming.getSectionId(),
+                incoming.getDay(), incoming.getPeriodNumber(), id)) {
             throw new DataIntegrityViolationException(
                     "Period " + incoming.getPeriodNumber() + " on " + incoming.getDay()
-                            + " is already assigned for class " + incoming.getClassName());
+                            + " is already assigned for class " + incoming.getClassName()
+                            + (incoming.getSectionId() != null ? " (section)" : ""));
         }
 
         existing.setClassName(incoming.getClassName());
+        existing.setSectionId(incoming.getSectionId());
         existing.setDay(incoming.getDay());
         existing.setPeriodNumber(incoming.getPeriodNumber());
         existing.setStartTime(incoming.getStartTime());
@@ -96,8 +107,9 @@ public class TimetableService {
         existing.setSubjectName(incoming.getSubjectName());
         existing.setTeacherId(incoming.getTeacherId());
 
-        // Re-fetch teacher name if teacherId changed
+        // Re-fetch teacher and section names
         resolveTeacherName(existing);
+        resolveSectionName(existing);
 
         TimetableEntry saved = timetableRepository.save(existing);
         log.info("Timetable entry updated: id={}", saved.getId());
@@ -138,6 +150,20 @@ public class TimetableService {
         );
     }
 
+    private boolean slotExists(Long schoolId, String className, Long sectionId, com.indraacademy.ias_management.entity.Day day, Integer periodNumber) {
+        if (sectionId != null) {
+            return timetableRepository.existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(className, sectionId, day, periodNumber, schoolId);
+        }
+        return timetableRepository.existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(className, day, periodNumber, schoolId);
+    }
+
+    private boolean slotExistsExcluding(Long schoolId, String className, Long sectionId, com.indraacademy.ias_management.entity.Day day, Integer periodNumber, Long excludeId) {
+        if (sectionId != null) {
+            return timetableRepository.existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolIdAndIdNot(className, sectionId, day, periodNumber, schoolId, excludeId);
+        }
+        return timetableRepository.existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolIdAndIdNot(className, day, periodNumber, schoolId, excludeId);
+    }
+
     private void resolveTeacherName(TimetableEntry entry) {
         if (entry.getTeacherId() != null && !entry.getTeacherId().isBlank()) {
             String name = teacherRepository.findByTeacherIdAndSchoolId(entry.getTeacherId(), securityUtil.getSchoolId())
@@ -146,6 +172,17 @@ public class TimetableService {
             entry.setTeacherName(name);
         } else {
             entry.setTeacherName(null);
+        }
+    }
+
+    private void resolveSectionName(TimetableEntry entry) {
+        if (entry.getSectionId() != null) {
+            String name = sectionRepository.findByIdAndSchoolId(entry.getSectionId(), securityUtil.getSchoolId())
+                    .map(s -> s.getName())
+                    .orElse(null);
+            entry.setSectionName(name);
+        } else {
+            entry.setSectionName(null);
         }
     }
 

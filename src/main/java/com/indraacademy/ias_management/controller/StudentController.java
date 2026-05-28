@@ -216,6 +216,14 @@ public class StudentController {
         return ResponseEntity.ok(studentPromotionService.executePromotion(request, httpRequest));
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/promotion/fix-orphaned-sections")
+    public ResponseEntity<Map<String, Object>> fixOrphanedSections() {
+        int affected = studentPromotionService.fixOrphanedSections();
+        return ResponseEntity.ok(Map.of("affected", affected,
+                "message", affected + " student section assignment(s) cleared."));
+    }
+
     /**
      * Permanently deletes a student and their related attendance, fee schedule, and
      * leave records within the admin's school. Payment records are intentionally

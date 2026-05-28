@@ -162,7 +162,6 @@ public class SchoolService {
             validateWorkingDays(req.getWorkingDays());
             school.setWorkingDays(req.getWorkingDays().toUpperCase());
         }
-        if (req.getPeriodsPerDay() != null && req.getPeriodsPerDay() > 0) school.setPeriodsPerDay(req.getPeriodsPerDay());
         if (req.getGradingSystem() != null && !req.getGradingSystem().isBlank()) {
             validateGradingSystem(req.getGradingSystem());
             school.setGradingSystem(req.getGradingSystem().toUpperCase());
@@ -281,7 +280,6 @@ public class SchoolService {
             validateWorkingDays(req.getWorkingDays());
             school.setWorkingDays(req.getWorkingDays().toUpperCase());
         }
-        if (req.getPeriodsPerDay() != null && req.getPeriodsPerDay() > 0) school.setPeriodsPerDay(req.getPeriodsPerDay());
         if (req.getGradingSystem() != null && !req.getGradingSystem().isBlank()) {
             validateGradingSystem(req.getGradingSystem());
             school.setGradingSystem(req.getGradingSystem().toUpperCase());

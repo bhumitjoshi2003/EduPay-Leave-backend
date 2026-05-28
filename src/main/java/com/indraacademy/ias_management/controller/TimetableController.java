@@ -26,13 +26,16 @@ public class TimetableController {
     @Autowired private AuthService authService;
 
     /**
-     * GET /api/timetable/class/{className}
-     * All authenticated users may view a class timetable.
+     * GET /api/timetable/class/{className}?sectionId={id}
+     * Returns timetable for the class. Pass sectionId to filter to a specific section.
+     * Without sectionId, all entries for the class are returned.
      */
     @GetMapping("/class/{className}")
-    public ResponseEntity<List<TimetableEntry>> getByClass(@PathVariable String className) {
-        log.info("GET timetable for class: {}", className);
-        return ResponseEntity.ok(timetableService.getByClass(className));
+    public ResponseEntity<List<TimetableEntry>> getByClass(
+            @PathVariable String className,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("GET timetable for class: {}, sectionId: {}", className, sectionId);
+        return ResponseEntity.ok(timetableService.getByClass(className, sectionId));
     }
 
     /**

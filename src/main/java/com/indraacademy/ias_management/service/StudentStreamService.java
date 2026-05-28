@@ -87,27 +87,48 @@ public class StudentStreamService {
         List<Student> students = studentService.getActiveStudentsByClass(className);
 
         Long schoolId = securityUtil.getSchoolId();
-        return students.stream().map(student -> {
-            Optional<StudentStreamSelection> sel = selectionRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
+        return students.stream().map(student -> toDTO(student, schoolId)).collect(Collectors.toList());
+    }
 
-            if (sel.isEmpty()) {
-                return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
-                        null, null, null, null);
+    /**
+     * Bulk-assign the same stream (and optional subject) to every active student
+     * in a given class+section. Uses upsert — creates a new selection if none exists,
+     * updates the existing one otherwise.
+     *
+     * @return number of students whose selection was created or updated
+     */
+    @Transactional
+    public int bulkAssignSection(String className, Long sectionId, Long streamId, Long optionalSubjectId) {
+        if (!streamRepository.existsById(streamId)) {
+            throw new java.util.NoSuchElementException("Stream not found: " + streamId);
+        }
+        if (optionalSubjectId != null && !optionalSubjectRepository.existsById(optionalSubjectId)) {
+            throw new java.util.NoSuchElementException("OptionalSubject not found: " + optionalSubjectId);
+        }
+
+        Long schoolId = securityUtil.getSchoolId();
+        List<Student> students = studentService.getActiveStudentsByClassAndSection(className, sectionId);
+        int count = 0;
+        for (Student student : students) {
+            Optional<StudentStreamSelection> existing =
+                    selectionRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
+            if (existing.isPresent()) {
+                StudentStreamSelection sel = existing.get();
+                sel.setStreamId(streamId);
+                sel.setOptionalSubjectId(optionalSubjectId);
+                selectionRepository.save(sel);
+            } else {
+                StudentStreamSelection sel = new StudentStreamSelection();
+                sel.setStudentId(student.getStudentId());
+                sel.setStreamId(streamId);
+                sel.setOptionalSubjectId(optionalSubjectId);
+                sel.setSchoolId(schoolId);
+                selectionRepository.save(sel);
             }
-
-            StudentStreamSelection s = sel.orElseThrow(() -> new IllegalArgumentException(
-                    "Stream selection not found for student " + student.getStudentId()));
-            String streamName = streamRepository.findById(s.getStreamId())
-                    .map(AcademicStream::getStreamName).orElse(null);
-            String optSubjectName = null;
-            if (s.getOptionalSubjectId() != null) {
-                optSubjectName = optionalSubjectRepository.findById(s.getOptionalSubjectId())
-                        .map(OptionalSubject::getSubjectName).orElse(null);
-            }
-
-            return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
-                    s.getStreamId(), streamName, s.getOptionalSubjectId(), optSubjectName);
-        }).collect(Collectors.toList());
+            count++;
+        }
+        log.info("Bulk-assigned stream {} to {} students in class {} section {}", streamId, count, className, sectionId);
+        return count;
     }
 
     public record EligibleStudentsResult(int eligibleClassCount, List<StudentStreamDTO> students) {}
@@ -124,27 +145,28 @@ public class StudentStreamService {
 
         List<StudentStreamDTO> students = eligibleClassNames.stream()
                 .flatMap(className -> studentService.getActiveStudentsByClass(className).stream())
-                .map(student -> {
-                    Optional<StudentStreamSelection> sel = selectionRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
-                    if (sel.isEmpty()) {
-                        return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
-                                null, null, null, null);
-                    }
-                    StudentStreamSelection s = sel.orElseThrow(() -> new IllegalArgumentException(
-                            "Stream selection not found for student " + student.getStudentId()));
-                    String streamName = streamRepository.findById(s.getStreamId())
-                            .map(AcademicStream::getStreamName).orElse(null);
-                    String optSubjectName = null;
-                    if (s.getOptionalSubjectId() != null) {
-                        optSubjectName = optionalSubjectRepository.findById(s.getOptionalSubjectId())
-                                .map(OptionalSubject::getSubjectName).orElse(null);
-                    }
-                    return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
-                            s.getStreamId(), streamName, s.getOptionalSubjectId(), optSubjectName);
-                })
+                .map(student -> toDTO(student, schoolId))
                 .collect(Collectors.toList());
 
         return new EligibleStudentsResult(eligibleClassNames.size(), students);
+    }
+
+    private StudentStreamDTO toDTO(Student student, Long schoolId) {
+        Optional<StudentStreamSelection> sel = selectionRepository.findByStudentIdAndSchoolId(student.getStudentId(), schoolId);
+        if (sel.isEmpty()) {
+            return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
+                    student.getSectionName(), null, null, null, null);
+        }
+        StudentStreamSelection s = sel.get();
+        String streamName = streamRepository.findById(s.getStreamId())
+                .map(AcademicStream::getStreamName).orElse(null);
+        String optSubjectName = null;
+        if (s.getOptionalSubjectId() != null) {
+            optSubjectName = optionalSubjectRepository.findById(s.getOptionalSubjectId())
+                    .map(OptionalSubject::getSubjectName).orElse(null);
+        }
+        return new StudentStreamDTO(student.getStudentId(), student.getName(), student.getClassName(),
+                student.getSectionName(), s.getStreamId(), streamName, s.getOptionalSubjectId(), optSubjectName);
     }
 
     private void validateIds(String studentId, Long streamId, Long optionalSubjectId) {

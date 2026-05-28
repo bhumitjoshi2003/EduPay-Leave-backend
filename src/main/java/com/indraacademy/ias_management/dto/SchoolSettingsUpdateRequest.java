@@ -23,7 +23,6 @@ public class SchoolSettingsUpdateRequest {
     // Academic calendar settings — configurable per school
     private Integer academicYearStartMonth;
     private String workingDays;
-    private Integer periodsPerDay;
     private String gradingSystem;
 
     public String getName() { return name; }
@@ -67,9 +66,6 @@ public class SchoolSettingsUpdateRequest {
 
     public String getWorkingDays() { return workingDays; }
     public void setWorkingDays(String workingDays) { this.workingDays = workingDays; }
-
-    public Integer getPeriodsPerDay() { return periodsPerDay; }
-    public void setPeriodsPerDay(Integer periodsPerDay) { this.periodsPerDay = periodsPerDay; }
 
     public String getGradingSystem() { return gradingSystem; }
     public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }

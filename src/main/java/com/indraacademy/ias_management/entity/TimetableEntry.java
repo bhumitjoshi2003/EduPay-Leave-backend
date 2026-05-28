@@ -2,12 +2,12 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 
+// NOTE: The legacy DB constraint "uq_timetable_class_day_period" on (class_name, day, period_number)
+// must be dropped manually so section-specific timetables can coexist:
+//   ALTER TABLE timetable_entry DROP INDEX uq_timetable_class_day_period;
+// Uniqueness is now enforced in TimetableService code (school+class+section+day+period).
 @Entity
-@Table(name = "timetable_entry",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uq_timetable_class_day_period",
-                columnNames = {"class_name", "day", "period_number"}
-        ))
+@Table(name = "timetable_entry")
 public class TimetableEntry {
 
     @Id
@@ -25,6 +25,9 @@ public class TimetableEntry {
 
     @Column(name = "section_id")
     private Long sectionId;
+
+    @Column(name = "section_name", length = 50)
+    private String sectionName;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -83,4 +86,7 @@ public class TimetableEntry {
 
     public Long getSectionId() { return sectionId; }
     public void setSectionId(Long sectionId) { this.sectionId = sectionId; }
+
+    public String getSectionName() { return sectionName; }
+    public void setSectionName(String sectionName) { this.sectionName = sectionName; }
 }

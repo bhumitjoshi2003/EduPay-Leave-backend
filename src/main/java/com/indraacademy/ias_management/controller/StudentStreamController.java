@@ -68,6 +68,28 @@ public class StudentStreamController {
         return ResponseEntity.ok(studentStreamService.getClassSelections(className));
     }
 
+    /**
+     * POST /api/student-stream/bulk
+     * Bulk-assign a stream to all active students in a class+section.
+     * Creates a new selection if none exists, updates the existing one otherwise.
+     */
+    @PostMapping("/bulk")
+    public ResponseEntity<?> bulkAssign(@RequestBody Map<String, Object> body) {
+        String className       = (String) body.get("className");
+        Long sectionId         = body.get("sectionId") != null ? Long.valueOf(body.get("sectionId").toString()) : null;
+        Long streamId          = body.get("streamId") != null ? Long.valueOf(body.get("streamId").toString()) : null;
+        Long optionalSubjectId = body.get("optionalSubjectId") != null
+                ? Long.valueOf(body.get("optionalSubjectId").toString()) : null;
+
+        if (className == null || sectionId == null || streamId == null) {
+            return ResponseEntity.badRequest().body("className, sectionId and streamId are required.");
+        }
+
+        log.info("POST /api/student-stream/bulk: class={}, section={}, stream={}", className, sectionId, streamId);
+        int count = studentStreamService.bulkAssignSection(className, sectionId, streamId, optionalSubjectId);
+        return ResponseEntity.ok(Map.of("updated", count));
+    }
+
     @GetMapping("/eligible-students")
     public ResponseEntity<Map<String, Object>> getEligibleStudents() {
         log.info("GET /api/student-stream/eligible-students");

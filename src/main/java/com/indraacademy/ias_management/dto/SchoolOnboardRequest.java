@@ -42,9 +42,6 @@ public class SchoolOnboardRequest {
     /** Comma-separated working day names, e.g. "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY". */
     private String workingDays;
 
-    /** Number of teaching periods per school day. Defaults to 8. */
-    private Integer periodsPerDay;
-
     /** Grading system: CBSE, LETTER, or PERCENTAGE. Defaults to CBSE. */
     private String gradingSystem;
 
@@ -137,9 +134,6 @@ public class SchoolOnboardRequest {
 
     public String getWorkingDays() { return workingDays; }
     public void setWorkingDays(String workingDays) { this.workingDays = workingDays; }
-
-    public Integer getPeriodsPerDay() { return periodsPerDay; }
-    public void setPeriodsPerDay(Integer periodsPerDay) { this.periodsPerDay = periodsPerDay; }
 
     public String getGradingSystem() { return gradingSystem; }
     public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }

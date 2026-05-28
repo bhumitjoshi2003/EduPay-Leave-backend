@@ -41,7 +41,6 @@ public class SchoolSettingsResponse {
 
     private int academicYearStartMonth;
     private String workingDays;
-    private int periodsPerDay;
     private String gradingSystem;
 
     public static SchoolSettingsResponse from(School school) {
@@ -69,7 +68,6 @@ public class SchoolSettingsResponse {
         r.razorpayConfigured = school.getRazorpayKeyId() != null && !school.getRazorpayKeyId().isBlank();
         r.academicYearStartMonth = school.getAcademicYearStartMonth();
         r.workingDays = school.getWorkingDays();
-        r.periodsPerDay = school.getPeriodsPerDay();
         r.gradingSystem = school.getGradingSystem();
         return r;
     }
@@ -100,6 +98,5 @@ public class SchoolSettingsResponse {
 
     public int getAcademicYearStartMonth() { return academicYearStartMonth; }
     public String getWorkingDays() { return workingDays; }
-    public int getPeriodsPerDay() { return periodsPerDay; }
     public String getGradingSystem() { return gradingSystem; }
 }

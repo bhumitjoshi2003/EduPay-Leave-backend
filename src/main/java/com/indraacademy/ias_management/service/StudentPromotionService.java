@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,6 +24,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+import com.indraacademy.ias_management.entity.SchoolClass;
+import com.indraacademy.ias_management.entity.Section;
+
 @Service
 public class StudentPromotionService {
 
@@ -30,6 +34,7 @@ public class StudentPromotionService {
 
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private SectionRepository sectionRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
 
@@ -107,9 +112,40 @@ public class StudentPromotionService {
                         continue;
                     }
                     student.setClassName(nextClass);
-                    // Dual-write: resolve className → classId
-                    schoolClassRepository.findBySchoolIdAndName(securityUtil.getSchoolId(), nextClass)
-                            .ifPresent(sc -> student.setClassId(sc.getId()));
+
+                    // Dual-write: resolve className → classId, then handle section
+                    Long schoolId = securityUtil.getSchoolId();
+                    Optional<SchoolClass> targetClassOpt = schoolClassRepository.findBySchoolIdAndName(schoolId, nextClass);
+                    if (targetClassOpt.isPresent()) {
+                        Long newClassId = targetClassOpt.get().getId();
+                        student.setClassId(newClassId);
+
+                        // Resolve section for the target class:
+                        // - If target class has no sections → clear the student's section
+                        // - If target class has sections → try to match by name; clear if no match
+                        List<Section> targetSections = sectionRepository
+                                .findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(schoolId, newClassId, true);
+                        if (targetSections.isEmpty()) {
+                            // Target class has no sections configured — drop section assignment
+                            student.setSectionId(null);
+                            student.setSectionName(null);
+                        } else if (student.getSectionName() != null) {
+                            // Try to find a same-named section in the target class
+                            Optional<Section> matched = targetSections.stream()
+                                    .filter(s -> s.getName().equalsIgnoreCase(student.getSectionName()))
+                                    .findFirst();
+                            if (matched.isPresent()) {
+                                student.setSectionId(matched.get().getId());
+                                student.setSectionName(matched.get().getName());
+                            } else {
+                                // No matching section name — clear so student isn't orphaned
+                                student.setSectionId(null);
+                                student.setSectionName(null);
+                            }
+                        }
+                        // If student had no section before promotion, keep it null (nothing to do)
+                    }
+
                     studentRepository.save(student);
                     auditService.log(
                             securityUtil.getUsername(), securityUtil.getRole(),
@@ -148,6 +184,26 @@ public class StudentPromotionService {
         log.info("Promotion batch complete — promoted: {}, detained: {}, passedOut: {}, errors: {}",
                 promoted, detained, passedOut, errors.size());
         return new PromotionResultDTO(promoted, detained, passedOut, errors);
+    }
+
+    // ─── Cleanup ─────────────────────────────────────────────────────────────
+
+    /**
+     * Clears section assignments for students whose sectionId belongs to a different class
+     * than their current class — a state that can occur if promotion happened before
+     * section-aware logic was in place.
+     *
+     * @return number of students whose orphaned section was cleared
+     */
+    @Transactional
+    public int fixOrphanedSections() {
+        Long schoolId = securityUtil.getSchoolId();
+        int affected = studentRepository.clearOrphanedSections(schoolId);
+        if (affected > 0) {
+            log.warn("Cleared orphaned section assignments for {} student(s) in school {}",
+                    affected, schoolId);
+        }
+        return affected;
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
