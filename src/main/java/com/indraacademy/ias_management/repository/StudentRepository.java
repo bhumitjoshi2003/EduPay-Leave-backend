@@ -26,6 +26,12 @@ public interface StudentRepository extends JpaRepository<Student, String> {
 
     List<Student> findByClassNameAndSectionIdAndStatusAndSchoolId(String className, Long sectionId, StudentStatus status, Long schoolId);
 
+    long countBySchoolIdAndSectionId(Long schoolId, Long sectionId);
+
+    @Modifying
+    @Query("UPDATE Student s SET s.sectionId = null, s.sectionName = null WHERE s.schoolId = :schoolId AND s.sectionId = :sectionId")
+    void clearSectionBySchoolAndSectionId(@Param("schoolId") Long schoolId, @Param("sectionId") Long sectionId);
+
     // Platform-wide status lookup (used by scheduler — no schoolId filter)
     List<Student> findByStatus(StudentStatus status);
 

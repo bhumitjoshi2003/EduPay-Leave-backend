@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.repository;
 
 import com.indraacademy.ias_management.entity.StudentFeeConfig;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -28,8 +29,12 @@ public interface StudentFeeConfigRepository extends JpaRepository<StudentFeeConf
             @Param("sessionId") Long sessionId,
             @Param("asOfDate") LocalDate asOfDate);
 
+    @Modifying
+    @Query("DELETE FROM StudentFeeConfig c WHERE c.schoolId = :schoolId AND c.studentId = :studentId AND c.academicSession.id = :sessionId")
     void deleteBySchoolIdAndStudentIdAndAcademicSessionId(
-            Long schoolId, String studentId, Long academicSessionId);
+            @Param("schoolId") Long schoolId, @Param("studentId") String studentId, @Param("sessionId") Long sessionId);
 
-    void deleteBySchoolIdAndAcademicSessionId(Long schoolId, Long academicSessionId);
+    @Modifying
+    @Query("DELETE FROM StudentFeeConfig c WHERE c.schoolId = :schoolId AND c.academicSession.id = :sessionId")
+    void deleteBySchoolIdAndAcademicSessionId(@Param("schoolId") Long schoolId, @Param("sessionId") Long sessionId);
 }

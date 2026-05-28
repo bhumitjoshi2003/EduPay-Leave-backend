@@ -136,13 +136,11 @@ public class FeeHeadService {
             feeHeadRepository.delete(existing);
         }
 
-        try {
-            auditService.log(
-                    securityUtil.getUsername(), securityUtil.getRole(),
-                    "DELETE_FEE_HEAD", "FeeHead", String.valueOf(id),
-                    oldJson, null,
-                    request.getRemoteAddr());
-        } catch (JsonProcessingException ignored) {}
+        auditService.log(
+                securityUtil.getUsername(), securityUtil.getRole(),
+                "DELETE_FEE_HEAD", "FeeHead", String.valueOf(id),
+                oldJson, null,
+                request.getRemoteAddr());
     }
 
     private FeeHeadDto toDto(FeeHead entity) {

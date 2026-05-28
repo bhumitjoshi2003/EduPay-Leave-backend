@@ -7,6 +7,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 import java.util.List;
 
 @RestController
@@ -40,8 +42,8 @@ public class SectionController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Void> deleteSection(@PathVariable Long id) {
-        sectionService.deleteSection(id);
-        return ResponseEntity.ok().build();
+    public ResponseEntity<Map<String, Object>> deleteSection(@PathVariable Long id) {
+        long affected = sectionService.deleteSection(id);
+        return ResponseEntity.ok(Map.of("affected", affected));
     }
 }

@@ -3,9 +3,11 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.SectionDTO;
 import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.repository.SectionRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -15,6 +17,9 @@ public class SectionService {
 
     @Autowired
     private SectionRepository sectionRepository;
+
+    @Autowired
+    private StudentRepository studentRepository;
 
     @Autowired
     private SecurityUtil securityUtil;
@@ -74,11 +79,22 @@ public class SectionService {
         return toDTO(saved);
     }
 
-    public void deleteSection(Long id) {
+    /**
+     * Deletes a section. If any students are assigned to it, their section
+     * assignment is automatically cleared so they are not lost.
+     * Returns the count of students whose section was cleared.
+     */
+    @Transactional
+    public long deleteSection(Long id) {
         Long schoolId = securityUtil.getSchoolId();
         Section section = sectionRepository.findByIdAndSchoolId(id, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Section not found."));
+        long affected = studentRepository.countBySchoolIdAndSectionId(schoolId, id);
+        if (affected > 0) {
+            studentRepository.clearSectionBySchoolAndSectionId(schoolId, id);
+        }
         sectionRepository.delete(section);
+        return affected;
     }
 
     private SectionDTO toDTO(Section s) {

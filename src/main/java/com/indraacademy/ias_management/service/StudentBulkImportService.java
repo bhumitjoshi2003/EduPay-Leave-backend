@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.dto.BulkImportResultDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.opencsv.CSVReader;
@@ -43,6 +44,7 @@ import java.util.List;
  *  Gender          | gender         | no       |
  *  Father Name     | fatherName     | no       |
  *  Mother Name     | motherName     | no       |
+ *  Section         | sectionId/Name | no       | Must match existing section name for the class
  *  Takes Bus       | takesBus       | no       | true / false (default: false)
  *  Distance (km)   | distance       | no       | numeric (default: 0.0)
  *  Joining Date    | joiningDate    | yes      | yyyy-MM-dd
@@ -62,7 +64,7 @@ public class StudentBulkImportService {
     /** Column headers written to the downloadable template CSV. */
     public static final String[] TEMPLATE_HEADERS = {
             "Student ID", "Student Name", "Email", "Phone Number",
-            "Date of Birth", "Class", "Gender", "Father Name", "Mother Name",
+            "Date of Birth", "Class", "Section", "Gender", "Father Name", "Mother Name",
             "Takes Bus", "Distance (km)", "Joining Date", "Leaving Date"
     };
 
@@ -75,6 +77,7 @@ public class StudentBulkImportService {
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private SectionRepository sectionRepository;
 
     /**
      * Parses the uploaded CSV, attempts to save each data row, and returns
@@ -212,13 +215,14 @@ public class StudentBulkImportService {
         String phoneNumber = getCol(row, 3);
         String dobStr      = getCol(row, 4);
         String className   = getCol(row, 5);
-        String gender      = getCol(row, 6);
-        String fatherName  = getCol(row, 7);
-        String motherName  = getCol(row, 8);
-        String takesBusStr = getCol(row, 9);
-        String distanceStr = getCol(row, 10);
-        String joiningStr  = getCol(row, 11);
-        String leavingStr  = getCol(row, 12);
+        String sectionName = getCol(row, 6);
+        String gender      = getCol(row, 7);
+        String fatherName  = getCol(row, 8);
+        String motherName  = getCol(row, 9);
+        String takesBusStr = getCol(row, 10);
+        String distanceStr = getCol(row, 11);
+        String joiningStr  = getCol(row, 12);
+        String leavingStr  = getCol(row, 13);
 
         // Required field checks
         if (studentId.isEmpty()) {
@@ -308,8 +312,23 @@ public class StudentBulkImportService {
         student.setDob(dob);
         student.setClassName(className);
         // Dual-write: resolve className → classId
-        schoolClassRepository.findBySchoolIdAndName(securityUtil.getSchoolId(), className)
-                .ifPresent(sc -> student.setClassId(sc.getId()));
+        Long schoolId = securityUtil.getSchoolId();
+        schoolClassRepository.findBySchoolIdAndName(schoolId, className)
+                .ifPresent(sc -> {
+                    student.setClassId(sc.getId());
+                    // Resolve section name → sectionId + sectionName
+                    if (!sectionName.isEmpty()) {
+                        sectionRepository.findBySchoolIdAndClassIdAndName(schoolId, sc.getId(), sectionName)
+                                .ifPresentOrElse(
+                                        sec -> {
+                                            student.setSectionId(sec.getId());
+                                            student.setSectionName(sec.getName());
+                                        },
+                                        () -> log.warn("Bulk import: row {} — section '{}' not found for class '{}', skipping section assignment",
+                                                rowNum, sectionName, className)
+                                );
+                    }
+                });
         student.setGender(gender.isEmpty()             ? null : gender);
         student.setFatherName(fatherName.isEmpty()     ? null : fatherName);
         student.setMotherName(motherName.isEmpty()     ? null : motherName);
