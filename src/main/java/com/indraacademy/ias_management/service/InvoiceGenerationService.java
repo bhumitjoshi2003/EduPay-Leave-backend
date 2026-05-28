@@ -181,6 +181,17 @@ public class InvoiceGenerationService {
             FeeHead feeHead = rule.getFeeHead();
             StudentFeeConfig config = configByFeeHead.get(feeHead.getId());
 
+            // ONE_TIME fees must only ever appear on one invoice per student across all sessions.
+            // Skip if the student has already been billed for this fee head in any prior invoice.
+            if (feeHead.getFrequency() == FeeFrequency.ONE_TIME) {
+                if (invoiceRepository.hasStudentBeenBilledForFeeHead(
+                        schoolId, student.getStudentId(), feeHead.getId())) {
+                    log.debug("Skipping ONE_TIME fee head {} for student {} — already billed",
+                            feeHead.getCode(), student.getStudentId());
+                    continue;
+                }
+            }
+
             // Check for OPT_OUT on optional fees
             if (feeHead.isOptional() && config != null && config.getConfigType() == FeeConfigType.OPT_OUT) {
                 continue;

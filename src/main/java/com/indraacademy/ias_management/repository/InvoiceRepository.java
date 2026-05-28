@@ -83,4 +83,17 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
             @Param("schoolId") Long schoolId,
             @Param("sessionId") Long sessionId,
             @Param("billingMonth") int billingMonth);
+
+    /**
+     * Check if a student has ever been billed for a specific fee head across ALL sessions.
+     * Used for ONE_TIME fee heads — they must only ever appear on one invoice per student,
+     * regardless of session changes.
+     */
+    @Query("SELECT CASE WHEN COUNT(li) > 0 THEN true ELSE false END " +
+            "FROM Invoice i JOIN i.lineItems li " +
+            "WHERE i.schoolId = :schoolId AND i.studentId = :studentId AND li.feeHead.id = :feeHeadId")
+    boolean hasStudentBeenBilledForFeeHead(
+            @Param("schoolId") Long schoolId,
+            @Param("studentId") String studentId,
+            @Param("feeHeadId") Long feeHeadId);
 }
