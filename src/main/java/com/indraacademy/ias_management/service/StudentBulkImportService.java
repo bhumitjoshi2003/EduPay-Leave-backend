@@ -83,7 +83,6 @@ public class StudentBulkImportService {
      * Parses the uploaded CSV, attempts to save each data row, and returns
      * an aggregated result containing success/failure counts and per-row errors.
      */
-    @Transactional
     public BulkImportResultDTO bulkImport(MultipartFile file, HttpServletRequest request) {
         List<BulkImportResultDTO.RowError> errors = new ArrayList<>();
         int successful = 0;
