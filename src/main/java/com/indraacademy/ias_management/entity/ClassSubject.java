@@ -26,7 +26,7 @@ public class ClassSubject {
     private String subjectName;
 
     /** True if this subject is an elective (students choose one from a group). */
-    @Column(name = "optional", nullable = false)
+    @Column(name = "is_elective", nullable = false)
     private boolean optional = false;
 
     /**
