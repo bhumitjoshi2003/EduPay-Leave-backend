@@ -43,7 +43,7 @@ jobs:
               --health-cmd="curl --fail http://localhost:8080/actuator/health || exit 1" \
               --health-interval=30s \
               --health-timeout=5s \
-              --health-retries=3 \
+              --health-retries=3 \ 
               --name edunexify-backend-container \
               -p 127.0.0.1:8080:8080 \
               -e SPRING_PROFILES_ACTIVE=prod \
