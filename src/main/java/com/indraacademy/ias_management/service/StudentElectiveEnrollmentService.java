@@ -83,6 +83,7 @@ public class StudentElectiveEnrollmentService {
 
         // Delete existing enrollment for this group (upsert)
         repo.deleteByStudentIdAndClassNameAndOptionalGroupAndSchoolId(studentId, className, optionalGroup, schoolId);
+        repo.flush(); // force delete to hit DB before the insert
 
         StudentElectiveEnrollment e = new StudentElectiveEnrollment();
         e.setSchoolId(schoolId);
