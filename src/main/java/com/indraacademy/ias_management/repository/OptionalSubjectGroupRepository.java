@@ -10,4 +10,8 @@ import java.util.List;
 public interface OptionalSubjectGroupRepository extends JpaRepository<OptionalSubjectGroup, Long> {
 
     List<OptionalSubjectGroup> findBySchoolId(Long schoolId);
+
+    boolean existsByIdAndSchoolId(Long id, Long schoolId);
+
+    boolean existsByGroupNameAndSchoolId(String groupName, Long schoolId);
 }

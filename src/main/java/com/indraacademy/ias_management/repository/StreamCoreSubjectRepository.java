@@ -18,6 +18,8 @@ public interface StreamCoreSubjectRepository extends JpaRepository<StreamCoreSub
 
     boolean existsByStreamIdAndSubjectNameAndSchoolId(Long streamId, String subjectName, Long schoolId);
 
+    boolean existsByIdAndSchoolId(Long id, Long schoolId);
+
     @Transactional
     void deleteByStreamIdAndSchoolId(Long streamId, Long schoolId);
 }

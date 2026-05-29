@@ -12,4 +12,6 @@ public interface AcademicStreamRepository extends JpaRepository<AcademicStream, 
     List<AcademicStream> findBySchoolId(Long schoolId);
 
     boolean existsByStreamNameAndSchoolId(String streamName, Long schoolId);
+
+    boolean existsByIdAndSchoolId(Long id, Long schoolId);
 }

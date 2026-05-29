@@ -69,8 +69,14 @@ public class StudentElectiveEnrollmentController {
         String className     = (String) body.get("className");
         String optionalGroup = (String) body.get("optionalGroup");
         String subjectName   = (String) body.get("subjectName");
+        if (studentIds == null || studentIds.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "studentIds is required and must not be empty."));
+        }
+        if (className == null || optionalGroup == null || subjectName == null) {
+            return ResponseEntity.badRequest().body(Map.of("message", "className, optionalGroup, and subjectName are required."));
+        }
         log.info("POST /api/elective-enrollment/bulk: class={} group={} subject={} count={}",
-                className, optionalGroup, subjectName, studentIds == null ? 0 : studentIds.size());
+                className, optionalGroup, subjectName, studentIds.size());
         int count = service.bulkEnroll(studentIds, className, optionalGroup, subjectName);
         return ResponseEntity.ok(Map.of("enrolled", count));
     }

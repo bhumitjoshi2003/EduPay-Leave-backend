@@ -85,12 +85,15 @@ public class MarkController {
         if (requests == null || requests.isEmpty()) {
             return ResponseEntity.badRequest().body("Request body must be a non-empty list.");
         }
-        // For TEACHER, verify class access using the first entry's exam subject
-        if (Role.TEACHER.equals(securityUtil.getRole()) && requests.get(0).getExamSubjectEntryId() != null) {
-            String className = examConfigService
-                    .resolveClassName(requests.get(0).getExamSubjectEntryId()).orElse(null);
-            ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-            if (authCheck != null) return authCheck;
+        // For TEACHER, verify ALL entries belong to the teacher's class
+        if (Role.TEACHER.equals(securityUtil.getRole())) {
+            for (MarkEntryRequest req : requests) {
+                if (req.getExamSubjectEntryId() == null) continue;
+                String className = examConfigService
+                        .resolveClassName(req.getExamSubjectEntryId()).orElse(null);
+                ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
+                if (authCheck != null) return authCheck;
+            }
         }
 
         MarkBulkResultDTO result = markService.bulkSaveMarks(requests, request);

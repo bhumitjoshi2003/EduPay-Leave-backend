@@ -11,12 +11,12 @@ import java.util.Optional;
 @Repository
 public interface ExamSubjectEntryRepository extends JpaRepository<ExamSubjectEntry, Long> {
 
-    List<ExamSubjectEntry> findByExamConfigId(Long examConfigId);
+    List<ExamSubjectEntry> findByExamConfigIdAndSchoolId(Long examConfigId, Long schoolId);
 
     Optional<ExamSubjectEntry> findByIdAndSchoolId(Long id, Long schoolId);
 
-    boolean existsByExamConfigIdAndSubjectName(Long examConfigId, String subjectName);
+    boolean existsByExamConfigIdAndSubjectNameAndSchoolId(Long examConfigId, String subjectName, Long schoolId);
 
     @Transactional
-    void deleteByExamConfigId(Long examConfigId);
+    void deleteByExamConfigIdAndSchoolId(Long examConfigId, Long schoolId);
 }

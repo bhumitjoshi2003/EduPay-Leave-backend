@@ -39,6 +39,7 @@ public class SubjectConfigService {
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
+    @Transactional
     public ClassSubject addClassSubject(String className, String subjectName,
                                         boolean optional, String optionalGroup) {
         if (className == null || className.isBlank() || subjectName == null || subjectName.isBlank()) {
@@ -66,7 +67,8 @@ public class SubjectConfigService {
     @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteClassSubject(Long id) {
-        if (!classSubjectRepository.existsById(id)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (!classSubjectRepository.existsByIdAndSchoolId(id, schoolId)) {
             throw new NoSuchElementException("ClassSubject not found: " + id);
         }
         classSubjectRepository.deleteById(id);
@@ -93,6 +95,7 @@ public class SubjectConfigService {
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
+    @Transactional
     public StreamResponseDTO addStream(String streamName) {
         if (streamName == null || streamName.isBlank()) {
             throw new IllegalArgumentException("streamName is required.");
@@ -112,10 +115,11 @@ public class SubjectConfigService {
     @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteStream(Long id) {
-        if (!academicStreamRepository.existsById(id)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (!academicStreamRepository.existsByIdAndSchoolId(id, schoolId)) {
             throw new NoSuchElementException("Stream not found: " + id);
         }
-        streamCoreSubjectRepository.deleteByStreamIdAndSchoolId(id, securityUtil.getSchoolId());
+        streamCoreSubjectRepository.deleteByStreamIdAndSchoolId(id, schoolId);
         academicStreamRepository.deleteById(id);
         log.info("Deleted stream id={} and its core subjects", id);
     }
@@ -123,14 +127,15 @@ public class SubjectConfigService {
     // ─── StreamCoreSubject ────────────────────────────────────────────────────
 
     @CacheEvict(value = "subject-config", allEntries = true)
+    @Transactional
     public StreamCoreSubject addStreamCoreSubject(Long streamId, String subjectName) {
-        if (!academicStreamRepository.existsById(streamId)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (!academicStreamRepository.existsByIdAndSchoolId(streamId, schoolId)) {
             throw new NoSuchElementException("Stream not found: " + streamId);
         }
         if (subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("subjectName is required.");
         }
-        Long schoolId = securityUtil.getSchoolId();
         if (streamCoreSubjectRepository.existsByStreamIdAndSubjectNameAndSchoolId(streamId, subjectName, schoolId)) {
             throw new IllegalArgumentException(
                     "Subject '" + subjectName + "' already exists in this stream.");
@@ -147,7 +152,8 @@ public class SubjectConfigService {
     @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteStreamCoreSubject(Long id) {
-        if (!streamCoreSubjectRepository.existsById(id)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (!streamCoreSubjectRepository.existsByIdAndSchoolId(id, schoolId)) {
             throw new NoSuchElementException("StreamCoreSubject not found: " + id);
         }
         streamCoreSubjectRepository.deleteById(id);
@@ -174,13 +180,18 @@ public class SubjectConfigService {
     }
 
     @CacheEvict(value = "subject-config", allEntries = true)
+    @Transactional
     public OptionalGroupResponseDTO addOptionalGroup(String groupName) {
         if (groupName == null || groupName.isBlank()) {
             throw new IllegalArgumentException("groupName is required.");
         }
+        Long schoolId = securityUtil.getSchoolId();
+        if (optionalSubjectGroupRepository.existsByGroupNameAndSchoolId(groupName, schoolId)) {
+            throw new IllegalArgumentException("Optional group '" + groupName + "' already exists.");
+        }
         OptionalSubjectGroup group = new OptionalSubjectGroup();
         group.setGroupName(groupName);
-        group.setSchoolId(securityUtil.getSchoolId());
+        group.setSchoolId(schoolId);
         OptionalSubjectGroup saved = optionalSubjectGroupRepository.save(group);
         log.info("Added optional subject group '{}'", groupName);
         return new OptionalGroupResponseDTO(saved.getId(), saved.getGroupName(), new java.util.ArrayList<>());
@@ -189,10 +200,11 @@ public class SubjectConfigService {
     @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteOptionalGroup(Long id) {
-        if (!optionalSubjectGroupRepository.existsById(id)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (!optionalSubjectGroupRepository.existsByIdAndSchoolId(id, schoolId)) {
             throw new NoSuchElementException("OptionalSubjectGroup not found: " + id);
         }
-        optionalSubjectRepository.deleteByGroupIdAndSchoolId(id, securityUtil.getSchoolId());
+        optionalSubjectRepository.deleteByGroupIdAndSchoolId(id, schoolId);
         optionalSubjectGroupRepository.deleteById(id);
         log.info("Deleted OptionalSubjectGroup id={} and its subjects", id);
     }
@@ -200,8 +212,10 @@ public class SubjectConfigService {
     // ─── OptionalSubject ──────────────────────────────────────────────────────
 
     @CacheEvict(value = "subject-config", allEntries = true)
+    @Transactional
     public OptionalSubject addOptionalSubject(Long groupId, String subjectName) {
-        if (!optionalSubjectGroupRepository.existsById(groupId)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (!optionalSubjectGroupRepository.existsByIdAndSchoolId(groupId, schoolId)) {
             throw new NoSuchElementException("OptionalSubjectGroup not found: " + groupId);
         }
         if (subjectName == null || subjectName.isBlank()) {
@@ -210,7 +224,7 @@ public class SubjectConfigService {
         OptionalSubject os = new OptionalSubject();
         os.setGroupId(groupId);
         os.setSubjectName(subjectName);
-        os.setSchoolId(securityUtil.getSchoolId());
+        os.setSchoolId(schoolId);
         OptionalSubject saved = optionalSubjectRepository.save(os);
         log.info("Added optional subject '{}' to group id={}", subjectName, groupId);
         return saved;
@@ -219,7 +233,8 @@ public class SubjectConfigService {
     @CacheEvict(value = "subject-config", allEntries = true)
     @Transactional
     public void deleteOptionalSubject(Long id) {
-        if (!optionalSubjectRepository.existsById(id)) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (!optionalSubjectRepository.existsByIdAndSchoolId(id, schoolId)) {
             throw new NoSuchElementException("OptionalSubject not found: " + id);
         }
         optionalSubjectRepository.deleteById(id);

@@ -58,6 +58,16 @@ public class StudentElectiveEnrollmentService {
                                          String optionalGroup, String subjectName) {
         Long schoolId = securityUtil.getSchoolId();
 
+        // Validate student exists and belongs to this school
+        Student student = studentService.getStudent(studentId)
+                .filter(s -> schoolId.equals(s.getSchoolId()))
+                .orElseThrow(() -> new IllegalArgumentException("Student not found: " + studentId));
+        if (!className.equals(student.getClassName())) {
+            throw new IllegalArgumentException(
+                    "Student " + studentId + " is in class " + student.getClassName()
+                            + ", not class " + className);
+        }
+
         // Validate the subject is a real optional subject in this class/group
         List<ClassSubject> electives = classSubjectRepository
                 .findByClassNameAndOptionalTrueAndSchoolId(className, schoolId);
@@ -82,10 +92,8 @@ public class StudentElectiveEnrollmentService {
         e.setSubjectName(subjectName);
         StudentElectiveEnrollment saved = repo.save(e);
 
-        String name = studentService.getStudent(studentId)
-                .map(Student::getName).orElse(studentId);
         log.info("Enrolled student {} in elective group='{}' subject='{}' class={}", studentId, optionalGroup, subjectName, className);
-        return new ElectiveEnrollmentDTO(saved.getId(), studentId, name, className, optionalGroup, subjectName);
+        return new ElectiveEnrollmentDTO(saved.getId(), studentId, student.getName(), className, optionalGroup, subjectName);
     }
 
     /**
@@ -102,7 +110,6 @@ public class StudentElectiveEnrollmentService {
      * Bulk-assign: set the same elective choice for a list of students.
      * Existing choices for the given group are replaced.
      */
-    @Transactional
     public int bulkEnroll(List<String> studentIds, String className,
                           String optionalGroup, String subjectName) {
         int count = 0;

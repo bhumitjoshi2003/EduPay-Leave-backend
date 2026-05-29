@@ -12,6 +12,8 @@ public interface OptionalSubjectRepository extends JpaRepository<OptionalSubject
 
     List<OptionalSubject> findByGroupIdAndSchoolId(Long groupId, Long schoolId);
 
+    boolean existsByIdAndSchoolId(Long id, Long schoolId);
+
     @Transactional
     void deleteByGroupIdAndSchoolId(Long groupId, Long schoolId);
 }

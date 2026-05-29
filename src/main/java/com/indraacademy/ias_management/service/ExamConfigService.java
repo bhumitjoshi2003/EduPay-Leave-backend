@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.ExamSubjectEntry;
 import com.indraacademy.ias_management.repository.ClassSubjectRepository;
 import com.indraacademy.ias_management.repository.ExamConfigRepository;
 import com.indraacademy.ias_management.repository.ExamSubjectEntryRepository;
+import com.indraacademy.ias_management.repository.StudentMarkRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class ExamConfigService {
@@ -30,6 +32,7 @@ public class ExamConfigService {
 
     @Autowired private ExamConfigRepository examConfigRepository;
     @Autowired private ExamSubjectEntryRepository examSubjectEntryRepository;
+    @Autowired private StudentMarkRepository studentMarkRepository;
     @Autowired private ClassSubjectRepository classSubjectRepository;
     @Autowired private SecurityUtil securityUtil;
 
@@ -81,9 +84,15 @@ public class ExamConfigService {
         if (!schoolId.equals(exam.getSchoolId())) {
             throw new SecurityException("Access denied: exam does not belong to your school.");
         }
-        examSubjectEntryRepository.deleteByExamConfigId(id);
+        // Delete all marks referencing this exam's subject entries first
+        List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(id, schoolId);
+        if (!entries.isEmpty()) {
+            List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
+            studentMarkRepository.deleteByExamSubjectEntryIdInAndSchoolId(entryIds, schoolId);
+        }
+        examSubjectEntryRepository.deleteByExamConfigIdAndSchoolId(id, schoolId);
         examConfigRepository.deleteById(id);
-        log.info("Deleted ExamConfig id={} and its subject entries", id);
+        log.info("Deleted ExamConfig id={}, its subject entries, and related marks", id);
     }
 
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
@@ -97,7 +106,7 @@ public class ExamConfigService {
         if (!schoolId.equals(exam.getSchoolId())) {
             throw new SecurityException("Access denied: exam does not belong to your school.");
         }
-        return examSubjectEntryRepository.findByExamConfigId(examId);
+        return examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examId, schoolId);
     }
 
     @CacheEvict(value = "exam-config", allEntries = true)
@@ -125,7 +134,7 @@ public class ExamConfigService {
                             + ". Add it via POST /api/subjects/class first.");
         }
 
-        if (examSubjectEntryRepository.existsByExamConfigIdAndSubjectName(examId, subjectName)) {
+        if (examSubjectEntryRepository.existsByExamConfigIdAndSubjectNameAndSchoolId(examId, subjectName, schoolId)) {
             throw new IllegalArgumentException(
                     "Subject '" + subjectName + "' is already part of this exam.");
         }
@@ -144,11 +153,8 @@ public class ExamConfigService {
     @CacheEvict(value = "exam-config", allEntries = true)
     public ExamSubjectEntry updateExamSubject(Long entryId, Integer maxMarks, LocalDate examDate) {
         Long schoolId = securityUtil.getSchoolId();
-        ExamSubjectEntry entry = examSubjectEntryRepository.findById(entryId)
+        ExamSubjectEntry entry = examSubjectEntryRepository.findByIdAndSchoolId(entryId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("ExamSubjectEntry not found: " + entryId));
-        if (!schoolId.equals(entry.getSchoolId())) {
-            throw new SecurityException("Access denied: exam subject does not belong to your school.");
-        }
 
         if (maxMarks != null) {
             if (maxMarks <= 0) throw new IllegalArgumentException("maxMarks must be positive.");
@@ -166,11 +172,9 @@ public class ExamConfigService {
     @Transactional
     public void deleteExamSubject(Long entryId) {
         Long schoolId = securityUtil.getSchoolId();
-        ExamSubjectEntry entry = examSubjectEntryRepository.findById(entryId)
+        ExamSubjectEntry entry = examSubjectEntryRepository.findByIdAndSchoolId(entryId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("ExamSubjectEntry not found: " + entryId));
-        if (!schoolId.equals(entry.getSchoolId())) {
-            throw new SecurityException("Access denied: exam subject does not belong to your school.");
-        }
+        studentMarkRepository.deleteByExamSubjectEntryIdAndSchoolId(entryId, schoolId);
         examSubjectEntryRepository.deleteById(entryId);
         log.info("Deleted ExamSubjectEntry id={}", entryId);
     }
@@ -193,7 +197,7 @@ public class ExamConfigService {
             throw new SecurityException("Access denied: exam does not belong to your school.");
         }
 
-        List<ExamSubjectEntry> existing = examSubjectEntryRepository.findByExamConfigId(examId);
+        List<ExamSubjectEntry> existing = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examId, schoolId);
         Map<String, ExamSubjectEntry> existingByName = new HashMap<>();
         for (ExamSubjectEntry e : existing) {
             existingByName.put(e.getSubjectName(), e);
@@ -231,6 +235,7 @@ public class ExamConfigService {
         // Remove subjects that were in the exam but not in the incoming list
         for (ExamSubjectEntry e : existing) {
             if (!incomingNames.contains(e.getSubjectName())) {
+                studentMarkRepository.deleteByExamSubjectEntryIdAndSchoolId(e.getId(), schoolId);
                 examSubjectEntryRepository.deleteById(e.getId());
             }
         }
@@ -248,13 +253,18 @@ public class ExamConfigService {
 
     /** Resolves an ExamSubjectEntry to its parent ExamConfig's className. */
     public Optional<String> resolveClassName(Long examSubjectEntryId) {
-        return examSubjectEntryRepository.findById(examSubjectEntryId)
+        Long schoolId = securityUtil.getSchoolId();
+        return examSubjectEntryRepository.findByIdAndSchoolId(examSubjectEntryId, schoolId)
                 .flatMap(e -> examConfigRepository.findById(e.getExamConfigId()))
+                .filter(exam -> schoolId.equals(exam.getSchoolId()))
                 .map(ExamConfig::getClassName);
     }
 
     /** Resolves an ExamConfig's className. */
     public Optional<String> resolveClassNameForExam(Long examConfigId) {
-        return examConfigRepository.findById(examConfigId).map(ExamConfig::getClassName);
+        Long schoolId = securityUtil.getSchoolId();
+        return examConfigRepository.findById(examConfigId)
+                .filter(exam -> schoolId.equals(exam.getSchoolId()))
+                .map(ExamConfig::getClassName);
     }
 }

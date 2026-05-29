@@ -30,9 +30,6 @@ public class MarkService {
 
     private static final Logger log = LoggerFactory.getLogger(MarkService.class);
 
-    /** Classes with stream-based, per-student subject lists. */
-    private static final Set<String> UPPER_CLASSES = Set.of("11", "12");
-
     @Autowired private StudentMarkRepository studentMarkRepository;
     @Autowired private ExamSubjectEntryRepository examSubjectEntryRepository;
     @Autowired private ExamConfigRepository examConfigRepository;
@@ -68,7 +65,7 @@ public class MarkService {
                 .map(Student::getStudentId).collect(Collectors.toSet());
 
         Map<String, Double> marksByStudent = studentMarkRepository
-                .findByExamSubjectEntryId(examSubjectEntryId)
+                .findByExamSubjectEntryIdAndSchoolId(examSubjectEntryId, securityUtil.getSchoolId())
                 .stream()
                 .filter(m -> studentIds.contains(m.getStudentId()))
                 .collect(Collectors.toMap(StudentMark::getStudentId, StudentMark::getMarksObtained));
@@ -87,20 +84,21 @@ public class MarkService {
      */
     @Transactional(readOnly = true)
     public List<StudentExamSubjectDTO> getStudentMarksForExam(String studentId, Long examConfigId) {
+        Long schoolId = securityUtil.getSchoolId();
         Student student = studentService.getStudent(studentId)
+                .filter(s -> schoolId.equals(s.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
-        List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigId(examConfigId);
-        Long schoolId = securityUtil.getSchoolId();
+        List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examConfigId, schoolId);
 
-        // For 11/12, restrict to the student's stream subjects
-        if (UPPER_CLASSES.contains(student.getClassName())) {
-            Set<String> studentSubjects = loadStudentSubjectSet(studentId);
+        // Check if student has a stream selection — if so, filter by stream subjects
+        Set<String> studentStreamSubjects = loadStudentSubjectSet(studentId);
+        if (!studentStreamSubjects.isEmpty()) {
             entries = entries.stream()
-                    .filter(e -> studentSubjects.contains(e.getSubjectName().toLowerCase()))
+                    .filter(e -> studentStreamSubjects.contains(e.getSubjectName().toLowerCase()))
                     .collect(Collectors.toList());
         } else {
-            // For classes 1-10: filter out elective subjects the student isn't enrolled in
+            // No stream: filter out elective subjects the student isn't enrolled in
             List<ClassSubject> electivesInClass = classSubjectRepository
                     .findByClassNameAndOptionalTrueAndSchoolId(student.getClassName(), schoolId);
             if (!electivesInClass.isEmpty()) {
@@ -121,7 +119,7 @@ public class MarkService {
         List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
 
         Map<Long, Double> markByEntryId = studentMarkRepository
-                .findByStudentIdAndExamSubjectEntryIdIn(studentId, entryIds)
+                .findByStudentIdAndExamSubjectEntryIdInAndSchoolId(studentId, entryIds, schoolId)
                 .stream()
                 .collect(Collectors.toMap(StudentMark::getExamSubjectEntryId, StudentMark::getMarksObtained));
 
@@ -134,7 +132,6 @@ public class MarkService {
 
     // ─── Bulk mark save (upsert) ──────────────────────────────────────────────
 
-    @Transactional
     public MarkBulkResultDTO bulkSaveMarks(List<MarkEntryRequest> requests, HttpServletRequest httpRequest) {
         int saved = 0, updated = 0;
         List<MarkBulkResultDTO.MarkError> errors = new ArrayList<>();
@@ -147,7 +144,7 @@ public class MarkService {
                 validateMarkEntry(req);
 
                 Optional<StudentMark> existing = studentMarkRepository
-                        .findByStudentIdAndExamSubjectEntryId(req.getStudentId(), req.getExamSubjectEntryId());
+                        .findByStudentIdAndExamSubjectEntryIdAndSchoolId(req.getStudentId(), req.getExamSubjectEntryId(), securityUtil.getSchoolId());
 
                 if (existing.isPresent()) {
                     StudentMark mark = existing.get();
@@ -193,23 +190,22 @@ public class MarkService {
      */
     @Transactional(readOnly = true)
     public List<ExamResultDTO> getStudentResults(String studentId, String session) {
-        Student student = studentService.getStudent(studentId)
-                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
-
         Long schoolId = securityUtil.getSchoolId();
+        Student student = studentService.getStudent(studentId)
+                .filter(s -> schoolId.equals(s.getSchoolId()))
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
         List<ExamConfig> exams = (session != null && !session.isBlank())
                 ? examConfigRepository.findBySessionAndClassNameAndSchoolId(session, student.getClassName(), schoolId)
                 : examConfigRepository.findByClassNameAndSchoolId(student.getClassName(), schoolId);
 
-        // For 11/12 students, load stream subject set once and reuse across all exams
-        Set<String> studentSubjects = UPPER_CLASSES.contains(student.getClassName())
-                ? loadStudentSubjectSet(studentId)
-                : Set.of();
+        // Load stream subject set once — works for any class with stream selections
+        Set<String> studentSubjects = loadStudentSubjectSet(studentId);
+        boolean isStreamStudent = !studentSubjects.isEmpty();
 
-        // For classes 1-10: load elective enrollments once
+        // For non-stream students: load elective enrollments once
         Set<String> electiveNames = Set.of();
         Set<String> enrolledElectives = Set.of();
-        if (!UPPER_CLASSES.contains(student.getClassName())) {
+        if (!isStreamStudent) {
             List<ClassSubject> classElectives = classSubjectRepository
                     .findByClassNameAndOptionalTrueAndSchoolId(student.getClassName(), schoolId);
             if (!classElectives.isEmpty()) {
@@ -228,17 +224,17 @@ public class MarkService {
         List<ExamResultDTO> results = new ArrayList<>();
 
         for (ExamConfig exam : exams) {
-            List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigId(exam.getId());
+            List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(exam.getId(), schoolId);
             if (entries.isEmpty()) continue;
 
             // Filter to the student's own subjects
-            if (UPPER_CLASSES.contains(student.getClassName())) {
-                // 11–12: stream-based
+            if (isStreamStudent) {
+                // Stream-based: only subjects in the student's stream
                 entries = entries.stream()
                         .filter(e -> studentSubjects.contains(e.getSubjectName().toLowerCase()))
                         .collect(Collectors.toList());
             } else if (!finalElectiveNames.isEmpty()) {
-                // 1–10: exclude elective subjects the student didn't choose
+                // Elective-based: exclude elective subjects the student didn't choose
                 entries = entries.stream()
                         .filter(e -> !finalElectiveNames.contains(e.getSubjectName())
                                 || finalEnrolledElectives.contains(e.getSubjectName()))
@@ -250,12 +246,12 @@ public class MarkService {
 
             // Student's marks
             Map<Long, Double> studentMarkMap = studentMarkRepository
-                    .findByStudentIdAndExamSubjectEntryIdIn(studentId, entryIds)
+                    .findByStudentIdAndExamSubjectEntryIdInAndSchoolId(studentId, entryIds, schoolId)
                     .stream()
                     .collect(Collectors.toMap(StudentMark::getExamSubjectEntryId, StudentMark::getMarksObtained));
 
             // All marks for this exam (for class average + per-subject rank)
-            List<StudentMark> allMarks = studentMarkRepository.findByExamSubjectEntryIdIn(entryIds);
+            List<StudentMark> allMarks = studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(entryIds, schoolId);
             Map<Long, List<StudentMark>> marksByEntry = allMarks.stream()
                     .collect(Collectors.groupingBy(StudentMark::getExamSubjectEntryId));
 
@@ -301,22 +297,27 @@ public class MarkService {
 
     @Transactional(readOnly = true)
     public List<ClassStudentResultDTO> getClassResults(String className, Long examConfigId, Long sectionId) {
-        List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigId(examConfigId);
+        Long schoolId = securityUtil.getSchoolId();
+        List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examConfigId, schoolId);
         List<Student> students = (sectionId != null)
                 ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
                 : studentService.getActiveStudentsByClass(className);
 
         if (students.isEmpty() || entries.isEmpty()) return Collections.emptyList();
 
-        // Load elective info once for the class
-        Long schoolId = securityUtil.getSchoolId();
-        List<ClassSubject> classElectives = UPPER_CLASSES.contains(className)
+        // Determine per-student subject filtering strategy:
+        // 1. Check if any students have stream selections (stream-based classes like 9-12)
+        // 2. Otherwise check for elective enrollments (classes 1-10 with optional subjects)
+        Map<String, Set<String>> streamSubjectsByStudent = batchLoadStudentSubjectSets(students);
+        boolean hasStreamStudents = streamSubjectsByStudent.values().stream().anyMatch(s -> !s.isEmpty());
+
+        // Load elective info for the class (used when no stream selections exist)
+        List<ClassSubject> classElectives = hasStreamStudents
                 ? List.of()
                 : classSubjectRepository.findByClassNameAndOptionalTrueAndSchoolId(className, schoolId);
         Set<String> electiveNames = classElectives.stream()
                 .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
 
-        // Load all elective enrollments for the class in one query — studentId → set of enrolled subjects
         Map<String, Set<String>> enrollmentsByStudent = new HashMap<>();
         if (!electiveNames.isEmpty()) {
             studentElectiveEnrollmentRepository.findByClassNameAndSchoolId(className, schoolId)
@@ -326,7 +327,7 @@ public class MarkService {
         }
 
         List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
-        List<StudentMark> allMarks = studentMarkRepository.findByExamSubjectEntryIdIn(entryIds);
+        List<StudentMark> allMarks = studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(entryIds, schoolId);
 
         // studentId → (entryId → marksObtained)
         Map<String, Map<Long, Double>> markMap = new HashMap<>();
@@ -336,17 +337,11 @@ public class MarkService {
         }
 
         // First pass: compute percentage per student for fair ranking.
-        // Students with different elective subjects may have different max totals,
-        // so ranking by raw total would be unfair — rank by percentage instead.
         Map<String, Double> percentageByStudent = new HashMap<>();
         for (Student student : students) {
             Map<Long, Double> sMarks = markMap.getOrDefault(student.getStudentId(), Collections.emptyMap());
-            Set<String> enrolled = enrollmentsByStudent.getOrDefault(student.getStudentId(), Set.of());
-
-            List<ExamSubjectEntry> studentEntries = electiveNames.isEmpty() ? entries : entries.stream()
-                    .filter(e -> !electiveNames.contains(e.getSubjectName())
-                            || enrolled.contains(e.getSubjectName()))
-                    .collect(Collectors.toList());
+            List<ExamSubjectEntry> studentEntries = filterEntriesForStudent(
+                    entries, student, hasStreamStudents, streamSubjectsByStudent, electiveNames, enrollmentsByStudent);
 
             boolean hasMarks = studentEntries.stream().anyMatch(e -> sMarks.containsKey(e.getId()));
             if (hasMarks) {
@@ -365,13 +360,8 @@ public class MarkService {
         List<ClassStudentResultDTO> results = new ArrayList<>();
         for (Student student : students) {
             Map<Long, Double> sMarks = markMap.getOrDefault(student.getStudentId(), Collections.emptyMap());
-            Set<String> enrolled = enrollmentsByStudent.getOrDefault(student.getStudentId(), Set.of());
-
-            // Filter entries to this student's subjects: keep non-elective + enrolled electives only
-            List<ExamSubjectEntry> studentEntries = electiveNames.isEmpty() ? entries : entries.stream()
-                    .filter(e -> !electiveNames.contains(e.getSubjectName())
-                            || enrolled.contains(e.getSubjectName()))
-                    .collect(Collectors.toList());
+            List<ExamSubjectEntry> studentEntries = filterEntriesForStudent(
+                    entries, student, hasStreamStudents, streamSubjectsByStudent, electiveNames, enrollmentsByStudent);
 
             List<ClassStudentResultDTO.SubjectMarkDTO> subjectMarks = studentEntries.stream()
                     .map(e -> new ClassStudentResultDTO.SubjectMarkDTO(
@@ -395,6 +385,36 @@ public class MarkService {
         return results;
     }
 
+    /**
+     * Filters exam subject entries to only those applicable to a specific student.
+     * For stream-based classes: only subjects in the student's stream.
+     * For elective-based classes: all non-elective subjects + enrolled electives.
+     * For classes with neither: all entries.
+     */
+    private List<ExamSubjectEntry> filterEntriesForStudent(
+            List<ExamSubjectEntry> entries, Student student,
+            boolean hasStreamStudents, Map<String, Set<String>> streamSubjectsByStudent,
+            Set<String> electiveNames, Map<String, Set<String>> enrollmentsByStudent) {
+
+        if (hasStreamStudents) {
+            Set<String> studentSubjects = streamSubjectsByStudent.getOrDefault(student.getStudentId(), Set.of());
+            if (studentSubjects.isEmpty()) return entries; // no stream selection — show all
+            return entries.stream()
+                    .filter(e -> studentSubjects.contains(e.getSubjectName().toLowerCase()))
+                    .collect(Collectors.toList());
+        }
+
+        if (!electiveNames.isEmpty()) {
+            Set<String> enrolled = enrollmentsByStudent.getOrDefault(student.getStudentId(), Set.of());
+            return entries.stream()
+                    .filter(e -> !electiveNames.contains(e.getSubjectName())
+                            || enrolled.contains(e.getSubjectName()))
+                    .collect(Collectors.toList());
+        }
+
+        return entries;
+    }
+
     // ─── Internal helpers ─────────────────────────────────────────────────────
 
     private List<Student> resolveStudentsForSubject(String className, String subjectName, Long sectionId) {
@@ -403,16 +423,20 @@ public class MarkService {
                 ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
                 : studentService.getActiveStudentsByClass(className);
 
-        // Classes 11–12: existing stream-based logic (unchanged)
-        if (UPPER_CLASSES.contains(className)) {
-            Map<String, Set<String>> subjectSetByStudent = batchLoadStudentSubjectSets(all);
+        // Check if any students have stream selections — filter by stream subjects
+        Map<String, Set<String>> subjectSetByStudent = batchLoadStudentSubjectSets(all);
+        boolean hasStreamStudents = subjectSetByStudent.values().stream().anyMatch(s -> !s.isEmpty());
+        if (hasStreamStudents) {
             String subjectLower = subjectName.toLowerCase();
             return all.stream()
-                    .filter(s -> subjectSetByStudent.getOrDefault(s.getStudentId(), Set.of()).contains(subjectLower))
+                    .filter(s -> {
+                        Set<String> subjects = subjectSetByStudent.getOrDefault(s.getStudentId(), Set.of());
+                        return subjects.isEmpty() || subjects.contains(subjectLower); // no stream = show all
+                    })
                     .collect(Collectors.toList());
         }
 
-        // Any class: check if this subject is an elective
+        // No stream students: check if this subject is an elective
         Long schoolId = securityUtil.getSchoolId();
         boolean isElective = classSubjectRepository
                 .existsByClassNameAndSubjectNameAndOptionalTrueAndSchoolId(className, subjectName, schoolId);
