@@ -86,6 +86,29 @@ public class ExamController {
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PutMapping("/{examId}/subjects/bulk")
+    public ResponseEntity<?> bulkSyncExamSubjects(@PathVariable Long examId,
+                                                   @RequestBody List<Map<String, Object>> body) {
+        log.info("PUT /api/exams/{}/subjects/bulk: {} subjects", examId, body.size());
+        try {
+            List<ExamConfigService.BulkSubjectRequest> requests = new java.util.ArrayList<>();
+            for (Map<String, Object> item : body) {
+                ExamConfigService.BulkSubjectRequest req = new ExamConfigService.BulkSubjectRequest();
+                req.subjectName = (String) item.get("subjectName");
+                req.maxMarks = item.get("maxMarks") != null
+                        ? Integer.valueOf(item.get("maxMarks").toString()) : null;
+                req.examDate = item.get("examDate") != null && !item.get("examDate").toString().isEmpty()
+                        ? LocalDate.parse(item.get("examDate").toString()) : null;
+                requests.add(req);
+            }
+            List<ExamSubjectEntry> result = examConfigService.bulkSyncExamSubjects(examId, requests);
+            return ResponseEntity.ok(result);
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PutMapping("/subjects/{entryId}")
     public ResponseEntity<?> updateExamSubject(@PathVariable Long entryId,
                                                @RequestBody Map<String, Object> body) {

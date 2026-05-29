@@ -308,6 +308,23 @@ public class MarkService {
 
         if (students.isEmpty() || entries.isEmpty()) return Collections.emptyList();
 
+        // Load elective info once for the class
+        Long schoolId = securityUtil.getSchoolId();
+        List<ClassSubject> classElectives = UPPER_CLASSES.contains(className)
+                ? List.of()
+                : classSubjectRepository.findByClassNameAndOptionalTrueAndSchoolId(className, schoolId);
+        Set<String> electiveNames = classElectives.stream()
+                .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
+
+        // Load all elective enrollments for the class in one query — studentId → set of enrolled subjects
+        Map<String, Set<String>> enrollmentsByStudent = new HashMap<>();
+        if (!electiveNames.isEmpty()) {
+            studentElectiveEnrollmentRepository.findByClassNameAndSchoolId(className, schoolId)
+                    .forEach(e -> enrollmentsByStudent
+                            .computeIfAbsent(e.getStudentId(), k -> new HashSet<>())
+                            .add(e.getSubjectName()));
+        }
+
         List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
         List<StudentMark> allMarks = studentMarkRepository.findByExamSubjectEntryIdIn(entryIds);
 
@@ -318,13 +335,45 @@ public class MarkService {
                     .put(m.getExamSubjectEntryId(), m.getMarksObtained());
         }
 
-        Map<String, Double> totalByStudent = computeTotalsByStudent(allMarks);
+        // First pass: compute percentage per student for fair ranking.
+        // Students with different elective subjects may have different max totals,
+        // so ranking by raw total would be unfair — rank by percentage instead.
+        Map<String, Double> percentageByStudent = new HashMap<>();
+        for (Student student : students) {
+            Map<Long, Double> sMarks = markMap.getOrDefault(student.getStudentId(), Collections.emptyMap());
+            Set<String> enrolled = enrollmentsByStudent.getOrDefault(student.getStudentId(), Set.of());
 
+            List<ExamSubjectEntry> studentEntries = electiveNames.isEmpty() ? entries : entries.stream()
+                    .filter(e -> !electiveNames.contains(e.getSubjectName())
+                            || enrolled.contains(e.getSubjectName()))
+                    .collect(Collectors.toList());
+
+            boolean hasMarks = studentEntries.stream().anyMatch(e -> sMarks.containsKey(e.getId()));
+            if (hasMarks) {
+                double total = studentEntries.stream()
+                        .map(e -> sMarks.get(e.getId()))
+                        .filter(Objects::nonNull)
+                        .mapToDouble(Double::doubleValue).sum();
+                double maxTotal = studentEntries.stream().mapToInt(ExamSubjectEntry::getMaxMarks).sum();
+                if (maxTotal > 0) {
+                    percentageByStudent.put(student.getStudentId(), round2(total / maxTotal * 100));
+                }
+            }
+        }
+
+        // Second pass: build results with percentage-based ranking
         List<ClassStudentResultDTO> results = new ArrayList<>();
         for (Student student : students) {
             Map<Long, Double> sMarks = markMap.getOrDefault(student.getStudentId(), Collections.emptyMap());
+            Set<String> enrolled = enrollmentsByStudent.getOrDefault(student.getStudentId(), Set.of());
 
-            List<ClassStudentResultDTO.SubjectMarkDTO> subjectMarks = entries.stream()
+            // Filter entries to this student's subjects: keep non-elective + enrolled electives only
+            List<ExamSubjectEntry> studentEntries = electiveNames.isEmpty() ? entries : entries.stream()
+                    .filter(e -> !electiveNames.contains(e.getSubjectName())
+                            || enrolled.contains(e.getSubjectName()))
+                    .collect(Collectors.toList());
+
+            List<ClassStudentResultDTO.SubjectMarkDTO> subjectMarks = studentEntries.stream()
                     .map(e -> new ClassStudentResultDTO.SubjectMarkDTO(
                             e.getSubjectName(), e.getMaxMarks(), e.getExamDate(), sMarks.get(e.getId())))
                     .collect(Collectors.toList());
@@ -333,9 +382,9 @@ public class MarkService {
                     .filter(s -> s.getMarksObtained() != null)
                     .mapToDouble(ClassStudentResultDTO.SubjectMarkDTO::getMarksObtained)
                     .sum();
-            double maxTotal = entries.stream().mapToInt(ExamSubjectEntry::getMaxMarks).sum();
+            double maxTotal = studentEntries.stream().mapToInt(ExamSubjectEntry::getMaxMarks).sum();
             double pct = maxTotal > 0 ? round2(total / maxTotal * 100) : 0.0;
-            int rank = computeOverallRank(student.getStudentId(), totalByStudent);
+            int rank = computeOverallRank(student.getStudentId(), percentageByStudent);
 
             results.add(new ClassStudentResultDTO(
                     student.getStudentId(), student.getName(),

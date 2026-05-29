@@ -15,10 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
 
 @Service
 public class ExamConfigService {
@@ -176,6 +173,77 @@ public class ExamConfigService {
         }
         examSubjectEntryRepository.deleteById(entryId);
         log.info("Deleted ExamSubjectEntry id={}", entryId);
+    }
+
+    // ─── Bulk sync subjects ─────────────────────────────────────────────────
+
+    /**
+     * Replaces the entire subject list for an exam in one call.
+     * - Subjects already in the exam are updated (maxMarks, examDate).
+     * - New subjects are added (no ClassSubject validation — allows extra subjects like GK).
+     * - Subjects previously in the exam but not in the incoming list are removed.
+     */
+    @CacheEvict(value = "exam-config", allEntries = true)
+    @Transactional
+    public List<ExamSubjectEntry> bulkSyncExamSubjects(Long examId, List<BulkSubjectRequest> incoming) {
+        Long schoolId = securityUtil.getSchoolId();
+        ExamConfig exam = examConfigRepository.findById(examId)
+                .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + examId));
+        if (!schoolId.equals(exam.getSchoolId())) {
+            throw new SecurityException("Access denied: exam does not belong to your school.");
+        }
+
+        List<ExamSubjectEntry> existing = examSubjectEntryRepository.findByExamConfigId(examId);
+        Map<String, ExamSubjectEntry> existingByName = new HashMap<>();
+        for (ExamSubjectEntry e : existing) {
+            existingByName.put(e.getSubjectName(), e);
+        }
+
+        Set<String> incomingNames = new HashSet<>();
+        List<ExamSubjectEntry> result = new ArrayList<>();
+
+        for (BulkSubjectRequest req : incoming) {
+            if (req.subjectName == null || req.subjectName.isBlank()) continue;
+            if (req.maxMarks == null || req.maxMarks <= 0) {
+                throw new IllegalArgumentException("maxMarks must be positive for subject '" + req.subjectName + "'.");
+            }
+            String name = req.subjectName.trim();
+            incomingNames.add(name);
+
+            ExamSubjectEntry entry = existingByName.get(name);
+            if (entry != null) {
+                // Update existing
+                entry.setMaxMarks(req.maxMarks);
+                entry.setExamDate(req.examDate);
+                result.add(examSubjectEntryRepository.save(entry));
+            } else {
+                // Add new
+                ExamSubjectEntry fresh = new ExamSubjectEntry();
+                fresh.setSchoolId(schoolId);
+                fresh.setExamConfigId(examId);
+                fresh.setSubjectName(name);
+                fresh.setMaxMarks(req.maxMarks);
+                fresh.setExamDate(req.examDate);
+                result.add(examSubjectEntryRepository.save(fresh));
+            }
+        }
+
+        // Remove subjects that were in the exam but not in the incoming list
+        for (ExamSubjectEntry e : existing) {
+            if (!incomingNames.contains(e.getSubjectName())) {
+                examSubjectEntryRepository.deleteById(e.getId());
+            }
+        }
+
+        log.info("Bulk-synced {} subjects for ExamConfig id={}", result.size(), examId);
+        return result;
+    }
+
+    /** Simple holder for bulk-sync request items. */
+    public static class BulkSubjectRequest {
+        public String subjectName;
+        public Integer maxMarks;
+        public LocalDate examDate;
     }
 
     /** Resolves an ExamSubjectEntry to its parent ExamConfig's className. */
