@@ -28,10 +28,10 @@ jobs:
             EOF
             
             cd ~/EduPay-Leave-backend
-            git pull origin main
+            git fetch origin && git reset --hard origin/main
 
             docker stop edunexify-backend-container || true
-            docker rm edunexify-backend-container || true
+            docker rm -f edunexify-backend-container || true
 
             docker build -t edunexify-backend .
 
@@ -43,7 +43,7 @@ jobs:
               --health-cmd="curl --fail http://localhost:8080/actuator/health || exit 1" \
               --health-interval=30s \
               --health-timeout=5s \
-              --health-retries=3 \ 
+              --health-retries=3 \
               --name edunexify-backend-container \
               -p 127.0.0.1:8080:8080 \
               -e SPRING_PROFILES_ACTIVE=prod \
