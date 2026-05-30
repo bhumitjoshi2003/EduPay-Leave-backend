@@ -10,6 +10,7 @@ import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ public class StudentElectiveEnrollmentService {
     @Autowired private ClassSubjectRepository classSubjectRepository;
     @Autowired private StudentService studentService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired @Lazy private StudentElectiveEnrollmentService self;
 
     /**
      * Returns all elective enrollments for a class, enriched with student names.
@@ -116,9 +118,9 @@ public class StudentElectiveEnrollmentService {
         int count = 0;
         for (String sid : studentIds) {
             try {
-                enroll(sid, className, optionalGroup, subjectName);
+                self.enroll(sid, className, optionalGroup, subjectName);
                 count++;
-            } catch (IllegalArgumentException ex) {
+            } catch (Exception ex) {
                 log.warn("Bulk enroll skipped studentId={}: {}", sid, ex.getMessage());
             }
         }
