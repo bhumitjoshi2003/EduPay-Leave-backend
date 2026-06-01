@@ -342,6 +342,17 @@ public class EntitlementRefreshService {
             return "EXPIRED";
         }
 
+        // Dates extended by super admin but status was left stale — correct it.
+        // If expiry is in the future, the school is active (not expired or in grace).
+        if (("EXPIRED".equals(sub.getStatus()) || "GRACE".equals(sub.getStatus()))
+                && sub.getExpiresAt() != null && now.isBefore(sub.getExpiresAt())) {
+            // Still within trial period?
+            if (sub.getTrialEndsAt() != null && now.isBefore(sub.getTrialEndsAt())) {
+                return "TRIAL";
+            }
+            return "ACTIVE";
+        }
+
         // No timestamp-driven transition needed
         return sub.getStatus();
     }
