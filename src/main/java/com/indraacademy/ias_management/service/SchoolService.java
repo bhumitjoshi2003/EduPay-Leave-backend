@@ -410,6 +410,7 @@ public class SchoolService {
         if (active != null) school.setActive(active);
 
         School updated = schoolRepository.save(school);
+        entitlementRefreshService.refreshForSubscriptionChange(schoolId);
         log.info("Subscription updated for schoolId={}: plan={}, active={}", schoolId, updated.getPlan(), updated.isActive());
 
         auditService.log(

@@ -611,7 +611,7 @@ public class SubscriptionController {
         if (req.getExpiresAt()    != null) sub.setExpiresAt(parseDateTime(req.getExpiresAt()));
         if (req.getGraceEndsAt()  != null) sub.setGraceEndsAt(parseDateTime(req.getGraceEndsAt()));
         if (req.getNotes()        != null) sub.setNotes(req.getNotes());
-        sub.setCreatedBy(callerUserId);
+        if (sub.getCreatedBy() == null) sub.setCreatedBy(callerUserId);
     }
 
     private LocalDateTime parseDateTime(String s) {

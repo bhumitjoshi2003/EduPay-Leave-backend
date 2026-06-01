@@ -6,8 +6,10 @@ import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.SchoolHoliday;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SchoolHolidayRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -33,6 +35,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -44,6 +47,7 @@ public class AttendanceService {
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private SchoolHolidayRepository schoolHolidayRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -167,6 +171,10 @@ public class AttendanceService {
             studentAbsentCount = attendanceRepository.countAbsences(studentId, securityUtil.getSchoolId(), year, month);
             // dummy student "X" = total working days (days school was open)
             totalWorkingDays = attendanceRepository.countWorkingDaysForClass(className, securityUtil.getSchoolId(), year, month);
+            // Exclude holidays where attendance was marked
+            LocalDate mStart = LocalDate.of(year, month, 1);
+            LocalDate mEnd = mStart.withDayOfMonth(mStart.lengthOfMonth());
+            totalWorkingDays -= countHolidayWorkingDays(className, securityUtil.getSchoolId(), mStart, mEnd);
         } catch (DataAccessException e) {
             log.error("Data access error calculating absence counts for student ID: {}", studentId, e);
             throw new RuntimeException("Could not calculate attendance counts", e);
@@ -416,6 +424,7 @@ public class AttendanceService {
 
             // NOTE: DO NOT filter 'X' from countDistinctWorkingDays — see getClassSummary.
             long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), effectiveStart, end);
+            workingDays -= countHolidayWorkingDays(className, securityUtil.getSchoolId(), effectiveStart, end);
             long absences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
             long present     = Math.max(0, workingDays - absences);
 
@@ -442,6 +451,7 @@ public class AttendanceService {
             LocalDate end   = start.plusYears(1).minusDays(1);
 
             long totalWorkingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
+            totalWorkingDays -= countHolidayWorkingDays(className, securityUtil.getSchoolId(), start, end);
             long totalAbsences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
             long totalPresent     = Math.max(0, totalWorkingDays - totalAbsences);
 
@@ -512,7 +522,8 @@ public class AttendanceService {
         // attendance is submitted, including all-present days. These rows are essential —
         // they make all-present days visible to this COUNT(DISTINCT date) query.
         // DO NOT filter out 'X' from countDistinctWorkingDays.
-        long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
+        final long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end)
+                - countHolidayWorkingDays(className, securityUtil.getSchoolId(), start, end);
 
         List<ClassAttendanceSummaryDTO> result = students.stream()
                 .map(s -> {
@@ -540,6 +551,7 @@ public class AttendanceService {
         LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
 
         long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
+        workingDays -= countHolidayWorkingDays(className, securityUtil.getSchoolId(), start, end);
         long absences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
         long present     = Math.max(0, workingDays - absences);
         String monthName = Month.of(monthNum).getDisplayName(TextStyle.FULL, Locale.ENGLISH);
@@ -583,6 +595,30 @@ public class AttendanceService {
     }
 
     /** Round to 1 decimal place; returns 0.0 if workingDays is 0. */
+    /**
+     * Count holidays in the given date range that also have attendance records
+     * (i.e., teacher marked attendance on a holiday). These should be subtracted
+     * from working days so holidays don't inflate the total.
+     * Holidays where no attendance was taken are already excluded from working
+     * days (no attendance record = not counted by countDistinctWorkingDays).
+     */
+    private long countHolidayWorkingDays(String className, Long schoolId, LocalDate start, LocalDate end) {
+        List<SchoolHoliday> holidays = schoolHolidayRepository.findBySchoolIdAndDateBetweenOrderByDateAsc(schoolId, start, end);
+        if (holidays.isEmpty()) return 0;
+
+        Set<LocalDate> holidayDates = holidays.stream()
+                .map(SchoolHoliday::getDate)
+                .collect(Collectors.toSet());
+
+        // Get distinct dates where attendance was submitted for this class in the range
+        return attendanceRepository.findByClassNameAndSchoolIdAndDateBetween(className, schoolId, start, end)
+                .stream()
+                .map(Attendance::getDate)
+                .distinct()
+                .filter(holidayDates::contains)
+                .count();
+    }
+
     private double pct(long present, long workingDays) {
         if (workingDays == 0) return 0.0;
         return Math.round((double) present / workingDays * 1000.0) / 10.0;
