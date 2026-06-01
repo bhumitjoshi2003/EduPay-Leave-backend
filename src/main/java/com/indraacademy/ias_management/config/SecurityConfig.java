@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.config;
 
 import com.indraacademy.ias_management.filter.JwtAuthFilter;
+import com.indraacademy.ias_management.filter.SubscriptionEnforcementFilter;
 import com.indraacademy.ias_management.filter.TenantValidationFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,6 +34,9 @@ public class SecurityConfig {
 
     @Autowired
     private TenantValidationFilter tenantValidationFilter;
+
+    @Autowired
+    private SubscriptionEnforcementFilter subscriptionEnforcementFilter;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -92,7 +96,8 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(unauthorizedEntryPoint()))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(tenantValidationFilter, JwtAuthFilter.class);
+                .addFilterAfter(tenantValidationFilter, JwtAuthFilter.class)
+                .addFilterAfter(subscriptionEnforcementFilter, TenantValidationFilter.class);
 
         return http.build();
     }

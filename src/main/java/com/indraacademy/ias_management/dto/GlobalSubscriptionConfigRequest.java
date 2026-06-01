@@ -13,4 +13,5 @@ public class GlobalSubscriptionConfigRequest {
 
     public Integer getExpiryNotifyDays() { return expiryNotifyDays; }
     public void setExpiryNotifyDays(Integer expiryNotifyDays) { this.expiryNotifyDays = expiryNotifyDays; }
+
 }
