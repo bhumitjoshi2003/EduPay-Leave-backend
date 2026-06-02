@@ -9,9 +9,9 @@ import java.time.LocalDate;
 @Entity
 @Data
 @Table(name = "school_holidays",
-    uniqueConstraints = @UniqueConstraint(columnNames = {"school_id", "date"}),
     indexes = {
-        @Index(name = "idx_holiday_school_date", columnList = "school_id, date")
+        @Index(name = "idx_holiday_school_start", columnList = "school_id, start_date"),
+        @Index(name = "idx_holiday_school_end", columnList = "school_id, end_date")
     })
 public class SchoolHoliday {
 
@@ -23,8 +23,12 @@ public class SchoolHoliday {
     private Long schoolId;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
-    @Column(nullable = false)
-    private LocalDate date;
+    @Column(name = "start_date", nullable = false)
+    private LocalDate startDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    @Column(name = "end_date", nullable = false)
+    private LocalDate endDate;
 
     @Column(nullable = false)
     private String name;
@@ -48,8 +52,11 @@ public class SchoolHoliday {
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
 
-    public LocalDate getDate() { return date; }
-    public void setDate(LocalDate date) { this.date = date; }
+    public LocalDate getStartDate() { return startDate; }
+    public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+
+    public LocalDate getEndDate() { return endDate; }
+    public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

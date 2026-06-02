@@ -9,7 +9,10 @@ public class SchoolHolidayDTO {
     private Long id;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
-    private LocalDate date;
+    private LocalDate startDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate endDate;
 
     private String name;
     private String holidayType;
@@ -18,9 +21,11 @@ public class SchoolHolidayDTO {
 
     public SchoolHolidayDTO() {}
 
-    public SchoolHolidayDTO(Long id, LocalDate date, String name, String holidayType, boolean affectsAll, String academicYear) {
+    public SchoolHolidayDTO(Long id, LocalDate startDate, LocalDate endDate, String name,
+                            String holidayType, boolean affectsAll, String academicYear) {
         this.id = id;
-        this.date = date;
+        this.startDate = startDate;
+        this.endDate = endDate;
         this.name = name;
         this.holidayType = holidayType;
         this.affectsAll = affectsAll;
@@ -30,8 +35,11 @@ public class SchoolHolidayDTO {
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
-    public LocalDate getDate() { return date; }
-    public void setDate(LocalDate date) { this.date = date; }
+    public LocalDate getStartDate() { return startDate; }
+    public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+
+    public LocalDate getEndDate() { return endDate; }
+    public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

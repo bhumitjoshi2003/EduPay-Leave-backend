@@ -26,41 +26,45 @@ public class SchoolHolidayService {
         Long schoolId = securityUtil.getSchoolId();
         List<SchoolHoliday> holidays;
         if (academicYear != null && !academicYear.isBlank()) {
-            holidays = repository.findBySchoolIdAndAcademicYearOrderByDateAsc(schoolId, academicYear);
+            holidays = repository.findBySchoolIdAndAcademicYearOrderByStartDateAsc(schoolId, academicYear);
         } else {
-            holidays = repository.findBySchoolIdOrderByDateAsc(schoolId);
+            holidays = repository.findBySchoolIdOrderByStartDateAsc(schoolId);
         }
         return holidays.stream().map(this::toDTO).collect(Collectors.toList());
     }
 
     public List<SchoolHolidayDTO> getHolidaysBetween(LocalDate start, LocalDate end) {
         Long schoolId = securityUtil.getSchoolId();
-        return repository.findBySchoolIdAndDateBetweenOrderByDateAsc(schoolId, start, end)
+        return repository.findOverlapping(schoolId, start, end)
                 .stream().map(this::toDTO).collect(Collectors.toList());
     }
 
     public boolean isHoliday(LocalDate date) {
         Long schoolId = securityUtil.getSchoolId();
-        return repository.existsBySchoolIdAndDate(schoolId, date);
+        return repository.existsBySchoolIdAndDateInRange(schoolId, date);
     }
 
     @Transactional
     public SchoolHolidayDTO createHoliday(SchoolHolidayDTO dto) {
         Long schoolId = securityUtil.getSchoolId();
-        if (repository.existsBySchoolIdAndDate(schoolId, dto.getDate())) {
-            throw new IllegalArgumentException("A holiday already exists on " + dto.getDate());
+        LocalDate startDate = dto.getStartDate();
+        LocalDate endDate = dto.getEndDate() != null ? dto.getEndDate() : startDate;
+
+        if (endDate.isBefore(startDate)) {
+            throw new IllegalArgumentException("End date cannot be before start date");
         }
 
         SchoolHoliday holiday = new SchoolHoliday();
         holiday.setSchoolId(schoolId);
-        holiday.setDate(dto.getDate());
+        holiday.setStartDate(startDate);
+        holiday.setEndDate(endDate);
         holiday.setName(dto.getName());
         holiday.setHolidayType(dto.getHolidayType());
         holiday.setAffectsAll(dto.isAffectsAll());
         holiday.setAcademicYear(dto.getAcademicYear());
 
         SchoolHoliday saved = repository.save(holiday);
-        log.info("Created holiday '{}' on {} for school {}", saved.getName(), saved.getDate(), schoolId);
+        log.info("Created holiday '{}' ({} to {}) for school {}", saved.getName(), saved.getStartDate(), saved.getEndDate(), schoolId);
         return toDTO(saved);
     }
 
@@ -70,14 +74,22 @@ public class SchoolHolidayService {
         SchoolHoliday holiday = repository.findByIdAndSchoolId(id, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Holiday not found"));
 
-        holiday.setDate(dto.getDate());
+        LocalDate startDate = dto.getStartDate();
+        LocalDate endDate = dto.getEndDate() != null ? dto.getEndDate() : startDate;
+
+        if (endDate.isBefore(startDate)) {
+            throw new IllegalArgumentException("End date cannot be before start date");
+        }
+
+        holiday.setStartDate(startDate);
+        holiday.setEndDate(endDate);
         holiday.setName(dto.getName());
         holiday.setHolidayType(dto.getHolidayType());
         holiday.setAffectsAll(dto.isAffectsAll());
         holiday.setAcademicYear(dto.getAcademicYear());
 
         SchoolHoliday saved = repository.save(holiday);
-        log.info("Updated holiday '{}' on {} for school {}", saved.getName(), saved.getDate(), schoolId);
+        log.info("Updated holiday '{}' ({} to {}) for school {}", saved.getName(), saved.getStartDate(), saved.getEndDate(), schoolId);
         return toDTO(saved);
     }
 
@@ -87,13 +99,14 @@ public class SchoolHolidayService {
         SchoolHoliday holiday = repository.findByIdAndSchoolId(id, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Holiday not found"));
         repository.delete(holiday);
-        log.info("Deleted holiday '{}' on {} for school {}", holiday.getName(), holiday.getDate(), schoolId);
+        log.info("Deleted holiday '{}' ({} to {}) for school {}", holiday.getName(), holiday.getStartDate(), holiday.getEndDate(), schoolId);
     }
 
     private SchoolHolidayDTO toDTO(SchoolHoliday entity) {
         return new SchoolHolidayDTO(
                 entity.getId(),
-                entity.getDate(),
+                entity.getStartDate(),
+                entity.getEndDate(),
                 entity.getName(),
                 entity.getHolidayType(),
                 entity.isAffectsAll(),
