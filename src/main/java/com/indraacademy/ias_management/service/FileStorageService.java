@@ -66,15 +66,17 @@ public class FileStorageService {
         String originalFilename = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
         log.info("Attempting to store event image: {}", originalFilename);
 
-        // Always output as .jpg
-        String fileName = UUID.randomUUID().toString() + ".jpg";
+        // Preserve PNG (transparency) or convert to JPG
+        boolean isPng = "image/png".equals(contentType);
+        String ext = isPng ? "png" : "jpg";
+        String fileName = UUID.randomUUID().toString() + "." + ext;
 
         try {
             Path targetLocation = this.fileStorageLocation.resolve(fileName);
             Thumbnails.of(file.getInputStream())
                     .size(1200, 800)
                     .keepAspectRatio(true)
-                    .outputFormat("jpg")
+                    .outputFormat(ext)
                     .outputQuality(0.85)
                     .toFile(targetLocation.toFile());
 

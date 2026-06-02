@@ -325,13 +325,20 @@ public class SchoolService {
             Path storageDir = Paths.get(logoDirectory).toAbsolutePath().normalize();
             Files.createDirectories(storageDir);
 
-            // One logo per school — always saved as <schoolId>.jpg (overwrites previous)
-            String fileName = schoolId + ".jpg";
+            // One logo per school — preserve PNG (transparency) or convert to JPG
+            boolean isPng = "image/png".equals(contentType);
+            String ext = isPng ? "png" : "jpg";
+            String fileName = schoolId + "." + ext;
             Path targetLocation = storageDir.resolve(fileName);
+
+            // Delete any previous logo with different extension
+            String altFileName = schoolId + "." + (isPng ? "jpg" : "png");
+            Files.deleteIfExists(storageDir.resolve(altFileName));
+
             Thumbnails.of(file.getInputStream())
                     .size(400, 400)
                     .keepAspectRatio(true)
-                    .outputFormat("jpg")
+                    .outputFormat(ext)
                     .outputQuality(0.85)
                     .toFile(targetLocation.toFile());
 
