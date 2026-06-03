@@ -5,6 +5,7 @@ import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 
 @Entity
 @Table(name = "school",
@@ -110,6 +111,29 @@ public class School {
     @Column(name = "grading_system", length = 20)
     private String gradingSystem = "CBSE";
 
+    // ── Staff attendance / GPS check-in settings ──
+
+    @Column(name = "school_latitude")
+    private Double schoolLatitude;
+
+    @Column(name = "school_longitude")
+    private Double schoolLongitude;
+
+    @Column(name = "geofence_radius")
+    private Integer geofenceRadius = 200;
+
+    @Column(name = "school_start_time")
+    private LocalTime schoolStartTime;
+
+    @Column(name = "late_threshold_minutes")
+    private Integer lateThresholdMinutes = 5;
+
+    @Column(name = "checkin_window_start")
+    private LocalTime checkinWindowStart;
+
+    @Column(name = "checkin_window_end")
+    private LocalTime checkinWindowEnd;
+
     public School() {}
 
     public Long getId() { return id; }
@@ -189,4 +213,25 @@ public class School {
 
     public String getGradingSystem() { return gradingSystem; }
     public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }
+
+    public Double getSchoolLatitude() { return schoolLatitude; }
+    public void setSchoolLatitude(Double schoolLatitude) { this.schoolLatitude = schoolLatitude; }
+
+    public Double getSchoolLongitude() { return schoolLongitude; }
+    public void setSchoolLongitude(Double schoolLongitude) { this.schoolLongitude = schoolLongitude; }
+
+    public Integer getGeofenceRadius() { return geofenceRadius; }
+    public void setGeofenceRadius(Integer geofenceRadius) { this.geofenceRadius = geofenceRadius; }
+
+    public LocalTime getSchoolStartTime() { return schoolStartTime; }
+    public void setSchoolStartTime(LocalTime schoolStartTime) { this.schoolStartTime = schoolStartTime; }
+
+    public Integer getLateThresholdMinutes() { return lateThresholdMinutes; }
+    public void setLateThresholdMinutes(Integer lateThresholdMinutes) { this.lateThresholdMinutes = lateThresholdMinutes; }
+
+    public LocalTime getCheckinWindowStart() { return checkinWindowStart; }
+    public void setCheckinWindowStart(LocalTime checkinWindowStart) { this.checkinWindowStart = checkinWindowStart; }
+
+    public LocalTime getCheckinWindowEnd() { return checkinWindowEnd; }
+    public void setCheckinWindowEnd(LocalTime checkinWindowEnd) { this.checkinWindowEnd = checkinWindowEnd; }
 }

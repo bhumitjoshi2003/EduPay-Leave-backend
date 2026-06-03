@@ -6,6 +6,8 @@ import com.indraacademy.ias_management.entity.SubscriptionPlan;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 
 /**
  * School settings returned to the client.
@@ -43,6 +45,15 @@ public class SchoolSettingsResponse {
     private String workingDays;
     private String gradingSystem;
 
+    // Staff attendance settings
+    private Double schoolLatitude;
+    private Double schoolLongitude;
+    private Integer geofenceRadius;
+    private String schoolStartTime;
+    private Integer lateThresholdMinutes;
+    private String checkinWindowStart;
+    private String checkinWindowEnd;
+
     public static SchoolSettingsResponse from(School school) {
         SchoolSettingsResponse r = new SchoolSettingsResponse();
         r.id = school.getId();
@@ -69,6 +80,13 @@ public class SchoolSettingsResponse {
         r.academicYearStartMonth = school.getAcademicYearStartMonth();
         r.workingDays = school.getWorkingDays();
         r.gradingSystem = school.getGradingSystem();
+        r.schoolLatitude = school.getSchoolLatitude();
+        r.schoolLongitude = school.getSchoolLongitude();
+        r.geofenceRadius = school.getGeofenceRadius();
+        r.schoolStartTime = formatTime(school.getSchoolStartTime());
+        r.lateThresholdMinutes = school.getLateThresholdMinutes();
+        r.checkinWindowStart = formatTime(school.getCheckinWindowStart());
+        r.checkinWindowEnd = formatTime(school.getCheckinWindowEnd());
         return r;
     }
 
@@ -99,4 +117,16 @@ public class SchoolSettingsResponse {
     public int getAcademicYearStartMonth() { return academicYearStartMonth; }
     public String getWorkingDays() { return workingDays; }
     public String getGradingSystem() { return gradingSystem; }
+
+    public Double getSchoolLatitude() { return schoolLatitude; }
+    public Double getSchoolLongitude() { return schoolLongitude; }
+    public Integer getGeofenceRadius() { return geofenceRadius; }
+    public String getSchoolStartTime() { return schoolStartTime; }
+    public Integer getLateThresholdMinutes() { return lateThresholdMinutes; }
+    public String getCheckinWindowStart() { return checkinWindowStart; }
+    public String getCheckinWindowEnd() { return checkinWindowEnd; }
+
+    private static String formatTime(LocalTime time) {
+        return time != null ? time.format(DateTimeFormatter.ofPattern("HH:mm")) : null;
+    }
 }

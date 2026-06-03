@@ -44,6 +44,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -283,6 +284,21 @@ public class SchoolService {
         if (req.getGradingSystem() != null && !req.getGradingSystem().isBlank()) {
             validateGradingSystem(req.getGradingSystem());
             school.setGradingSystem(req.getGradingSystem().toUpperCase());
+        }
+
+        // Staff attendance settings
+        if (req.getSchoolLatitude() != null) school.setSchoolLatitude(req.getSchoolLatitude());
+        if (req.getSchoolLongitude() != null) school.setSchoolLongitude(req.getSchoolLongitude());
+        if (req.getGeofenceRadius() != null) school.setGeofenceRadius(req.getGeofenceRadius());
+        if (req.getSchoolStartTime() != null && !req.getSchoolStartTime().isBlank()) {
+            school.setSchoolStartTime(LocalTime.parse(req.getSchoolStartTime()));
+        }
+        if (req.getLateThresholdMinutes() != null) school.setLateThresholdMinutes(req.getLateThresholdMinutes());
+        if (req.getCheckinWindowStart() != null && !req.getCheckinWindowStart().isBlank()) {
+            school.setCheckinWindowStart(LocalTime.parse(req.getCheckinWindowStart()));
+        }
+        if (req.getCheckinWindowEnd() != null && !req.getCheckinWindowEnd().isBlank()) {
+            school.setCheckinWindowEnd(LocalTime.parse(req.getCheckinWindowEnd()));
         }
 
         School updated = schoolRepository.save(school);

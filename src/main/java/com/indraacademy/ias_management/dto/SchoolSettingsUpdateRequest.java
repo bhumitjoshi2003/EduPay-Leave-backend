@@ -25,6 +25,15 @@ public class SchoolSettingsUpdateRequest {
     private String workingDays;
     private String gradingSystem;
 
+    // Staff attendance / GPS check-in settings
+    private Double schoolLatitude;
+    private Double schoolLongitude;
+    private Integer geofenceRadius;
+    private String schoolStartTime;       // "HH:mm" format
+    private Integer lateThresholdMinutes;
+    private String checkinWindowStart;    // "HH:mm" format
+    private String checkinWindowEnd;      // "HH:mm" format
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
@@ -69,4 +78,25 @@ public class SchoolSettingsUpdateRequest {
 
     public String getGradingSystem() { return gradingSystem; }
     public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }
+
+    public Double getSchoolLatitude() { return schoolLatitude; }
+    public void setSchoolLatitude(Double schoolLatitude) { this.schoolLatitude = schoolLatitude; }
+
+    public Double getSchoolLongitude() { return schoolLongitude; }
+    public void setSchoolLongitude(Double schoolLongitude) { this.schoolLongitude = schoolLongitude; }
+
+    public Integer getGeofenceRadius() { return geofenceRadius; }
+    public void setGeofenceRadius(Integer geofenceRadius) { this.geofenceRadius = geofenceRadius; }
+
+    public String getSchoolStartTime() { return schoolStartTime; }
+    public void setSchoolStartTime(String schoolStartTime) { this.schoolStartTime = schoolStartTime; }
+
+    public Integer getLateThresholdMinutes() { return lateThresholdMinutes; }
+    public void setLateThresholdMinutes(Integer lateThresholdMinutes) { this.lateThresholdMinutes = lateThresholdMinutes; }
+
+    public String getCheckinWindowStart() { return checkinWindowStart; }
+    public void setCheckinWindowStart(String checkinWindowStart) { this.checkinWindowStart = checkinWindowStart; }
+
+    public String getCheckinWindowEnd() { return checkinWindowEnd; }
+    public void setCheckinWindowEnd(String checkinWindowEnd) { this.checkinWindowEnd = checkinWindowEnd; }
 }
