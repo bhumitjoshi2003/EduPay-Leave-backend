@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.TimetableEntry;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.TimetableService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,7 +67,7 @@ public class TimetableController {
      */
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> create(@RequestBody TimetableEntry entry, HttpServletRequest request) {
+    public ResponseEntity<?> create(@Valid @RequestBody TimetableEntry entry, HttpServletRequest request) {
         log.info("POST timetable: class={}, day={}, period={}", entry.getClassName(), entry.getDay(), entry.getPeriodNumber());
         TimetableEntry saved = timetableService.create(entry, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(saved);
@@ -78,7 +79,7 @@ public class TimetableController {
      */
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<?> update(@PathVariable Long id, @RequestBody TimetableEntry entry, HttpServletRequest request) {
+    public ResponseEntity<?> update(@PathVariable Long id, @Valid @RequestBody TimetableEntry entry, HttpServletRequest request) {
         log.info("PUT timetable/{}", id);
         TimetableEntry saved = timetableService.update(id, entry, request);
         return ResponseEntity.ok(saved);

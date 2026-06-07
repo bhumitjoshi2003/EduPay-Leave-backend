@@ -17,6 +17,8 @@ import java.time.Month;
 import java.time.format.TextStyle;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,15 +41,15 @@ public class InvoiceService {
         Long schoolId = securityUtil.getSchoolId();
         Invoice invoice = invoiceRepository.findByIdAndSchoolId(invoiceId, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Invoice not found."));
-        return toDto(invoice);
+        Student student = studentRepository.findByStudentIdAndSchoolId(invoice.getStudentId(), schoolId).orElse(null);
+        return toDto(invoice, student);
     }
 
     @Transactional(readOnly = true)
     public StudentFeeOverviewDto getStudentFeeOverview(String studentId, Long sessionId) {
         Long schoolId = securityUtil.getSchoolId();
 
-        Student student = studentRepository.findByStudentId(studentId)
-                .filter(s -> s.getSchoolId().equals(schoolId))
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Student not found."));
 
         AcademicSession session;
@@ -72,7 +74,8 @@ public class InvoiceService {
         overview.setTotalFeeForYear(totalFee);
         overview.setTotalPaid(totalPaid);
         overview.setTotalOutstanding(totalFee - totalPaid);
-        overview.setInvoices(invoices.stream().map(this::toDto).collect(Collectors.toList()));
+        // Reuse already-loaded student instead of re-querying per invoice
+        overview.setInvoices(invoices.stream().map(i -> toDto(i, student)).collect(Collectors.toList()));
 
         return overview;
     }
@@ -80,9 +83,11 @@ public class InvoiceService {
     @Transactional(readOnly = true)
     public List<InvoiceDto> getOutstandingInvoices(String studentId) {
         Long schoolId = securityUtil.getSchoolId();
+        // Load student once instead of per invoice
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
         return invoiceRepository.findOutstandingByStudent(schoolId, studentId)
                 .stream()
-                .map(this::toDto)
+                .map(i -> toDto(i, student))
                 .collect(Collectors.toList());
     }
 
@@ -90,22 +95,27 @@ public class InvoiceService {
     public Page<InvoiceDto> getFilteredInvoices(
             String studentId, Long sessionId, InvoiceStatus status, Pageable pageable) {
         Long schoolId = securityUtil.getSchoolId();
-        return invoiceRepository.findFiltered(schoolId, studentId, sessionId, status, pageable)
-                .map(this::toDto);
+        Page<Invoice> page = invoiceRepository.findFiltered(schoolId, studentId, sessionId, status, pageable);
+
+        // Batch-load all students referenced in this page
+        List<String> studentIds = page.getContent().stream()
+                .map(Invoice::getStudentId).distinct().collect(Collectors.toList());
+        Map<String, Student> studentMap = studentRepository.findByStudentIdInAndSchoolId(studentIds, schoolId)
+                .stream().collect(Collectors.toMap(Student::getStudentId, Function.identity()));
+
+        return page.map(i -> toDto(i, studentMap.get(i.getStudentId())));
     }
 
-    private InvoiceDto toDto(Invoice invoice) {
+    private InvoiceDto toDto(Invoice invoice, Student student) {
         InvoiceDto dto = new InvoiceDto();
         dto.setId(invoice.getId());
         dto.setInvoiceNumber(invoice.getInvoiceNumber());
         dto.setStudentId(invoice.getStudentId());
 
-        // Resolve student name
-        studentRepository.findByStudentId(invoice.getStudentId())
-                .ifPresent(s -> {
-                    dto.setStudentName(s.getName());
-                    dto.setClassName(s.getClassName());
-                });
+        if (student != null) {
+            dto.setStudentName(student.getName());
+            dto.setClassName(student.getClassName());
+        }
 
         dto.setAcademicSessionId(invoice.getAcademicSession().getId());
         dto.setSessionLabel(invoice.getAcademicSession().getLabel());

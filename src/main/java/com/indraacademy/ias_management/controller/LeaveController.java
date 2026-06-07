@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.LeaveService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,7 +32,7 @@ public class LeaveController {
 
     @PreAuthorize("hasAnyRole('" + Role.STUDENT + "')")
     @PostMapping("/apply-leave")
-    public ResponseEntity<String> applyLeave(@RequestBody Leave leave, HttpServletRequest request) {
+    public ResponseEntity<String> applyLeave(@Valid @RequestBody Leave leave, HttpServletRequest request) {
         String studentId = authService.getUserId();
         log.info("Request to apply leave for student ID: {}", studentId);
         leave.setStudentId(studentId);

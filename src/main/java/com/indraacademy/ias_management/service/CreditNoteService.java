@@ -43,8 +43,7 @@ public class CreditNoteService {
         Long schoolId = securityUtil.getSchoolId();
 
         // Validate student
-        studentRepository.findByStudentId(dto.getStudentId())
-                .filter(s -> s.getSchoolId().equals(schoolId))
+        studentRepository.findByStudentIdAndSchoolId(dto.getStudentId(), schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Student not found."));
 
         CreditNote creditNote = new CreditNote();
@@ -68,11 +67,11 @@ public class CreditNoteService {
             auditService.log(
                     securityUtil.getUsername(), securityUtil.getRole(),
                     "CREATE_CREDIT_NOTE", "CreditNote", String.valueOf(saved.getId()),
-                    null, objectMapper.writeValueAsString(toDto(saved)),
+                    null, objectMapper.writeValueAsString(toDto(saved, schoolId)),
                     request.getRemoteAddr());
         } catch (JsonProcessingException ignored) {}
 
-        return toDto(saved);
+        return toDto(saved, schoolId);
     }
 
     @Transactional
@@ -115,11 +114,11 @@ public class CreditNoteService {
             auditService.log(
                     securityUtil.getUsername(), securityUtil.getRole(),
                     "APPROVE_CREDIT_NOTE", "CreditNote", String.valueOf(saved.getId()),
-                    null, objectMapper.writeValueAsString(toDto(saved)),
+                    null, objectMapper.writeValueAsString(toDto(saved, schoolId)),
                     request.getRemoteAddr());
         } catch (JsonProcessingException ignored) {}
 
-        return toDto(saved);
+        return toDto(saved, schoolId);
     }
 
     @Transactional(readOnly = true)
@@ -131,10 +130,10 @@ public class CreditNoteService {
         } else {
             page = creditNoteRepository.findBySchoolId(schoolId, pageable);
         }
-        return page.map(this::toDto);
+        return page.map(cn -> toDto(cn, schoolId));
     }
 
-    private CreditNoteDto toDto(CreditNote cn) {
+    private CreditNoteDto toDto(CreditNote cn, Long schoolId) {
         CreditNoteDto dto = new CreditNoteDto();
         dto.setId(cn.getId());
         dto.setStudentId(cn.getStudentId());
@@ -152,7 +151,7 @@ public class CreditNoteService {
             dto.setInvoiceNumber(cn.getInvoice().getInvoiceNumber());
         }
 
-        studentRepository.findByStudentId(cn.getStudentId())
+        studentRepository.findByStudentIdAndSchoolId(cn.getStudentId(), schoolId)
                 .ifPresent(s -> dto.setStudentName(s.getName()));
 
         return dto;

@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Event;
 import com.indraacademy.ias_management.service.EventService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/events")
+@PreAuthorize("isAuthenticated()")
 public class EventController {
 
     private static final Logger log = LoggerFactory.getLogger(EventController.class);
@@ -25,7 +27,7 @@ public class EventController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> createEvent(@RequestBody Event event, HttpServletRequest request) {
+    public ResponseEntity<?> createEvent(@Valid @RequestBody Event event, HttpServletRequest request) {
         log.info("Request to create new event: {}", event.getTitle());
         Event createdEvent = eventService.createEvent(event, request);
         log.info("Event created successfully with ID: {}", createdEvent.getId());
@@ -62,7 +64,7 @@ public class EventController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<Event> updateEvent(@PathVariable Long id, @RequestBody Event eventDetails, HttpServletRequest request) {
+    public ResponseEntity<Event> updateEvent(@PathVariable Long id, @Valid @RequestBody Event eventDetails, HttpServletRequest request) {
         log.info("Request to update event with ID: {}", id);
         Event updatedEvent = eventService.updateEvent(id, eventDetails, request);
         log.info("Event updated successfully with ID: {}", id);
@@ -71,9 +73,9 @@ public class EventController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteEvent(@PathVariable Long id) {
+    public ResponseEntity<Void> deleteEvent(@PathVariable Long id, HttpServletRequest request) {
         log.warn("Request to delete event with ID: {}", id);
-        eventService.deleteEvent(id);
+        eventService.deleteEvent(id, request);
         log.info("Event deleted successfully with ID: {}", id);
         return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }

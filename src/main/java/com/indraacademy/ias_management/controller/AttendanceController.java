@@ -36,6 +36,7 @@ public class AttendanceController {
     @Autowired private AuthService authService;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private com.indraacademy.ias_management.util.SecurityUtil securityUtil;
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
@@ -118,9 +119,10 @@ public class AttendanceController {
                     .body("Students can only view their own attendance.");
         }
         if (Role.TEACHER.equals(currentRole)) {
+            Long schoolId = securityUtil.getSchoolId();
             String teacherClass = teacherRepository.findById(currentUserId)
                     .map(Teacher::getClassTeacher).orElse(null);
-            String studentClass = studentRepository.findByStudentId(studentId)
+            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
                     .map(s -> s.getClassName()).orElse(null);
             if (teacherClass == null || !teacherClass.equals(studentClass)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -160,9 +162,10 @@ public class AttendanceController {
 
         // TEACHER: only students in their assigned class
         if (Role.TEACHER.equals(currentRole)) {
+            Long schoolId = securityUtil.getSchoolId();
             String teacherClass = teacherRepository.findById(currentUserId)
                     .map(Teacher::getClassTeacher).orElse(null);
-            String studentClass = studentRepository.findByStudentId(studentId)
+            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
                     .map(s -> s.getClassName()).orElse(null);
             if (teacherClass == null || !teacherClass.equals(studentClass)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)

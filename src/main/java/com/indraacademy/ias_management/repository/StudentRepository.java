@@ -15,9 +15,7 @@ import java.util.Optional;
 @Repository
 public interface StudentRepository extends JpaRepository<Student, String> {
 
-    // Platform-wide lookups (used by schedulers/controllers — no schoolId filter)
-    List<Student> findByClassName(String className);
-
+    // Platform-wide lookup (used by schedulers — no schoolId filter)
     Optional<Student> findByStudentId(String studentId);
 
     List<Student> findByClassNameAndSchoolId(String className, Long schoolId);
@@ -54,6 +52,8 @@ public interface StudentRepository extends JpaRepository<Student, String> {
     List<Student> findBySchoolId(Long schoolId);
 
     Optional<Student> findByStudentIdAndSchoolId(String studentId, Long schoolId);
+
+    List<Student> findByStudentIdInAndSchoolId(List<String> studentIds, Long schoolId);
 
     @Query("SELECT s FROM Student s WHERE s.schoolId = :schoolId " +
            "AND (LOWER(s.name) LIKE LOWER(CONCAT('%', :query, '%')) " +

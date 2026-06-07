@@ -89,12 +89,24 @@ public class StudentPromotionService {
         int passedOut = 0;
         List<PromotionResultDTO.PromotionError> errors = new ArrayList<>();
 
+        Long schoolId = securityUtil.getSchoolId();
+
+        // Pre-load class sequence, class-by-name map, and sections-by-classId map
+        // to avoid N+1 queries inside the loop
+        List<String> seq = getSchoolClassSequence();
+        Map<String, SchoolClass> classByName = schoolClassRepository
+                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
+                .stream().collect(Collectors.toMap(SchoolClass::getName, c -> c, (a, b) -> a));
+        Map<Long, List<Section>> sectionsByClassId = sectionRepository
+                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
+                .stream().collect(Collectors.groupingBy(Section::getClassId));
+
         for (PromotionDecisionRequest.Decision decision : request.getDecisions()) {
             String studentId = decision.getStudentId();
             String action    = decision.getAction();
 
             try {
-                Optional<Student> opt = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
+                Optional<Student> opt = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
                 if (opt.isEmpty()) {
                     errors.add(new PromotionResultDTO.PromotionError(studentId, "Student not found"));
                     continue;
@@ -103,7 +115,6 @@ public class StudentPromotionService {
                 Student student  = opt.get();
                 String oldClass  = student.getClassName();
 
-                List<String> seq = getSchoolClassSequence();
                 if ("PROMOTE".equalsIgnoreCase(action)) {
                     String nextClass = determineNextClass(oldClass, seq);
                     if (nextClass == null) {
@@ -114,23 +125,17 @@ public class StudentPromotionService {
                     student.setClassName(nextClass);
 
                     // Dual-write: resolve className → classId, then handle section
-                    Long schoolId = securityUtil.getSchoolId();
-                    Optional<SchoolClass> targetClassOpt = schoolClassRepository.findBySchoolIdAndName(schoolId, nextClass);
-                    if (targetClassOpt.isPresent()) {
-                        Long newClassId = targetClassOpt.get().getId();
+                    SchoolClass targetClass = classByName.get(nextClass);
+                    if (targetClass != null) {
+                        Long newClassId = targetClass.getId();
                         student.setClassId(newClassId);
 
-                        // Resolve section for the target class:
-                        // - If target class has no sections → clear the student's section
-                        // - If target class has sections → try to match by name; clear if no match
-                        List<Section> targetSections = sectionRepository
-                                .findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(schoolId, newClassId, true);
+                        // Resolve section for the target class using pre-loaded data
+                        List<Section> targetSections = sectionsByClassId.getOrDefault(newClassId, List.of());
                         if (targetSections.isEmpty()) {
-                            // Target class has no sections configured — drop section assignment
                             student.setSectionId(null);
                             student.setSectionName(null);
                         } else if (student.getSectionName() != null) {
-                            // Try to find a same-named section in the target class
                             Optional<Section> matched = targetSections.stream()
                                     .filter(s -> s.getName().equalsIgnoreCase(student.getSectionName()))
                                     .findFirst();
@@ -138,12 +143,10 @@ public class StudentPromotionService {
                                 student.setSectionId(matched.get().getId());
                                 student.setSectionName(matched.get().getName());
                             } else {
-                                // No matching section name — clear so student isn't orphaned
                                 student.setSectionId(null);
                                 student.setSectionName(null);
                             }
                         }
-                        // If student had no section before promotion, keep it null (nothing to do)
                     }
 
                     studentRepository.save(student);

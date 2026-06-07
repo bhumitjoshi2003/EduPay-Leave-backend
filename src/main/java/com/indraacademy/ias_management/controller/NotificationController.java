@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.NotificationService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,7 +30,7 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> createNotification(@RequestBody Notification notification, HttpServletRequest request) {
+    public ResponseEntity<?> createNotification(@Valid @RequestBody Notification notification, HttpServletRequest request) {
         log.info("Request to create broad notification with title: {}", notification.getTitle());
         Notification createdNotification = notificationService.createBroadNotification(notification, request);
         log.info("Notification created successfully with ID: {}", createdNotification.getId());
@@ -69,7 +70,7 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @RequestBody Notification notification, HttpServletRequest request) {
+    public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @Valid @RequestBody Notification notification, HttpServletRequest request) {
         log.info("Updating notification with ID: {}", id);
         Notification savedNotification = notificationService.updateNotification(id, notification, request);
         log.info("Notification updated successfully with ID: {}", id);

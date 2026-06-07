@@ -39,6 +39,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/students")
+@PreAuthorize("isAuthenticated()")
 public class StudentController {
 
     private static final Logger log = LoggerFactory.getLogger(StudentController.class);
@@ -249,6 +250,7 @@ public class StudentController {
         }
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/bulk/template")
     public ResponseEntity<byte[]> downloadBulkImportTemplate() {
         log.info("Request to download student bulk import CSV template");

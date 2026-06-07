@@ -11,6 +11,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
@@ -96,4 +97,14 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
             @Param("schoolId") Long schoolId,
             @Param("studentId") String studentId,
             @Param("feeHeadId") Long feeHeadId);
+
+    /**
+     * Returns the set of fee head IDs for which a student has already been billed.
+     * Used to batch-check ONE_TIME fee heads during invoice generation.
+     */
+    @Query("SELECT DISTINCT li.feeHead.id FROM Invoice i JOIN i.lineItems li " +
+            "WHERE i.schoolId = :schoolId AND i.studentId = :studentId")
+    Set<Long> findBilledFeeHeadIds(
+            @Param("schoolId") Long schoolId,
+            @Param("studentId") String studentId);
 }

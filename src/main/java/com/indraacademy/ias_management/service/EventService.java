@@ -206,7 +206,7 @@ public class EventService {
         event.setImageUrl(url);
     }
 
-    public void deleteEvent(Long id) {
+    public void deleteEvent(Long id, HttpServletRequest request) {
         if (id == null) {
             log.warn("Attempted to delete event with null ID.");
             return;
@@ -217,7 +217,22 @@ public class EventService {
             Event event = eventRepository.findById(id)
                     .filter(e -> schoolId.equals(e.getSchoolId()))
                     .orElseThrow(() -> new IllegalArgumentException("Event not found with ID: " + id));
+
+            String oldValue;
+            try {
+                oldValue = objectMapper.writeValueAsString(event);
+            } catch (JsonProcessingException ex) {
+                oldValue = null;
+            }
+
             eventRepository.deleteById(event.getId());
+
+            auditService.log(
+                    securityUtil.getUsername(), securityUtil.getRole(),
+                    "DELETE_EVENT", "Event", id.toString(),
+                    oldValue, null,
+                    request.getRemoteAddr());
+
             log.info("Event deleted successfully with ID: {}", id);
         } catch (DataAccessException e) {
             log.error("Data access error deleting event ID: {}", id, e);

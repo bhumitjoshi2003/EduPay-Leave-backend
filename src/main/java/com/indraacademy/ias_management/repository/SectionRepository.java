@@ -12,6 +12,7 @@ public interface SectionRepository extends JpaRepository<Section, Long> {
     List<Section> findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(Long schoolId, Long classId, boolean active);
     List<Section> findBySchoolIdAndClassIdOrderByDisplayOrderAsc(Long schoolId, Long classId);
     List<Section> findBySchoolIdOrderByClassIdAscDisplayOrderAsc(Long schoolId);
+    List<Section> findBySchoolIdAndActiveOrderByDisplayOrderAsc(Long schoolId, boolean active);
     Optional<Section> findByIdAndSchoolId(Long id, Long schoolId);
     Optional<Section> findBySchoolIdAndClassIdAndName(Long schoolId, Long classId, String name);
     boolean existsBySchoolIdAndClassIdAndName(Long schoolId, Long classId, String name);

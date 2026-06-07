@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.SchoolHolidayDTO;
 import com.indraacademy.ias_management.service.SchoolHolidayService;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -43,13 +44,13 @@ public class SchoolHolidayController {
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<SchoolHolidayDTO> createHoliday(@RequestBody SchoolHolidayDTO dto) {
+    public ResponseEntity<SchoolHolidayDTO> createHoliday(@Valid @RequestBody SchoolHolidayDTO dto) {
         return ResponseEntity.status(HttpStatus.CREATED).body(holidayService.createHoliday(dto));
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<SchoolHolidayDTO> updateHoliday(@PathVariable Long id, @RequestBody SchoolHolidayDTO dto) {
+    public ResponseEntity<SchoolHolidayDTO> updateHoliday(@PathVariable Long id, @Valid @RequestBody SchoolHolidayDTO dto) {
         return ResponseEntity.ok(holidayService.updateHoliday(id, dto));
     }
 

@@ -18,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -55,8 +57,7 @@ public class FeePaymentService {
         Long schoolId = securityUtil.getSchoolId();
 
         // Validate student belongs to this school
-        Student student = studentRepository.findByStudentId(request.getStudentId())
-                .filter(s -> s.getSchoolId().equals(schoolId))
+        Student student = studentRepository.findByStudentIdAndSchoolId(request.getStudentId(), schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Student not found."));
 
         // Prevent duplicate Razorpay payments
@@ -153,7 +154,7 @@ public class FeePaymentService {
         FeePayment payment = paymentRepository.findByIdAndSchoolId(paymentId, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Payment not found."));
 
-        Student student = studentRepository.findByStudentId(payment.getStudentId()).orElse(null);
+        Student student = studentRepository.findByStudentIdAndSchoolId(payment.getStudentId(), schoolId).orElse(null);
         return toDto(payment, student);
     }
 
@@ -161,21 +162,24 @@ public class FeePaymentService {
     public Page<FeePaymentDto> getPaymentHistory(
             String studentId, PaymentStatus status, LocalDateTime since, Pageable pageable) {
         Long schoolId = securityUtil.getSchoolId();
-        return paymentRepository.findFiltered(schoolId, studentId, status, since, pageable)
-                .map(p -> {
-                    Student student = studentRepository.findByStudentId(p.getStudentId()).orElse(null);
-                    return toDto(p, student);
-                });
+        Page<FeePayment> page = paymentRepository.findFiltered(schoolId, studentId, status, since, pageable);
+
+        // Batch-load all students referenced in this page to avoid N+1 queries
+        List<String> studentIds = page.getContent().stream()
+                .map(FeePayment::getStudentId).distinct().collect(Collectors.toList());
+        Map<String, Student> studentMap = studentRepository.findByStudentIdInAndSchoolId(studentIds, schoolId)
+                .stream().collect(Collectors.toMap(Student::getStudentId, Function.identity()));
+
+        return page.map(p -> toDto(p, studentMap.get(p.getStudentId())));
     }
 
     @Transactional(readOnly = true)
     public Page<FeePaymentDto> getStudentPaymentHistory(String studentId, Pageable pageable) {
         Long schoolId = securityUtil.getSchoolId();
+        // Load the student once instead of per payment row
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
         return paymentRepository.findBySchoolIdAndStudentId(schoolId, studentId, pageable)
-                .map(p -> {
-                    Student student = studentRepository.findByStudentId(p.getStudentId()).orElse(null);
-                    return toDto(p, student);
-                });
+                .map(p -> toDto(p, student));
     }
 
     private FeePaymentDto toDto(FeePayment payment, Student student) {

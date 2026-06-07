@@ -81,8 +81,7 @@ public class InvoiceGenerationService {
         // Get active students
         List<Student> students;
         if (studentId != null) {
-            students = studentRepository.findByStudentId(studentId)
-                    .filter(s -> s.getSchoolId().equals(schoolId))
+            students = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
                     .filter(s -> s.getStatus() == StudentStatus.ACTIVE)
                     .stream().collect(Collectors.toList());
         } else if (className != null) {
@@ -162,6 +161,10 @@ public class InvoiceGenerationService {
                         (a, b) -> b // If multiple configs for same fee head, use the latest
                 ));
 
+        // Batch-load all fee head IDs this student has already been billed for,
+        // so we can check ONE_TIME fees in-memory instead of one query per rule.
+        Set<Long> billedFeeHeadIds = invoiceRepository.findBilledFeeHeadIds(schoolId, student.getStudentId());
+
         // Generate invoice number
         String invoiceNumber = generateInvoiceNumber(schoolId);
 
@@ -184,8 +187,7 @@ public class InvoiceGenerationService {
             // ONE_TIME fees must only ever appear on one invoice per student across all sessions.
             // Skip if the student has already been billed for this fee head in any prior invoice.
             if (feeHead.getFrequency() == FeeFrequency.ONE_TIME) {
-                if (invoiceRepository.hasStudentBeenBilledForFeeHead(
-                        schoolId, student.getStudentId(), feeHead.getId())) {
+                if (billedFeeHeadIds.contains(feeHead.getId())) {
                     log.debug("Skipping ONE_TIME fee head {} for student {} — already billed",
                             feeHead.getCode(), student.getStudentId());
                     continue;
