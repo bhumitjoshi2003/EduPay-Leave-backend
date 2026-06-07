@@ -8,6 +8,7 @@ public class TeacherAttendanceSummaryDTO {
     private int presentDays;
     private int lateDays;
     private int absentDays;
+    private int halfDayDays;
     private int onLeaveDays;
     private double onTimePercentage;
     private List<TeacherAttendanceResponse> records;
@@ -23,6 +24,9 @@ public class TeacherAttendanceSummaryDTO {
 
     public int getAbsentDays() { return absentDays; }
     public void setAbsentDays(int absentDays) { this.absentDays = absentDays; }
+
+    public int getHalfDayDays() { return halfDayDays; }
+    public void setHalfDayDays(int halfDayDays) { this.halfDayDays = halfDayDays; }
 
     public int getOnLeaveDays() { return onLeaveDays; }
     public void setOnLeaveDays(int onLeaveDays) { this.onLeaveDays = onLeaveDays; }

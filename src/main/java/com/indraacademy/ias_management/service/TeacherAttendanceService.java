@@ -251,16 +251,14 @@ public class TeacherAttendanceService {
         LocalDate start = ym.atDay(1);
         LocalDate end = ym.atEndOfMonth();
 
-        School school = schoolRepository.findById(schoolId)
-                .orElseThrow(() -> new NoSuchElementException("School not found"));
-
         List<TeacherAttendance> records = teacherAttendanceRepository
                 .findBySchoolIdAndDateBetweenOrderByDateAsc(schoolId, start, end);
 
         Map<String, String> nameMap = teacherRepository.findBySchoolId(schoolId).stream()
                 .collect(Collectors.toMap(Teacher::getTeacherId, Teacher::getName, (a, b) -> a));
 
-        int workingDays = countWorkingDays(start, end, school.getWorkingDays());
+        LocalDate effectiveEnd = end.isAfter(LocalDate.now()) ? LocalDate.now() : end;
+        int workingDays = teacherAttendanceRepository.countDistinctWorkingDays(schoolId, start, effectiveEnd);
 
         List<TeacherAttendanceResponse> responseList = records.stream()
                 .map(ta -> TeacherAttendanceResponse.from(ta, nameMap.getOrDefault(ta.getTeacherId(), ta.getTeacherId())))
@@ -269,6 +267,7 @@ public class TeacherAttendanceService {
         int present = (int) records.stream().filter(r -> "ON_TIME".equals(r.getStatus()) || "LATE".equals(r.getStatus())).count();
         int late = (int) records.stream().filter(r -> "LATE".equals(r.getStatus())).count();
         int absent = (int) records.stream().filter(r -> "ABSENT".equals(r.getStatus())).count();
+        int halfDay = (int) records.stream().filter(r -> "HALF_DAY".equals(r.getStatus())).count();
         int onLeave = (int) records.stream().filter(r -> "ON_LEAVE".equals(r.getStatus())).count();
 
         TeacherAttendanceSummaryDTO dto = new TeacherAttendanceSummaryDTO();
@@ -276,6 +275,7 @@ public class TeacherAttendanceService {
         dto.setPresentDays(present);
         dto.setLateDays(late);
         dto.setAbsentDays(absent);
+        dto.setHalfDayDays(halfDay);
         dto.setOnLeaveDays(onLeave);
         dto.setOnTimePercentage(present > 0 ? Math.round(((present - late) * 100.0 / present) * 10.0) / 10.0 : 0);
         dto.setRecords(responseList);
@@ -289,16 +289,14 @@ public class TeacherAttendanceService {
         LocalDate start = ym.atDay(1);
         LocalDate end = ym.atEndOfMonth();
 
-        School school = schoolRepository.findById(schoolId)
-                .orElseThrow(() -> new NoSuchElementException("School not found"));
-
         List<TeacherAttendance> records = teacherAttendanceRepository
                 .findByTeacherIdAndSchoolIdAndDateBetweenOrderByDateAsc(teacherId, schoolId, start, end);
 
         String teacherName = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
                 .map(Teacher::getName).orElse(teacherId);
 
-        int workingDays = countWorkingDays(start, end, school.getWorkingDays());
+        LocalDate effectiveEnd = end.isAfter(LocalDate.now()) ? LocalDate.now() : end;
+        int workingDays = teacherAttendanceRepository.countDistinctWorkingDays(schoolId, start, effectiveEnd);
 
         List<TeacherAttendanceResponse> responseList = records.stream()
                 .map(ta -> TeacherAttendanceResponse.from(ta, teacherName))
@@ -307,6 +305,7 @@ public class TeacherAttendanceService {
         int present = (int) records.stream().filter(r -> "ON_TIME".equals(r.getStatus()) || "LATE".equals(r.getStatus())).count();
         int late = (int) records.stream().filter(r -> "LATE".equals(r.getStatus())).count();
         int absent = (int) records.stream().filter(r -> "ABSENT".equals(r.getStatus())).count();
+        int halfDay = (int) records.stream().filter(r -> "HALF_DAY".equals(r.getStatus())).count();
         int onLeave = (int) records.stream().filter(r -> "ON_LEAVE".equals(r.getStatus())).count();
 
         TeacherAttendanceSummaryDTO dto = new TeacherAttendanceSummaryDTO();
@@ -314,6 +313,7 @@ public class TeacherAttendanceService {
         dto.setPresentDays(present);
         dto.setLateDays(late);
         dto.setAbsentDays(absent);
+        dto.setHalfDayDays(halfDay);
         dto.setOnLeaveDays(onLeave);
         dto.setOnTimePercentage(present > 0 ? Math.round(((present - late) * 100.0 / present) * 10.0) / 10.0 : 0);
         dto.setRecords(responseList);
@@ -326,23 +326,6 @@ public class TeacherAttendanceService {
         return workingDays.toUpperCase().contains(dayName);
     }
 
-    private int countWorkingDays(LocalDate start, LocalDate end, String workingDays) {
-        Set<DayOfWeek> workingSet = new HashSet<>();
-        if (workingDays != null && !workingDays.isBlank()) {
-            for (String d : workingDays.toUpperCase().split(",")) {
-                try { workingSet.add(DayOfWeek.valueOf(d.trim())); } catch (Exception ignored) {}
-            }
-        }
-        // Only count up to today
-        LocalDate effectiveEnd = end.isAfter(LocalDate.now()) ? LocalDate.now() : end;
-        int count = 0;
-        for (LocalDate d = start; !d.isAfter(effectiveEnd); d = d.plusDays(1)) {
-            if (workingSet.isEmpty() || workingSet.contains(d.getDayOfWeek())) {
-                count++;
-            }
-        }
-        return count;
-    }
 
     /**
      * Haversine distance between two GPS coordinates, in meters.
