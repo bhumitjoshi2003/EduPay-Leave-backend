@@ -40,4 +40,6 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
     boolean existsByStudentIdAndYearAndSchoolId(String studentId, String year, Long schoolId);
 
     List<StudentFees> findBySchoolId(Long schoolId);
+
+    List<StudentFees> findByStudentIdAndSchoolIdAndPaidFalse(String studentId, Long schoolId);
 }

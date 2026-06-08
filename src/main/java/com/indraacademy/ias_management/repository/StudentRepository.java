@@ -67,16 +67,21 @@ public interface StudentRepository extends JpaRepository<Student, String> {
     @Query("SELECT DISTINCT s.className FROM Student s WHERE s.status = 'ACTIVE' AND s.schoolId = :schoolId ORDER BY s.className")
     List<String> findDistinctActiveClassNamesBySchoolId(@Param("schoolId") Long schoolId);
 
-    // Platform-wide status updates (run by scheduler across all schools)
+    // Platform-wide status updates (run by scheduler across all schools).
+    // Exit statuses (GRADUATED, TRANSFERRED, WITHDRAWN) are NEVER overwritten.
     @Modifying
-    @Query("UPDATE Student s SET s.status = 'UPCOMING' WHERE s.joiningDate > :today")
+    @Query("UPDATE Student s SET s.status = 'UPCOMING' WHERE s.joiningDate > :today " +
+           "AND s.status NOT IN ('GRADUATED', 'TRANSFERRED', 'WITHDRAWN')")
     void updateStatusUpcoming(@Param("today") LocalDate today);
 
     @Modifying
-    @Query("UPDATE Student s SET s.status = 'INACTIVE' WHERE s.leavingDate IS NOT NULL AND s.leavingDate <= :today")
-    void updateStatusInactive(@Param("today") LocalDate today);
-
-    @Modifying
-    @Query("UPDATE Student s SET s.status = 'ACTIVE' WHERE (s.joiningDate IS NULL OR s.joiningDate <= :today) AND (s.leavingDate IS NULL OR s.leavingDate > :today)")
+    @Query("UPDATE Student s SET s.status = 'ACTIVE' WHERE (s.joiningDate IS NULL OR s.joiningDate <= :today) " +
+           "AND (s.leavingDate IS NULL OR s.leavingDate > :today) " +
+           "AND s.status NOT IN ('GRADUATED', 'TRANSFERRED', 'WITHDRAWN')")
     void updateStatusActive(@Param("today") LocalDate today);
+
+    // Query for "Left" tab — TRANSFERRED + WITHDRAWN students
+    List<Student> findByClassNameAndStatusInAndSchoolId(String className, java.util.List<StudentStatus> statuses, Long schoolId);
+
+    List<Student> findByClassNameAndSectionIdAndStatusInAndSchoolId(String className, Long sectionId, java.util.List<StudentStatus> statuses, Long schoolId);
 }

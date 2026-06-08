@@ -42,7 +42,8 @@ public class StudentStatusScheduler {
             log.info("Running StudentStatusScheduler for date: {}", today);
 
             studentRepository.updateStatusUpcoming(today);
-            studentRepository.updateStatusInactive(today);
+            // updateStatusInactive removed — exit is now explicit via the exit workflow.
+            // Exit statuses (GRADUATED, TRANSFERRED, WITHDRAWN) are never auto-assigned.
             studentRepository.updateStatusActive(today);
 
             log.info("StudentStatusScheduler completed successfully.");

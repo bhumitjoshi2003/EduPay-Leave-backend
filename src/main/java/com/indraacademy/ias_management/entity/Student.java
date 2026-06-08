@@ -74,6 +74,15 @@ public class Student {
     @Column(name = "photo_url")
     private String photoUrl;
 
+    @Column(name = "reason_for_leaving", length = 500)
+    private String reasonForLeaving;
+
+    @Column(name = "conduct_at_leaving", length = 100)
+    private String conductAtLeaving;
+
+    @Column(name = "exit_remarks", length = 1000)
+    private String exitRemarks;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -233,4 +242,13 @@ public class Student {
 
     public String getSectionName() { return sectionName; }
     public void setSectionName(String sectionName) { this.sectionName = sectionName; }
+
+    public String getReasonForLeaving() { return reasonForLeaving; }
+    public void setReasonForLeaving(String reasonForLeaving) { this.reasonForLeaving = reasonForLeaving; }
+
+    public String getConductAtLeaving() { return conductAtLeaving; }
+    public void setConductAtLeaving(String conductAtLeaving) { this.conductAtLeaving = conductAtLeaving; }
+
+    public String getExitRemarks() { return exitRemarks; }
+    public void setExitRemarks(String exitRemarks) { this.exitRemarks = exitRemarks; }
 }

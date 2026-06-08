@@ -200,23 +200,124 @@ public class StudentService {
 
     @Transactional(readOnly = true)
     public List<Student> getInactiveStudentsByClass(String className) {
-        return studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.INACTIVE, securityUtil.getSchoolId());
+        // Backward compat: returns all non-active/non-upcoming students
+        return getLeftStudentsByClass(className);
     }
 
     @Transactional(readOnly = true)
     public List<Student> getInactiveStudentsByClassAndSection(String className, Long sectionId) {
-        return studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.INACTIVE, securityUtil.getSchoolId());
+        return getLeftStudentsByClassAndSection(className, sectionId);
     }
 
-    private StudentStatus calculateStatus(LocalDate joiningDate, LocalDate leavingDate) {
+    @Transactional(readOnly = true)
+    public List<Student> getGraduatedStudentsByClass(String className) {
+        return studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.GRADUATED, securityUtil.getSchoolId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Student> getGraduatedStudentsByClassAndSection(String className, Long sectionId) {
+        return studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.GRADUATED, securityUtil.getSchoolId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Student> getLeftStudentsByClass(String className) {
+        return studentRepository.findByClassNameAndStatusInAndSchoolId(
+                className, List.of(StudentStatus.TRANSFERRED, StudentStatus.WITHDRAWN), securityUtil.getSchoolId());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Student> getLeftStudentsByClassAndSection(String className, Long sectionId) {
+        return studentRepository.findByClassNameAndSectionIdAndStatusInAndSchoolId(
+                className, sectionId, List.of(StudentStatus.TRANSFERRED, StudentStatus.WITHDRAWN), securityUtil.getSchoolId());
+    }
+
+    // ── Exit Workflow ──────────────────────────────────────────────────
+
+    @Transactional
+    public Student exitStudent(String studentId, com.indraacademy.ias_management.dto.StudentExitRequest request, HttpServletRequest httpRequest) {
+        Long schoolId = securityUtil.getSchoolId();
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+
+        if (student.getStatus() != StudentStatus.ACTIVE) {
+            throw new IllegalStateException("Only ACTIVE students can be exited. Current status: " + student.getStatus());
+        }
+
+        StudentStatus exitStatus;
+        try {
+            exitStatus = StudentStatus.valueOf(request.getExitType().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid exit type: " + request.getExitType() + ". Valid: GRADUATED, TRANSFERRED, WITHDRAWN");
+        }
+        if (!exitStatus.isExitStatus() || exitStatus == StudentStatus.INACTIVE) {
+            throw new IllegalArgumentException("Invalid exit type: " + request.getExitType() + ". Valid: GRADUATED, TRANSFERRED, WITHDRAWN");
+        }
+
+        String oldStatus = student.getStatus().name();
+        student.setStatus(exitStatus);
+        student.setReasonForLeaving(request.getReasonForLeaving());
+        student.setConductAtLeaving(request.getConductAtLeaving());
+        student.setLeavingDate(request.getLeavingDate());
+        student.setExitRemarks(request.getExitRemarks());
+
+        Student saved = studentRepository.save(student);
+        auditService.log(
+                securityUtil.getUsername(), securityUtil.getRole(),
+                "EXIT_STUDENT", "Student", studentId,
+                oldStatus, exitStatus.name(), httpRequest.getRemoteAddr());
+        log.info("Student {} exited as {} — reason: {}", studentId, exitStatus, request.getReasonForLeaving());
+        return saved;
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> checkPendingDues(String studentId) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<com.indraacademy.ias_management.entity.StudentFees> unpaid =
+                studentFeesRepository.findByStudentIdAndSchoolIdAndPaidFalse(studentId, schoolId);
+
+        int unpaidMonths = unpaid.size();
+        java.util.Map<String, Object> result = new java.util.HashMap<>();
+        result.put("hasPendingDues", unpaidMonths > 0);
+        result.put("unpaidMonths", unpaidMonths);
+        return result;
+    }
+
+    @Transactional
+    public Student readmitStudent(String studentId, HttpServletRequest httpRequest) {
+        Long schoolId = securityUtil.getSchoolId();
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+
+        if (!student.getStatus().isExitStatus()) {
+            throw new IllegalStateException("Only exited students can be re-admitted. Current status: " + student.getStatus());
+        }
+
+        String oldStatus = student.getStatus().name();
+        student.setStatus(StudentStatus.ACTIVE);
+        student.setReasonForLeaving(null);
+        student.setConductAtLeaving(null);
+        student.setExitRemarks(null);
+        student.setLeavingDate(null);
+
+        Student saved = studentRepository.save(student);
+        auditService.log(
+                securityUtil.getUsername(), securityUtil.getRole(),
+                "READMIT_STUDENT", "Student", studentId,
+                oldStatus, "ACTIVE", httpRequest.getRemoteAddr());
+        log.info("Student {} re-admitted (was {})", studentId, oldStatus);
+        return saved;
+    }
+
+    private StudentStatus calculateStatus(LocalDate joiningDate, LocalDate leavingDate, StudentStatus currentStatus) {
+        // Never overwrite exit statuses — they are set by the explicit exit workflow
+        if (currentStatus != null && currentStatus.isExitStatus()) {
+            return currentStatus;
+        }
+
         LocalDate today = LocalDate.now();
 
         if (joiningDate != null && joiningDate.isAfter(today)) {
             return StudentStatus.UPCOMING;
-        }
-
-        if (leavingDate != null && !leavingDate.isAfter(today)) {
-            return StudentStatus.INACTIVE;
         }
 
         return StudentStatus.ACTIVE;
@@ -279,7 +380,8 @@ public class StudentService {
             if (joiningDateChanged || leavingDateChanged) {
                 StudentStatus newStatus = calculateStatus(
                         updatedStudent.getJoiningDate(),
-                        updatedStudent.getLeavingDate()
+                        updatedStudent.getLeavingDate(),
+                        existingStudent.getStatus()
                 );
                 updatedStudent.setStatus(newStatus);
                 log.info("Status updated for student {} → {}", studentId, newStatus);

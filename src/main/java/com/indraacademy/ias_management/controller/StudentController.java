@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.dto.BulkImportResultDTO;
 import com.indraacademy.ias_management.dto.PromotionDecisionRequest;
 import com.indraacademy.ias_management.dto.PromotionPreviewDTO;
 import com.indraacademy.ias_management.dto.PromotionResultDTO;
+import com.indraacademy.ias_management.dto.StudentExitRequest;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
@@ -261,6 +262,76 @@ public class StudentController {
                         "attachment; filename=\"student_import_template.csv\"")
                 .contentType(MediaType.parseMediaType("text/csv"))
                 .body(bytes);
+    }
+
+    // ─── Exit / Re-admission endpoints ───────────────────────────────────────
+
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
+    @GetMapping("/alumni/class/{className}")
+    public List<StudentLeaveDTO> getAlumniByClass(
+            @PathVariable String className,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("Request to get GRADUATED students for class: {}, section: {}", className, sectionId);
+        List<Student> students = sectionId != null
+                ? studentService.getGraduatedStudentsByClassAndSection(className, sectionId)
+                : studentService.getGraduatedStudentsByClass(className);
+        return students.stream()
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .collect(Collectors.toList());
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/left/class/{className}")
+    public List<StudentLeaveDTO> getLeftStudentsByClass(
+            @PathVariable String className,
+            @RequestParam(required = false) Long sectionId) {
+        log.info("Request to get LEFT (TRANSFERRED/WITHDRAWN) students for class: {}, section: {}", className, sectionId);
+        List<Student> students = sectionId != null
+                ? studentService.getLeftStudentsByClassAndSection(className, sectionId)
+                : studentService.getLeftStudentsByClass(className);
+        return students.stream()
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .collect(Collectors.toList());
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/{studentId}/pending-dues")
+    public ResponseEntity<Map<String, Object>> checkPendingDues(@PathVariable String studentId) {
+        log.info("Request to check pending dues for student: {}", studentId);
+        return ResponseEntity.ok(studentService.checkPendingDues(studentId));
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{studentId}/exit")
+    public ResponseEntity<?> exitStudent(
+            @PathVariable String studentId,
+            @RequestBody StudentExitRequest request,
+            HttpServletRequest httpRequest) {
+        log.warn("Request to exit student: {} as {}", studentId, request.getExitType());
+        try {
+            Student student = studentService.exitStudent(studentId, request, httpRequest);
+            return ResponseEntity.ok(student);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{studentId}/readmit")
+    public ResponseEntity<?> readmitStudent(
+            @PathVariable String studentId,
+            HttpServletRequest httpRequest) {
+        log.warn("Request to re-admit student: {}", studentId);
+        try {
+            Student student = studentService.readmitStudent(studentId, httpRequest);
+            return ResponseEntity.ok(student);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
 }

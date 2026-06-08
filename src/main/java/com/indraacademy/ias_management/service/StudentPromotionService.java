@@ -163,14 +163,18 @@ public class StudentPromotionService {
                     log.info("Detained student {} in {}", studentId, oldClass);
 
                 } else if ("PASS_OUT".equalsIgnoreCase(action)) {
-                    student.setStatus(StudentStatus.INACTIVE);
+                    student.setStatus(StudentStatus.GRADUATED);
+                    student.setReasonForLeaving("Completed final year");
+                    if (student.getLeavingDate() == null) {
+                        student.setLeavingDate(java.time.LocalDate.now());
+                    }
                     studentRepository.save(student);
                     auditService.log(
                             securityUtil.getUsername(), securityUtil.getRole(),
                             "PASS_OUT_STUDENT", "Student", studentId,
-                            "ACTIVE", "INACTIVE", httpRequest.getRemoteAddr());
+                            "ACTIVE", "GRADUATED", httpRequest.getRemoteAddr());
                     passedOut++;
-                    log.info("Passed out student {} (class {})", studentId, oldClass);
+                    log.info("Graduated student {} (class {})", studentId, oldClass);
 
                 } else {
                     errors.add(new PromotionResultDTO.PromotionError(studentId,
