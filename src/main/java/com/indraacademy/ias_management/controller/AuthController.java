@@ -195,18 +195,11 @@ public class AuthController {
                         .body("Your school account has been deactivated. Please contact Edunexify support.");
             }
 
-            // Block STUDENT and TEACHER login when subscription is EXPIRED.
-            // ADMIN/SUB_ADMIN are allowed through so they can log in and renew.
-            String role = loggedIn.getRole();
-            if (Role.STUDENT.equals(role) || Role.TEACHER.equals(role)) {
-                var ent = entitlementRepo.findById(loggedIn.getSchoolId()).orElse(null);
-                if (ent != null && "EXPIRED".equals(ent.getSubscriptionStatus())) {
-                    log.warn("Login rejected for userId={} ({}): school {} subscription is EXPIRED",
-                            loggedIn.getUserId(), role, loggedIn.getSchoolId());
-                    return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
-                            .body("Your school's subscription has expired. Please contact your school administrator.");
-                }
-            }
+            // Subscription enforcement is handled by SubscriptionEnforcementFilter:
+            // - GET requests are always allowed (read-only access)
+            // - POST/PUT/DELETE/PATCH are blocked with 402
+            // All roles (including STUDENT and TEACHER) can log in and view data
+            // even when the subscription is expired.
         }
 
         // Option B — school-scoped login enforcement.

@@ -468,7 +468,13 @@ public class SubscriptionController {
             sub.setPlanId(planId);
             sub.setStatus("ACTIVE");
             sub.setActivatedAt(now);
-            sub.setExpiresAt("ANNUAL".equals(billingCycle) ? now.plusYears(1) : now.plusMonths(1));
+
+            // If renewing early (existing expiry is still in the future), extend from
+            // the current expiry so the admin doesn't lose remaining days.
+            LocalDateTime baseDate = (sub.getExpiresAt() != null && sub.getExpiresAt().isAfter(now))
+                    ? sub.getExpiresAt()
+                    : now;
+            sub.setExpiresAt("ANNUAL".equals(billingCycle) ? baseDate.plusYears(1) : baseDate.plusMonths(1));
 
             GlobalSubscriptionConfig config = globalConfigRepo.findById(1).orElse(new GlobalSubscriptionConfig());
             sub.setGraceEndsAt(sub.getExpiresAt().plusDays(config.getGracePeriodDays()));
