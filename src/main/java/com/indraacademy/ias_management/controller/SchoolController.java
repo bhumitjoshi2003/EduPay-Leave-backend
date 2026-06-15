@@ -200,7 +200,7 @@ public class SchoolController {
      */
     @PutMapping("/api/school/razorpay")
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
-    public ResponseEntity<?> updateRazorpayKeys(@RequestBody RazorpayKeysRequest req,
+    public ResponseEntity<?> updateRazorpayKeys(@Valid @RequestBody RazorpayKeysRequest req,
                                                 HttpServletRequest request) {
         log.info("PUT /api/school/razorpay");
         try {

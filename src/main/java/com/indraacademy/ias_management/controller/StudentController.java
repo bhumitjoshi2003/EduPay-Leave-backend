@@ -211,7 +211,7 @@ public class StudentController {
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping("/promotion/execute")
     public ResponseEntity<PromotionResultDTO> executePromotion(
-            @RequestBody PromotionDecisionRequest request,
+            @Valid @RequestBody PromotionDecisionRequest request,
             HttpServletRequest httpRequest) {
         int count = request.getDecisions() != null ? request.getDecisions().size() : 0;
         log.warn("Request to execute promotion for {} student decisions", count);
@@ -305,7 +305,7 @@ public class StudentController {
     @PostMapping("/{studentId}/exit")
     public ResponseEntity<?> exitStudent(
             @PathVariable String studentId,
-            @RequestBody StudentExitRequest request,
+            @Valid @RequestBody StudentExitRequest request,
             HttpServletRequest httpRequest) {
         log.warn("Request to exit student: {} as {}", studentId, request.getExitType());
         try {

@@ -3,11 +3,16 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.CreateOrderRequest;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
+import com.indraacademy.ias_management.dto.RefundRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -34,11 +39,45 @@ public class PaymentController {
     @Autowired private RazorpayService razorpayService;
     @Autowired private PaymentService paymentService;
     @Autowired private AuthService authService;
+    @Autowired private PaymentRepository paymentRepository;
+    @Autowired private AuditService auditService;
+    @Autowired private SecurityUtil securityUtil;
 
     @PostMapping("/create")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
     public ResponseEntity<Map<String, Object>> createOrder(@Valid @RequestBody CreateOrderRequest req) {
         log.info("Request to create payment order for student: {}", req.getStudentId());
+
+        // Server-side fee amount validation: verify client-submitted amount against outstanding balance
+        int clientAmount = req.getTotalAmount(); // in paise
+        if (clientAmount <= 0) {
+            log.warn("Rejected order creation: amount must be positive. Received: {} for student: {}", clientAmount, req.getStudentId());
+            return ResponseEntity.badRequest().body(Map.of("error", "Payment amount must be greater than zero."));
+        }
+
+        long totalOutstandingPaise = razorpayService.calculateOutstandingBalancePaise(
+                req.getStudentId(), req.getSession());
+        if (totalOutstandingPaise <= 0) {
+            log.warn("Rejected order creation: no outstanding fees for student: {} session: {}", req.getStudentId(), req.getSession());
+            return ResponseEntity.badRequest().body(Map.of("error", "No outstanding fees found for this student and session."));
+        }
+
+        if (clientAmount > totalOutstandingPaise) {
+            log.warn("Rejected order creation: client amount {} exceeds outstanding balance {} for student: {}",
+                    clientAmount, totalOutstandingPaise, req.getStudentId());
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Payment amount exceeds the total outstanding balance. Outstanding: " + totalOutstandingPaise + " paise."));
+        }
+
+        // Log a warning if amounts differ (partial payment is allowed, but full mismatch is suspicious)
+        long componentSum = (long) req.getTotalTuitionFee() + req.getTotalBusFee()
+                + req.getTotalAnnualCharges() + req.getTotalLabCharges()
+                + req.getTotalEcaProject() + req.getTotalExaminationFee()
+                + req.getAdditionalCharges() + req.getLateFees() + req.getPlatformFee();
+        if (clientAmount != componentSum) {
+            log.warn("Amount component mismatch for student {}: totalAmount={} but component sum={}",
+                    req.getStudentId(), clientAmount, componentSum);
+        }
 
         Map<String, Object> order = razorpayService.createOrder(
                 req.getTotalAmount(),
@@ -133,5 +172,71 @@ public class PaymentController {
         headers.setContentDispositionFormData("attachment", "receipt_" + paymentId + ".pdf");
 
         return new ResponseEntity<>(pdfBytes, headers, HttpStatus.OK);
+    }
+
+    @PostMapping("/{paymentId}/refund")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<Map<String, Object>> refundPayment(
+            @PathVariable Long paymentId,
+            @Valid @RequestBody RefundRequest request,
+            HttpServletRequest httpRequest) {
+
+        log.info("Refund request for payment ID: {} amount: {} paise", paymentId, request.getAmount());
+
+        Long schoolId = securityUtil.getSchoolId();
+
+        // 1. Look up payment by ID and schoolId
+        Payment payment = paymentRepository.findById(paymentId).orElse(null);
+        if (payment == null || !schoolId.equals(payment.getSchoolId())) {
+            log.warn("Payment not found or does not belong to school. paymentId={} schoolId={}", paymentId, schoolId);
+            return ResponseEntity.notFound().build();
+        }
+
+        // 2. Validate refund amount <= payment amount (both in paise after Task 3 fix)
+        if (request.getAmount() > payment.getAmountPaid()) {
+            log.warn("Refund amount {} exceeds payment amount {} for paymentId={}",
+                    request.getAmount(), payment.getAmountPaid(), paymentId);
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Refund amount exceeds the original payment amount."));
+        }
+
+        // 3. Call Razorpay refund API
+        String razorpayPaymentId = payment.getPaymentId();
+        if (razorpayPaymentId == null || razorpayPaymentId.isBlank()) {
+            log.error("No Razorpay payment ID found for payment record {}", paymentId);
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Cannot refund: no Razorpay payment ID associated with this record."));
+        }
+
+        try {
+            Map<String, Object> refundResult = razorpayService.createRefund(
+                    razorpayPaymentId, request.getAmount(), request.getReason());
+
+            // 4. Update payment record status
+            payment.setStatus("refunded");
+            paymentRepository.save(payment);
+
+            // 5. Audit log the refund
+            String ip = httpRequest.getRemoteAddr();
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "REFUND_PAYMENT",
+                    "Payment",
+                    paymentId.toString(),
+                    null,
+                    String.format("Refund of %d paise. Reason: %s. RefundId: %s",
+                            request.getAmount(), request.getReason(), refundResult.get("refundId")),
+                    ip
+            );
+
+            log.info("Refund processed successfully for paymentId={}", paymentId);
+            return ResponseEntity.ok(refundResult);
+
+        } catch (RuntimeException e) {
+            log.error("Refund failed for paymentId={}", paymentId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Refund failed: " + e.getMessage()));
+        }
     }
 }

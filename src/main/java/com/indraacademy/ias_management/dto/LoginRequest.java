@@ -1,5 +1,8 @@
 package com.indraacademy.ias_management.dto;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
 /**
  * Request body for POST /api/auth/login.
  *
@@ -9,8 +12,15 @@ package com.indraacademy.ias_management.dto;
  */
 public class LoginRequest {
 
+    @NotBlank(message = "User ID is required")
+    @Size(max = 100, message = "User ID must not exceed 100 characters")
     private String userId;
+
+    @NotBlank(message = "Password is required")
+    @Size(max = 255, message = "Password must not exceed 255 characters")
     private String password;
+
+    @Size(max = 100, message = "School slug must not exceed 100 characters")
     private String schoolSlug;   // nullable — only set on branded login pages
 
     public String getUserId()   { return userId;   }

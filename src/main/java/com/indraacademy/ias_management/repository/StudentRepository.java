@@ -15,9 +15,6 @@ import java.util.Optional;
 @Repository
 public interface StudentRepository extends JpaRepository<Student, String> {
 
-    // Platform-wide lookup (used by schedulers — no schoolId filter)
-    Optional<Student> findByStudentId(String studentId);
-
     List<Student> findByClassNameAndSchoolId(String className, Long schoolId);
 
     List<Student> findByClassNameAndStatusAndSchoolId(String className, StudentStatus status, Long schoolId);

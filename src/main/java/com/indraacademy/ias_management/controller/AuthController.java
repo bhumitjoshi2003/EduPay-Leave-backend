@@ -24,6 +24,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -150,6 +151,12 @@ public class AuthController {
                     .body("Only a SUPER_ADMIN can create a SUPER_ADMIN account.");
         }
 
+        try {
+            validatePasswordStrength(user.getPassword());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+
         if (userRepository.findByUserId(user.getUserId()).isPresent()) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body("User ID already exists.");
         }
@@ -169,7 +176,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest req, HttpServletResponse response) {
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletResponse response) {
         if (rateLimiter.isRateLimited("login:" + req.getUserId(), 5, 300000)) {
             return ResponseEntity.status(429).body("Too many login attempts. Try again in 5 minutes.");
         }
@@ -510,7 +517,7 @@ public class AuthController {
     }
 
     @PostMapping("/change-password")
-    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
+    public ResponseEntity<?> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
 
         // 1. Extract info from SecurityContext (populated by JwtAuthFilter from the accessToken cookie)
         String callingUserId = authService.getUserId();
@@ -558,6 +565,13 @@ public class AuthController {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                         .body("Invalid current password.");
             }
+        }
+
+        // Validate password complexity
+        try {
+            validatePasswordStrength(request.getNewPassword());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         }
 
         // Save New Password
@@ -631,6 +645,13 @@ public class AuthController {
             log.warn("Password reset failed: New password cannot be empty.");
             return ResponseEntity.badRequest().body("New password cannot be empty.");
         }
+
+        try {
+            validatePasswordStrength(newPassword);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+
         log.info("Attempting to reset password using token.");
 
         try {
@@ -656,6 +677,21 @@ public class AuthController {
         } catch (Exception e) {
             log.error("Unexpected error during password reset.", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to reset password.");
+        }
+    }
+
+    private void validatePasswordStrength(String password) {
+        if (password == null || password.length() < 8) {
+            throw new IllegalArgumentException("Password must be at least 8 characters long");
+        }
+        if (!password.matches(".*[A-Z].*")) {
+            throw new IllegalArgumentException("Password must contain at least one uppercase letter");
+        }
+        if (!password.matches(".*[a-z].*")) {
+            throw new IllegalArgumentException("Password must contain at least one lowercase letter");
+        }
+        if (!password.matches(".*\\d.*")) {
+            throw new IllegalArgumentException("Password must contain at least one digit");
         }
     }
 

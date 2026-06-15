@@ -2,6 +2,10 @@ package com.indraacademy.ias_management.dto;
 
 import com.indraacademy.ias_management.entity.BoardType;
 import com.indraacademy.ias_management.entity.SubscriptionPlan;
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 
@@ -12,19 +16,44 @@ import java.time.LocalDate;
 public class SchoolOnboardRequest {
 
     // School fields
+    @NotBlank(message = "School name is required")
+    @Size(max = 255, message = "School name must not exceed 255 characters")
     private String name;
+
+    @NotBlank(message = "Slug is required")
+    @Size(max = 100, message = "Slug must not exceed 100 characters")
     private String slug;
+
     private BoardType boardType;
+
+    @Size(max = 500, message = "Address must not exceed 500 characters")
     private String address;
+
+    @Size(max = 100, message = "City must not exceed 100 characters")
     private String city;
+
+    @Size(max = 100, message = "State must not exceed 100 characters")
     private String state;
+
+    @Size(max = 10, message = "Pincode must not exceed 10 characters")
     private String pincode;
+
+    @Email(message = "Invalid school email address")
+    @Size(max = 255, message = "Email must not exceed 255 characters")
     private String email;
+
+    @Size(max = 20, message = "Phone must not exceed 20 characters")
     private String phone;
+
+    @Size(max = 255, message = "Website must not exceed 255 characters")
     private String website;
+
     private String logoUrl;
     private String themeColor;
+
+    @Size(max = 255, message = "Contact person name must not exceed 255 characters")
     private String contactPersonName;
+
     private SubscriptionPlan plan;
     private Integer maxStudents;
     private LocalDate expiryDate;
@@ -36,7 +65,7 @@ public class SchoolOnboardRequest {
     private LocalDate trialEndsAt;
 
     // Academic configuration (defaults applied in entity if not provided)
-    /** Calendar month the academic year starts (1=Jan … 12=Dec). Defaults to 4 (April). */
+    /** Calendar month the academic year starts (1=Jan ... 12=Dec). Defaults to 4 (April). */
     private Integer academicYearStartMonth;
 
     /** Comma-separated working day names, e.g. "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY". */
@@ -46,12 +75,30 @@ public class SchoolOnboardRequest {
     private String gradingSystem;
 
     // First ADMIN user
+    @NotBlank(message = "Admin user ID is required")
+    @Size(max = 100, message = "Admin user ID must not exceed 100 characters")
     private String adminUserId;
+
+    @NotBlank(message = "Admin email is required")
+    @Email(message = "Invalid admin email address")
+    @Size(max = 255, message = "Admin email must not exceed 255 characters")
     private String adminEmail;
+
+    @NotBlank(message = "Admin password is required")
+    @Size(min = 8, max = 255, message = "Admin password must be between 8 and 255 characters")
     private String adminPassword;
+
+    @NotBlank(message = "Admin name is required")
+    @Size(max = 255, message = "Admin name must not exceed 255 characters")
     private String adminName;
+
+    @Size(max = 20, message = "Admin phone must not exceed 20 characters")
     private String adminPhone;
+
+    @NotNull(message = "Admin date of birth is required")
     private LocalDate adminDob;
+
+    @NotBlank(message = "Admin gender is required")
     private String adminGender;
 
     public String getName() { return name; }

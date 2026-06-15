@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.*;
 import com.indraacademy.ias_management.service.PlanService;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,7 +59,7 @@ public class PlanController {
      */
     @PostMapping("/plans")
     @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
-    public PlanResponse createPlan(@RequestBody PlanRequest request) {
+    public PlanResponse createPlan(@Valid @RequestBody PlanRequest request) {
         String adminId = securityUtil.getUsername();
         log.info("POST /api/super-admin/plans name='{}' by={}", request.getName(), adminId);
         return planService.createPlan(request, adminId);
@@ -70,7 +71,7 @@ public class PlanController {
      */
     @PutMapping("/plans/{planId}")
     @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
-    public PlanResponse updatePlan(@PathVariable Long planId, @RequestBody PlanRequest request) {
+    public PlanResponse updatePlan(@PathVariable Long planId, @Valid @RequestBody PlanRequest request) {
         log.info("PUT /api/super-admin/plans/{}", planId);
         return planService.updatePlan(planId, request);
     }

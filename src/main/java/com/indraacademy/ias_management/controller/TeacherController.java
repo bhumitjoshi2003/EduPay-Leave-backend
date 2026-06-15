@@ -38,6 +38,7 @@ public class TeacherController {
     @Autowired private UserDetailsServiceImpl userDetailsService;
     @Autowired private AuthService authService;
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> registerTeacher(@Valid @RequestBody Teacher newTeacher, HttpServletRequest request) {
         log.info("Request to register new teacher: {}", newTeacher.getTeacherId());
@@ -67,6 +68,7 @@ public class TeacherController {
                 });
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping
     public ResponseEntity<List<Teacher>> getAllTeachers() {
         log.info("Request to get all teachers.");
@@ -103,6 +105,7 @@ public class TeacherController {
                 .body(bytes);
     }
 
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PutMapping("/{teacherId}")
     public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @Valid @RequestBody Teacher updatedTeacher, HttpServletRequest request) {
         log.info("Request to update teacher ID: {}", teacherId);

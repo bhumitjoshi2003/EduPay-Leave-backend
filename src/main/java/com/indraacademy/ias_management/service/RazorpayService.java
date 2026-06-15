@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.razorpay.Order;
@@ -37,6 +38,8 @@ public class RazorpayService {
     @Autowired private AttendanceService attendanceService;
     @Autowired private EmailService emailService;
     @Autowired private StudentFeesService studentFeesService;
+    @Autowired private StudentFeesRepository studentFeesRepository;
+    @Autowired private FeeStructureService feeStructureService;
     @Autowired private NotificationService notificationService;
     @Autowired private SecurityUtil securityUtil;
 
@@ -46,6 +49,9 @@ public class RazorpayService {
 
     @Value("${razorpay.key.secret:}")
     private String globalKeySecret;
+
+    @Value("${razorpay.webhook.secret:}")
+    private String webhookSecret;
 
     /**
      * Returns a RazorpayClient using the current school's own keys if configured,
@@ -125,6 +131,71 @@ public class RazorpayService {
             throw new IllegalStateException("Platform Razorpay keys are not configured. Contact support to upgrade your plan.");
         }
         return new RazorpayClient(globalKeyId, globalKeySecret);
+    }
+
+    /**
+     * Calculates the total outstanding balance (in paise) for a student in a given session.
+     * Counts the number of unpaid months and multiplies by an estimated per-month fee.
+     * This is a ceiling-based validation: the actual payment can be less (partial payment)
+     * but never more than the total outstanding.
+     */
+    public long calculateOutstandingBalancePaise(String studentId, String session) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<com.indraacademy.ias_management.entity.StudentFees> unpaidFees =
+                studentFeesRepository.findByStudentIdAndSchoolIdAndPaidFalse(studentId, schoolId);
+
+        if (unpaidFees.isEmpty()) {
+            return 0;
+        }
+
+        // Filter to the requested session only
+        List<com.indraacademy.ias_management.entity.StudentFees> sessionUnpaid = unpaidFees.stream()
+                .filter(f -> session.equals(f.getYear()))
+                .toList();
+
+        if (sessionUnpaid.isEmpty()) {
+            return 0;
+        }
+
+        // Estimate a generous upper bound per unpaid month using fee structure + bus fees.
+        // We sum tuition + annual charges + lab + eca + exam + a bus fee estimate + late fee buffer.
+        // This gives a ceiling that the client amount must not exceed.
+        String className = sessionUnpaid.get(0).getClassName();
+        long perMonthEstimatePaise = 0;
+
+        try {
+            com.indraacademy.ias_management.entity.FeeStructure feeStructure =
+                    feeStructureService.getFeeStructuresByAcademicYearAndClassName(session, className);
+            if (feeStructure != null) {
+                // Fee structure amounts are in rupees (double), convert to paise
+                perMonthEstimatePaise = Math.round(feeStructure.getTuitionFee() * 100.0)
+                        + Math.round(feeStructure.getAnnualCharges() * 100.0)
+                        + Math.round(feeStructure.getLabCharges() * 100.0)
+                        + Math.round(feeStructure.getEcaProject() * 100.0)
+                        + Math.round(feeStructure.getExaminationFee() * 100.0);
+            }
+        } catch (Exception e) {
+            log.warn("Could not load fee structure for validation. studentId={} session={} class={}",
+                    studentId, session, className, e);
+        }
+
+        // Add a generous bus fee estimate (max reasonable bus fee per month)
+        long busFeeEstimatePaise = 5000_00L; // Rs 5000 max per month as safety ceiling
+
+        // Add late fee buffer per month
+        long lateFeeCeilingPaise = 30L * 21L * 100L; // 30 days * Rs 21/day max late fee tier
+
+        long totalCeiling = 0;
+        for (int i = 0; i < sessionUnpaid.size(); i++) {
+            totalCeiling += perMonthEstimatePaise + busFeeEstimatePaise + lateFeeCeilingPaise;
+        }
+
+        // Add a 20% safety margin for additional charges, platform fees, etc.
+        totalCeiling = (long) (totalCeiling * 1.2);
+
+        // Floor: at minimum, allow at least the number of unpaid months * Rs 100 (in paise)
+        long minimumCeiling = sessionUnpaid.size() * 100_00L;
+        return Math.max(totalCeiling, minimumCeiling);
     }
 
     public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int additionalCharges, int lateFees, int platformFee) {
@@ -228,10 +299,10 @@ public class RazorpayService {
             payment.setClassName((String) orderDetails.get("className"));
             payment.setSession((String) orderDetails.get("session"));
             payment.setMonth((String) orderDetails.get("month"));
-            // Convert amount from paisa (Razorpay's unit) to Rupees
-            Integer amountInPaisa = (Integer) orderDetails.get("amount");
-            double amountInRupees = amountInPaisa / 100.0;
-            payment.setAmount((int) amountInRupees); // Storing total billable amount
+            // Store amount in paise directly — never use floating-point for money.
+            // The Payment entity's int fields now hold paise values.
+            Integer amountInPaise = (Integer) orderDetails.get("amount");
+            payment.setAmount(amountInPaise); // Stored in paise
             payment.setPaymentId(paymentId);
             payment.setOrderId(orderId);
             payment.setBusFee((Integer) orderDetails.get("busFee"));
@@ -241,7 +312,7 @@ public class RazorpayService {
             payment.setEcaProject((Integer) orderDetails.get("ecaProject"));
             payment.setExaminationFee((Integer) orderDetails.get("examinationFee"));
             payment.setPaidManually(false);
-            payment.setAmountPaid((int) amountInRupees); // Storing paid amount
+            payment.setAmountPaid(amountInPaise); // Stored in paise
             payment.setRazorpaySignature(signature);
             payment.setAdditionalCharges((Integer) orderDetails.get("additionalCharges"));
             payment.setLateFees((Integer) orderDetails.get("lateFees"));
@@ -256,8 +327,9 @@ public class RazorpayService {
             studentFeesService.markFeesAsPaid(payment);
             log.debug("Attendance and StudentFees marked as paid.");
 
-            // 4. Notification
-            String successNotificationMessage = String.format("Your fee payment of ₹%.2f has been successfully processed. Payment ID: %s", amountInRupees, paymentId);
+            // 4. Notification — convert paise to rupees for display only
+            double displayAmountRupees = amountInPaise / 100.0;
+            String successNotificationMessage = String.format("Your fee payment of ₹%.2f has been successfully processed. Payment ID: %s", displayAmountRupees, paymentId);
             // Assuming Long.valueOf(savedPayment.getId()) is the correct type based on previous services
             String relatedEntityId = (savedPayment.getId() != null) ? String.valueOf(savedPayment.getId()) : null;
 
@@ -286,7 +358,7 @@ public class RazorpayService {
                     String monthNames  = convertMonthBitmask(monthBitmask);
                     String schoolName = schoolRepository.findById(securityUtil.getSchoolId())
                             .map(com.indraacademy.ias_management.entity.School::getName).orElse("School");
-                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, amountInRupees, session, monthNames, schoolName);
+                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, displayAmountRupees, session, monthNames, schoolName);
 
                     log.info("Initiating asynchronous HTML email send to {} for payment verification.", studentEmail);
                     emailService.sendHtmlEmail(studentEmail, subject, htmlBody);
@@ -332,6 +404,117 @@ public class RazorpayService {
             if (bitmask.charAt(i) == '1') selected.add(ACADEMIC_MONTHS[i]);
         }
         return selected.isEmpty() ? "—" : String.join(", ", selected);
+    }
+
+    /**
+     * Verifies the Razorpay webhook signature against the configured webhook secret.
+     */
+    public boolean verifyWebhookSignature(String payload, String signature) {
+        if (webhookSecret == null || webhookSecret.isBlank()) {
+            log.error("Webhook secret is not configured. Cannot verify webhook signature.");
+            return false;
+        }
+        try {
+            // Razorpay webhook signatures use HMAC-SHA256 with the webhook secret.
+            // Utils.verifySignature works for both payment signatures and webhook signatures.
+            return Utils.verifySignature(payload, signature, webhookSecret);
+        } catch (RazorpayException e) {
+            log.error("Webhook signature verification failed.", e);
+            return false;
+        }
+    }
+
+    /**
+     * Processes a Razorpay webhook event. Called from the webhook controller.
+     * Returns true if the event was processed successfully or was already handled (idempotent).
+     */
+    public boolean processWebhookEvent(String payload) {
+        try {
+            JSONObject event = new JSONObject(payload);
+            String eventType = event.optString("event", "");
+            JSONObject paymentEntity = event.optJSONObject("payload");
+
+            if (paymentEntity == null) {
+                log.warn("Webhook event has no payload. Event type: {}", eventType);
+                return false;
+            }
+
+            JSONObject paymentObj = paymentEntity.optJSONObject("payment");
+            if (paymentObj == null) {
+                log.info("Webhook event type '{}' has no payment object. Skipping.", eventType);
+                return true;
+            }
+
+            JSONObject entity = paymentObj.optJSONObject("entity");
+            if (entity == null) {
+                log.warn("Webhook payment object has no entity. Event type: {}", eventType);
+                return false;
+            }
+
+            String razorpayPaymentId = entity.optString("id", null);
+            String razorpayOrderId = entity.optString("order_id", null);
+            String status = entity.optString("status", "");
+
+            switch (eventType) {
+                case "payment.authorized":
+                case "payment.captured":
+                    log.info("Webhook: {} for paymentId={} orderId={}", eventType, razorpayPaymentId, razorpayOrderId);
+                    // Idempotency check — if already recorded, skip
+                    if (razorpayPaymentId != null && paymentRepository.existsByPaymentId(razorpayPaymentId)) {
+                        log.info("Webhook: Payment {} already recorded. Skipping.", razorpayPaymentId);
+                        return true;
+                    }
+                    // Log for manual follow-up if the payment wasn't recorded via the verify endpoint
+                    log.warn("Webhook: Payment {} (order {}) was {} but not yet recorded via verify endpoint. " +
+                            "Manual reconciliation may be needed.", razorpayPaymentId, razorpayOrderId, eventType);
+                    break;
+
+                case "payment.failed":
+                    log.warn("Webhook: Payment failed. paymentId={} orderId={} status={}",
+                            razorpayPaymentId, razorpayOrderId, status);
+                    break;
+
+                default:
+                    log.info("Webhook: Unhandled event type '{}'. Ignoring.", eventType);
+            }
+
+            return true;
+        } catch (Exception e) {
+            log.error("Error processing webhook event.", e);
+            return false;
+        }
+    }
+
+    /**
+     * Creates a refund via the Razorpay API.
+     *
+     * @param razorpayPaymentId the Razorpay payment ID to refund
+     * @param amountInPaise     refund amount in paise
+     * @param reason            reason for the refund
+     * @return a map with refund details (id, amount, status)
+     */
+    public Map<String, Object> createRefund(String razorpayPaymentId, long amountInPaise, String reason) {
+        try {
+            RazorpayClient client = getRazorpayClient();
+            JSONObject refundRequest = new JSONObject();
+            refundRequest.put("amount", amountInPaise);
+            JSONObject notes = new JSONObject();
+            notes.put("reason", reason);
+            refundRequest.put("notes", notes);
+
+            com.razorpay.Refund refund = client.Payments.refund(razorpayPaymentId, refundRequest);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("refundId", refund.get("id"));
+            result.put("amount", refund.get("amount"));
+            result.put("status", refund.get("status"));
+            log.info("Refund created successfully. RefundId={} for PaymentId={} amount={}",
+                    refund.get("id"), razorpayPaymentId, amountInPaise);
+            return result;
+        } catch (RazorpayException e) {
+            log.error("Failed to create refund for paymentId={} amount={}", razorpayPaymentId, amountInPaise, e);
+            throw new RuntimeException("Refund failed: " + e.getMessage(), e);
+        }
     }
 
     private String buildPaymentConfirmationHtml(String studentName, String paymentId,

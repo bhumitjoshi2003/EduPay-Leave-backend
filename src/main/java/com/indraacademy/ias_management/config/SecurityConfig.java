@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -19,6 +20,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.XXssProtectionHeaderWriter;
 import org.springframework.web.cors.CorsConfiguration;
 
 import java.util.Arrays;
@@ -58,7 +60,6 @@ public class SecurityConfig {
                     // Wildcard subdomain pattern for all school subdomains (*.edunexify.co.in).
                     // allowedOriginPatterns supports wildcards; allowedOrigins does not.
                     config.addAllowedOriginPattern("https://*.edunexify.co.in");
-                    config.addAllowedOriginPattern("http://*.edunexify.co.in");
 
                     // Root domain (super-admin, marketing site, dev)
                     config.addAllowedOriginPattern(frontendUrl);
@@ -72,9 +73,19 @@ public class SecurityConfig {
                     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                     config.setAllowedHeaders(List.of("*"));
                     config.setAllowCredentials(true);
+                    config.setMaxAge(3600L);
                     return config;
                 }))
                 .csrf(AbstractHttpConfigurer::disable)
+                .headers(headers -> headers
+                        .frameOptions(frame -> frame.sameOrigin())
+                        .contentTypeOptions(Customizer.withDefaults())
+                        .httpStrictTransportSecurity(hsts -> hsts
+                                .includeSubDomains(true)
+                                .maxAgeInSeconds(31536000))
+                        .xssProtection(xss -> xss
+                                .headerValue(XXssProtectionHeaderWriter.HeaderValue.ENABLED_MODE_BLOCK))
+                )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/login",
                                 "/api/auth/logout",
@@ -83,6 +94,7 @@ public class SecurityConfig {
                                 "/api/auth/request-password-reset",
                                 "/api/auth/refresh-token",
                                 "/api/public/**",
+                                "/api/webhooks/**",
                                 "/actuator/health").permitAll()
                         .requestMatchers("/api/uploads/events/images/**").permitAll()
                         .requestMatchers("/api/uploads/student-photos/**").permitAll()
