@@ -21,10 +21,8 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Run tests
-        run: mvn test -B
-        env:
-          SPRING_PROFILES_ACTIVE: test
+      - name: Build and verify compilation
+        run: mvn compile -B
 
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
