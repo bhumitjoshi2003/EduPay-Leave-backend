@@ -81,7 +81,7 @@ public class TeacherAttendanceService {
         int radius = school.getGeofenceRadius() != null ? school.getGeofenceRadius() : 200;
         if (distance > radius) {
             throw new IllegalStateException(
-                    String.format("You are %.0f meters away from school. Maximum allowed: %d meters.", distance, radius));
+                    String.format("You are %s away from school. Maximum allowed: %s.", formatDistance(distance), formatDistance(radius)));
         }
 
         // Determine status
@@ -150,7 +150,7 @@ public class TeacherAttendanceService {
             int radius = school.getGeofenceRadius() != null ? school.getGeofenceRadius() : 200;
             if (distance > radius) {
                 throw new IllegalStateException(
-                        String.format("You are %.0f meters away from school. Check out within %d meters.", distance, radius));
+                        String.format("You are %s away from school. Check out within %s.", formatDistance(distance), formatDistance(radius)));
             }
         }
 
@@ -326,6 +326,13 @@ public class TeacherAttendanceService {
         return workingDays.toUpperCase().contains(dayName);
     }
 
+
+    private String formatDistance(double meters) {
+        if (meters >= 1000) {
+            return String.format("%.1f km", meters / 1000);
+        }
+        return String.format("%.0f meters", meters);
+    }
 
     /**
      * Haversine distance between two GPS coordinates, in meters.
