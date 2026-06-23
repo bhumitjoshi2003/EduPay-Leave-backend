@@ -18,6 +18,9 @@ public class AdminMarkTeacherAttendanceRequest {
     @NotBlank(message = "Status is required")
     private String status;
 
+    private String checkInTime;   // HH:mm format, optional
+    private String checkOutTime;  // HH:mm format, optional
+
     public String getTeacherId() { return teacherId; }
     public void setTeacherId(String teacherId) { this.teacherId = teacherId; }
 
@@ -26,4 +29,10 @@ public class AdminMarkTeacherAttendanceRequest {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public String getCheckInTime() { return checkInTime; }
+    public void setCheckInTime(String checkInTime) { this.checkInTime = checkInTime; }
+
+    public String getCheckOutTime() { return checkOutTime; }
+    public void setCheckOutTime(String checkOutTime) { this.checkOutTime = checkOutTime; }
 }

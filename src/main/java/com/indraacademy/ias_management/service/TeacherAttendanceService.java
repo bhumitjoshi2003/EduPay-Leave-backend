@@ -204,8 +204,19 @@ public class TeacherAttendanceService {
         ta.setStatus(req.getStatus().toUpperCase());
         ta.setMethod("MANUAL_ADMIN");
         ta.setMarkedByAdmin(true);
-        if (ta.getCheckInTime() == null) {
+
+        // Set check-in time from request, or fallback to now for new records
+        if (req.getCheckInTime() != null && !req.getCheckInTime().isBlank()) {
+            LocalTime parsedIn = LocalTime.parse(req.getCheckInTime());
+            ta.setCheckInTime(LocalDateTime.of(req.getDate(), parsedIn));
+        } else if (ta.getCheckInTime() == null) {
             ta.setCheckInTime(LocalDateTime.now());
+        }
+
+        // Set check-out time if provided
+        if (req.getCheckOutTime() != null && !req.getCheckOutTime().isBlank()) {
+            LocalTime parsedOut = LocalTime.parse(req.getCheckOutTime());
+            ta.setCheckOutTime(LocalDateTime.of(req.getDate(), parsedOut));
         }
 
         TeacherAttendance saved = teacherAttendanceRepository.save(ta);
