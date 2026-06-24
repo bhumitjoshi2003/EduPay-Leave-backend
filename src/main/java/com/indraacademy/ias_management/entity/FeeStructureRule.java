@@ -8,10 +8,16 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "fee_structure_rule", indexes = {
-        @Index(name = "idx_fsr_school_session_class",
-                columnList = "school_id, academic_session_id, class_name")
-})
+@Table(name = "fee_structure_rule",
+        indexes = {
+                @Index(name = "idx_fsr_school_session_class",
+                        columnList = "school_id, academic_session_id, class_name")
+        },
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uq_fsr_school_session_class_feehead",
+                        columnNames = {"school_id", "academic_session_id", "class_name", "fee_head_id"})
+        })
 public class FeeStructureRule {
 
     @Id

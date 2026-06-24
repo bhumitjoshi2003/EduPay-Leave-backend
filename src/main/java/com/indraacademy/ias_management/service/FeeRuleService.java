@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -73,6 +75,19 @@ public class FeeRuleService {
         AcademicSession session = sessionRepository.findById(sessionId)
                 .filter(s -> s.getSchoolId().equals(schoolId))
                 .orElseThrow(() -> new IllegalArgumentException("Session not found."));
+
+        // Validate: no duplicate feeHeadIds in the incoming payload
+        Set<Long> seenFeeHeadIds = new HashSet<>();
+        for (FeeStructureRuleDto dto : ruleDtos) {
+            if (dto.getFeeHeadId() == null) {
+                throw new IllegalArgumentException("Each rule must have a feeHeadId.");
+            }
+            if (!seenFeeHeadIds.add(dto.getFeeHeadId())) {
+                throw new IllegalArgumentException(
+                        "Duplicate fee head ID " + dto.getFeeHeadId() + " in rules for class " + className +
+                        ". Each fee head may only appear once per class per session.");
+            }
+        }
 
         // Delete existing rules for this class+session
         ruleRepository.deleteBySchoolIdAndAcademicSessionIdAndClassName(schoolId, sessionId, className);
