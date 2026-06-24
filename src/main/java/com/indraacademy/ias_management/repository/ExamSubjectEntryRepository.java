@@ -17,6 +17,9 @@ public interface ExamSubjectEntryRepository extends JpaRepository<ExamSubjectEnt
 
     boolean existsByExamConfigIdAndSubjectNameAndSchoolId(Long examConfigId, String subjectName, Long schoolId);
 
+    /** Batch load subjects for multiple exams at once — used by WeightageCalculationEngine. */
+    List<ExamSubjectEntry> findByExamConfigIdInAndSchoolId(List<Long> examConfigIds, Long schoolId);
+
     @Transactional
     void deleteByExamConfigIdAndSchoolId(Long examConfigId, Long schoolId);
 }
