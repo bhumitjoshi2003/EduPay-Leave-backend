@@ -7,19 +7,25 @@ import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.service.ReportCardDataAssembler;
 import com.indraacademy.ias_management.service.ReportCardPdfGenerator;
+import com.indraacademy.ias_management.dto.ClassOverviewDTO;
+import com.indraacademy.ias_management.service.ClassOverviewService;
+import com.indraacademy.ias_management.service.ReportCardPublicationService;
 import com.indraacademy.ias_management.service.ReportCardTemplateService;
 import com.indraacademy.ias_management.service.RemarksService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.ByteArrayOutputStream;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -27,12 +33,14 @@ import java.util.zip.ZipOutputStream;
 @RequestMapping("/api")
 public class ReportCardController {
 
-    @Autowired private ReportCardTemplateService templateService;
-    @Autowired private ReportCardDataAssembler assembler;
-    @Autowired private RemarksService remarksService;
-    @Autowired private ReportCardPdfGenerator pdfGenerator;
-    @Autowired private StudentRepository studentRepository;
-    @Autowired private SecurityUtil securityUtil;
+    @Autowired private ReportCardTemplateService     templateService;
+    @Autowired private ReportCardDataAssembler       assembler;
+    @Autowired private RemarksService                remarksService;
+    @Autowired private ReportCardPdfGenerator        pdfGenerator;
+    @Autowired private ReportCardPublicationService  publicationService;
+    @Autowired private ClassOverviewService          classOverviewService;
+    @Autowired private StudentRepository             studentRepository;
+    @Autowired private SecurityUtil                  securityUtil;
 
     // ── Template CRUD ─────────────────────────────────────────────────────
 
@@ -100,6 +108,19 @@ public class ReportCardController {
             @RequestParam String studentId,
             @RequestParam Long templateId,
             @RequestParam String session) {
+
+        // Students can only view published report cards
+        if (Role.STUDENT.equals(securityUtil.getRole())) {
+            Long schoolId = securityUtil.getSchoolId();
+            Student student = studentRepository
+                .findByStudentIdAndSchoolId(studentId, schoolId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+            if (!publicationService.isPublished(templateId, session, student.getClassName())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Report card has not been published yet.");
+            }
+        }
+
         return ResponseEntity.ok(assembler.assemble(studentId, templateId, session));
     }
 
@@ -205,6 +226,70 @@ public class ReportCardController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + zipFilename + "\"")
                 .header(HttpHeaders.CONTENT_LENGTH, String.valueOf(zipBytes.length))
                 .body(zipBytes);
+    }
+
+    // ── Class Performance Overview ────────────────────────────────────────
+
+    /**
+     * Phase 7: Returns pre-computed weighted scores for all students in a class.
+     * Lightweight — reads AssessmentGroupResult cache, no full assembly.
+     * GET /api/report-cards/class-overview?templateId=&session=&className=
+     */
+    @GetMapping("/report-cards/class-overview")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
+    public ResponseEntity<ClassOverviewDTO> getClassOverview(
+            @RequestParam Long templateId,
+            @RequestParam String session,
+            @RequestParam String className) {
+        return ResponseEntity.ok(classOverviewService.getClassOverview(templateId, session, className));
+    }
+
+    // ── Publishing ────────────────────────────────────────────────────────
+
+    /** GET /api/report-cards/publish?templateId=&session=&className= */
+    @GetMapping("/report-cards/publish")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
+    public ResponseEntity<ReportCardPublicationDTO> getPublishStatus(
+            @RequestParam Long templateId,
+            @RequestParam String session,
+            @RequestParam String className) {
+        return ResponseEntity.ok(publicationService.getStatus(templateId, session, className));
+    }
+
+    /** POST /api/report-cards/publish — publishes a class's report cards */
+    @PostMapping("/report-cards/publish")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<ReportCardPublicationDTO> publish(
+            @Valid @RequestBody PublishRequest req) {
+        return ResponseEntity.ok(
+            publicationService.publish(req.getTemplateId(), req.getSession(), req.getClassName()));
+    }
+
+    /** DELETE /api/report-cards/publish?templateId=&session=&className= */
+    @DeleteMapping("/report-cards/publish")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<Void> unpublish(
+            @RequestParam Long templateId,
+            @RequestParam String session,
+            @RequestParam String className) {
+        publicationService.unpublish(templateId, session, className);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * POST /api/report-cards/email-blast
+     * Validates publication exists, fires async blast, returns { initiated, message }.
+     */
+    @PostMapping("/report-cards/email-blast")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<Map<String, Object>> emailBlast(
+            @Valid @RequestBody PublishRequest req) {
+        int initiated = publicationService.startEmailBlast(
+            req.getTemplateId(), req.getSession(), req.getClassName());
+        return ResponseEntity.accepted().body(Map.of(
+            "initiated", initiated,
+            "message", "Email blast started for " + initiated + " student(s). Emails will arrive shortly."
+        ));
     }
 
     private String sanitizeFilename(String name) {

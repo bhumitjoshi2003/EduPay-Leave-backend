@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.springframework.core.io.ByteArrayResource;
+
 import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
@@ -165,6 +167,99 @@ public class EmailService {
                 </body>
                 </html>
                 """.formatted(safeSubject, safeSchool, safeSubject, safeBody, safeSchool, year, safeSchool);
+    }
+
+    /**
+     * Sends a report card PDF as an email attachment to a single recipient.
+     * NOT @Async — called from within ReportCardEmailBlastService which is already @Async.
+     * Throws RuntimeException on failure so the blast service can track the count.
+     */
+    public void sendReportCardEmail(String to, String studentName, String schoolName,
+                                    String session, byte[] pdf, String filename) {
+        if (to == null || to.isBlank()) return;
+        log.info("Sending report card email to {} ({})", to, studentName);
+        try {
+            MimeMessage message = javaMailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(emailSender);
+            helper.setTo(to);
+            helper.setSubject("Report Card – " + session + " | " + (schoolName != null ? schoolName : "School"));
+            helper.setText(buildReportCardHtml(studentName, schoolName, session), true);
+            helper.addAttachment(filename, new ByteArrayResource(pdf), "application/pdf");
+            javaMailSender.send(message);
+            log.info("Report card email sent to {}", to);
+        } catch (MessagingException e) {
+            log.error("MessagingException sending report card to {}: {}", to, e.getMessage(), e);
+            throw new RuntimeException("Email failed for " + to, e);
+        } catch (MailException e) {
+            log.error("MailException sending report card to {}: {}", to, e.getMessage(), e);
+            throw new RuntimeException("Email failed for " + to, e);
+        }
+    }
+
+    private String buildReportCardHtml(String studentName, String schoolName, String session) {
+        String safe = (studentName != null && !studentName.isBlank()) ? studentName : "Student";
+        String sn   = (schoolName  != null && !schoolName.isBlank())  ? schoolName  : "School";
+        int year = LocalDate.now().getYear();
+        return """
+                <!DOCTYPE html>
+                <html lang="en">
+                <head><meta charset="UTF-8"><title>Report Card</title></head>
+                <body style="margin:0;padding:0;background:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
+                  <table width="100%%" cellpadding="0" cellspacing="0" style="background:#f4f6f9;padding:32px 16px;">
+                    <tr><td align="center">
+                      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
+                        <tr>
+                          <td align="center" style="background:#1565c0;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
+                            <p style="margin:0 0 8px;font-size:36px;">&#127979;</p>
+                            <h1 style="margin:0;color:#fff;font-size:22px;font-weight:800;">%s</h1>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="background:#1976d2;padding:10px 40px;text-align:center;">
+                            <p style="margin:0;color:#fff;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700;">
+                              &#127891; Report Card &mdash; %s
+                            </p>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td style="background:#fff;padding:36px 40px;">
+                            <p style="margin:0 0 16px;font-size:15px;color:#111827;">
+                              Dear <strong>%s</strong>,
+                            </p>
+                            <p style="margin:0 0 24px;font-size:14px;color:#374151;line-height:1.8;">
+                              Your report card for the academic session <strong>%s</strong> is now available.
+                              Please find it attached as a PDF document.
+                            </p>
+                            <div style="background:#dbeafe;border-left:4px solid #1565c0;padding:14px 18px;border-radius:0 8px 8px 0;margin-bottom:28px;">
+                              <p style="margin:0;font-size:13px;color:#1e3a5f;font-weight:600;">
+                                &#128203; Open the attached PDF to view your complete report card.
+                              </p>
+                            </div>
+                            <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
+                              If you have any questions, please contact the school administration.<br><br>
+                              With regards,<br>
+                              <strong>%s</strong><br>
+                              <span style="font-size:12px;color:#9ca3af;">Administration</span>
+                            </p>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td align="center" style="background:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
+                            <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">
+                              This is an automated message. Please do not reply.
+                            </p>
+                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">
+                              &copy; %d %s. All rights reserved.
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                    </td></tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(sn, session, safe, session, sn, year, sn);
     }
 
     @Async
