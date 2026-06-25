@@ -40,8 +40,9 @@ public class AssessmentGroupService {
         Long schoolId = securityUtil.getSchoolId();
         log.info("GET assessment groups session={} class={} school={}", session, className, schoolId);
 
-        List<AssessmentGroup> groups = groupRepo
-                .findBySessionAndClassNameAndSchoolIdOrderByDisplayOrderAsc(session, className, schoolId);
+        List<AssessmentGroup> groups = (className == null || className.isBlank())
+                ? groupRepo.findBySessionAndSchoolIdOrderByDisplayOrderAsc(session, schoolId)
+                : groupRepo.findBySessionAndClassNameAndSchoolIdOrderByDisplayOrderAsc(session, className, schoolId);
 
         return groups.stream()
                 .map(g -> toDTO(g, schoolId))
