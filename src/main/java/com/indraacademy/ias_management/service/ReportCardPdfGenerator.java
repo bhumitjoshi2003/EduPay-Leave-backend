@@ -46,6 +46,13 @@ public class ReportCardPdfGenerator {
     @Value("${frontend.url:https://edunexify.co.in}")
     private String frontendUrl;
 
+    /**
+     * Same directory SchoolService writes logos to.
+     * Relative paths like /uploads/school-logos/1.png are resolved against this.
+     */
+    @Value("${school.logo.directory:./uploads/school-logos}")
+    private String logoDirectory;
+
     // ── Document palette ───────────────────────────────────────────────────
     private static final Color WHITE       = Color.WHITE;
     private static final Color BLACK       = Color.BLACK;
@@ -334,13 +341,22 @@ public class ReportCardPdfGenerator {
     }
 
     /**
-     * Attempts to load an image from a URL or file path.
-     * Returns null silently if the logo cannot be loaded (missing, network error, unsupported format).
+     * Loads the school logo for embedding in the PDF.
+     *
+     * Two cases:
+     *  1. Full HTTP/HTTPS URL  — fetched over the network (e.g. external CDN).
+     *  2. Relative path        — e.g. "/uploads/school-logos/1.png" as stored by SchoolService.
+     *                            Resolved against the logoDirectory on the local filesystem;
+     *                            this is the same directory SchoolService writes to, so the
+     *                            file is always present if the path is non-null.
+     *
+     * Returns null silently on any error so the header degrades gracefully (2-column layout).
      */
     private Image loadLogoImage(String logoUrl) {
         if (logoUrl == null || logoUrl.isBlank()) return null;
         try {
             if (logoUrl.startsWith("http://") || logoUrl.startsWith("https://")) {
+                // ── Remote URL ────────────────────────────────────────────────
                 java.net.URL url = new java.net.URL(logoUrl);
                 java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
                 conn.setConnectTimeout(3000);
@@ -350,8 +366,21 @@ public class ReportCardPdfGenerator {
                     byte[] bytes = conn.getInputStream().readAllBytes();
                     return Image.getInstance(bytes);
                 }
+                log.debug("School logo HTTP {} for URL: {}", conn.getResponseCode(), logoUrl);
             } else {
-                return Image.getInstance(logoUrl);
+                // ── Relative path stored by SchoolService ─────────────────────
+                // logoUrl is like "/uploads/school-logos/1.png"
+                // Extract just the filename and resolve it against logoDirectory.
+                String filename = logoUrl.substring(logoUrl.lastIndexOf('/') + 1);
+                java.nio.file.Path filePath = java.nio.file.Paths.get(logoDirectory)
+                        .toAbsolutePath()
+                        .resolve(filename)
+                        .normalize();
+                if (java.nio.file.Files.exists(filePath)) {
+                    byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
+                    return Image.getInstance(bytes);
+                }
+                log.debug("School logo file not found at: {}", filePath);
             }
         } catch (Exception e) {
             log.debug("School logo could not be loaded ({}): {}", logoUrl, e.getMessage());
