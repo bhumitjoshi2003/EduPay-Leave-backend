@@ -120,6 +120,8 @@ public class ReportCardPdfGenerator {
         String  footerText      = "";
         boolean showCgpa        = true;
         boolean showGradePoints = false;
+        String  layoutStyle     = "CLASSIC"; // "CLASSIC" | "WARM_ELEGANCE" | "NAVY_SCHOLAR"
+        String  schoolMotto     = "";        // shown in new layout headers
     }
 
     private BrandingConfig parseBranding(ReportCardTemplateDTO template) {
@@ -138,6 +140,8 @@ public class ReportCardPdfGenerator {
             cfg.watermarkText   = (String) map.getOrDefault("watermarkText", "");
             cfg.watermarkType   = (String) map.getOrDefault("watermarkType", "TEXT");
             cfg.footerText      = (String) map.getOrDefault("footerText", "");
+            cfg.layoutStyle     = (String) map.getOrDefault("layoutStyle", "CLASSIC");
+            cfg.schoolMotto     = (String) map.getOrDefault("schoolMotto", "");
 
             Object sc  = map.get("showCgpa");
             if (sc  instanceof Boolean) cfg.showCgpa        = (Boolean) sc;
@@ -145,6 +149,10 @@ public class ReportCardPdfGenerator {
             if (sgp instanceof Boolean) cfg.showGradePoints = (Boolean) sgp;
         } catch (Exception ignored) {}
         return cfg;
+    }
+
+    private boolean isNewLayout(BrandingConfig branding) {
+        return "WARM_ELEGANCE".equals(branding.layoutStyle) || "NAVY_SCHOLAR".equals(branding.layoutStyle);
     }
 
     private static Color hexToColor(String hex) {
@@ -318,8 +326,15 @@ public class ReportCardPdfGenerator {
                 divLine.setMinimumHeight(0);
                 divider.addCell(divLine);
                 doc.add(divider);
+                addDocTitleBand(doc, data, branding);
                 return;
             }
+        }
+
+        // New layout: elegant centered header for WARM_ELEGANCE / NAVY_SCHOLAR
+        if (isNewLayout(branding)) {
+            addElegantHeader(doc, data, branding);
+            return;
         }
 
         // 1. Thin colored top stripe
@@ -336,12 +351,13 @@ public class ReportCardPdfGenerator {
         // 2. Try to load the school logo
         Image logoImage = loadLogoImage(data.getSchoolLogoUrl());
 
-        // 3. Header table — 3 cols with logo, or 2 cols without
+        // 3. Header table — 2 cols with logo, or 1 col without
+        //    (the "REPORT CARD" label is now in the full-width title band below)
         PdfPTable header;
         if (logoImage != null) {
-            header = new PdfPTable(new float[]{0.8f, 3f, 1.4f});
+            header = new PdfPTable(new float[]{0.8f, 4.4f});
         } else {
-            header = new PdfPTable(new float[]{3f, 1.4f});
+            header = new PdfPTable(1);
         }
         header.setWidthPercentage(100);
         header.setSpacingAfter(10);
@@ -410,30 +426,240 @@ public class ReportCardPdfGenerator {
             center.addElement(contactPara);
         }
         header.addCell(center);
-
-        // Right: bordered "REPORT CARD" + session label
-        PdfPCell right = new PdfPCell();
-        right.setBackgroundColor(WHITE);
-        right.setBorder(Rectangle.BOX);
-        right.setBorderColor(branding.primary);
-        right.setBorderWidth(1.5f);
-        right.setPadding(10);
-        right.setHorizontalAlignment(Element.ALIGN_CENTER);
-        right.setVerticalAlignment(Element.ALIGN_MIDDLE);
-
-        Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 11, branding.primary);
-        Paragraph rcLabel = new Paragraph("REPORT CARD", rcFont);
-        rcLabel.setAlignment(Element.ALIGN_CENTER);
-        rcLabel.setSpacingAfter(3);
-        right.addElement(rcLabel);
-
-        if (data.getSession() != null) {
-            Paragraph sess = new Paragraph(data.getSession(), F_SESSION);
-            sess.setAlignment(Element.ALIGN_CENTER);
-            right.addElement(sess);
-        }
-        header.addCell(right);
         doc.add(header);
+
+        // Full-width document title band below the school info
+        addDocTitleBand(doc, data, branding);
+    }
+
+    /**
+     * Full-width colored band that unambiguously identifies the document.
+     * Shows "REPORT CARD" in large white text, with the academic session and
+     * exam/term name (e.g. "Half Yearly") on the line below.
+     * Rendered after both the custom header image and the auto-generated header.
+     */
+    private void addDocTitleBand(Document doc, ReportCardDataDTO data,
+                                  BrandingConfig branding) throws DocumentException {
+        String layout = branding.layoutStyle;
+
+        if ("WARM_ELEGANCE".equals(layout)) {
+            // Double horizontal rule + widely-spaced "R E P O R T  C A R D"
+            addHRule(doc, branding.primary, 4);
+            Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 13, TEXT_DARK);
+            Paragraph rcTitle = new Paragraph("R E P O R T     C A R D", rcFont);
+            rcTitle.setAlignment(Element.ALIGN_CENTER);
+            rcTitle.setSpacingBefore(5);
+            rcTitle.setSpacingAfter(3);
+            doc.add(rcTitle);
+            // Session line
+            String session = buildSessionLine(data);
+            if (!session.isBlank()) {
+                Font sessionFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.5f, TEXT_MID);
+                Paragraph sessionPara = new Paragraph(session, sessionFont);
+                sessionPara.setAlignment(Element.ALIGN_CENTER);
+                sessionPara.setSpacingAfter(5);
+                doc.add(sessionPara);
+            }
+            addHRule(doc, branding.primary, 8);
+            return;
+        }
+
+        if ("NAVY_SCHOLAR".equals(layout)) {
+            // Simple separator + large "Report Card" title + underline + session in small caps
+            addHRule(doc, new Color(200, 200, 200), 6);
+            Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 22, branding.primary);
+            Paragraph rcTitle = new Paragraph("Report Card", rcFont);
+            rcTitle.setAlignment(Element.ALIGN_CENTER);
+            rcTitle.setSpacingBefore(4);
+            rcTitle.setSpacingAfter(2);
+            doc.add(rcTitle);
+            addHRuleCentered(doc, branding.primary, 4);
+            String session = buildSessionLine(data);
+            if (!session.isBlank()) {
+                Font sessionFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7.5f, new Color(192, 57, 43));
+                Paragraph sessionPara = new Paragraph(session.toUpperCase(), sessionFont);
+                sessionPara.setAlignment(Element.ALIGN_CENTER);
+                sessionPara.setSpacingAfter(10);
+                doc.add(sessionPara);
+            }
+            return;
+        }
+
+        // CLASSIC — solid colored band (original behavior)
+        PdfPTable band = new PdfPTable(1);
+        band.setWidthPercentage(100);
+        band.setSpacingAfter(8);
+
+        PdfPCell cell = new PdfPCell();
+        cell.setBackgroundColor(branding.primary);
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPaddingTop(9);
+        cell.setPaddingBottom(9);
+        cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+
+        Font titleFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 15, WHITE);
+        Paragraph title = new Paragraph("REPORT CARD", titleFont);
+        title.setAlignment(Element.ALIGN_CENTER);
+        title.setSpacingAfter(3);
+        cell.addElement(title);
+
+        String session = buildSessionLine(data);
+        if (!session.isBlank()) {
+            Font metaFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 9, new Color(210, 220, 230));
+            Paragraph metaPara = new Paragraph(session, metaFont);
+            metaPara.setAlignment(Element.ALIGN_CENTER);
+            cell.addElement(metaPara);
+        }
+
+        band.addCell(cell);
+        doc.add(band);
+    }
+
+    private String buildSessionLine(ReportCardDataDTO data) {
+        StringBuilder meta = new StringBuilder();
+        if (data.getSession() != null && !data.getSession().isBlank())
+            meta.append("Academic Session: ").append(data.getSession());
+        if (data.getWeightedResult() != null
+                && data.getWeightedResult().getGroupName() != null
+                && !data.getWeightedResult().getGroupName().isBlank()) {
+            if (meta.length() > 0) meta.append("   \u2022   ");
+            meta.append(data.getWeightedResult().getGroupName());
+        }
+        return meta.toString();
+    }
+
+    private void addHRule(Document doc, Color color, float spacingAfter) throws DocumentException {
+        PdfPTable rule = new PdfPTable(1);
+        rule.setWidthPercentage(100);
+        rule.setSpacingAfter(spacingAfter);
+        PdfPCell c = new PdfPCell(new Phrase(" "));
+        c.setBorder(Rectangle.BOTTOM);
+        c.setBorderColor(color);
+        c.setBorderWidthBottom(1f);
+        c.setMinimumHeight(0);
+        c.setPadding(0);
+        rule.addCell(c);
+        doc.add(rule);
+    }
+
+    private void addHRuleCentered(Document doc, Color color, float spacingAfter) throws DocumentException {
+        PdfPTable rule = new PdfPTable(new float[]{1f, 2f, 1f});
+        rule.setWidthPercentage(100);
+        rule.setSpacingAfter(spacingAfter);
+        rule.addCell(emptyCell());
+        PdfPCell c = new PdfPCell(new Phrase(" "));
+        c.setBorder(Rectangle.BOTTOM);
+        c.setBorderColor(color);
+        c.setBorderWidthBottom(2f);
+        c.setMinimumHeight(0);
+        c.setPadding(0);
+        rule.addCell(c);
+        rule.addCell(emptyCell());
+        doc.add(rule);
+    }
+
+    /**
+     * Elegant centered header for WARM_ELEGANCE and NAVY_SCHOLAR layouts.
+     * Renders: [logo centered] → [school name large centered] → [motto italic] → [affiliation] → [title band]
+     */
+    private void addElegantHeader(Document doc, ReportCardDataDTO data,
+                                   BrandingConfig branding) throws DocumentException {
+        // Logo — centered above school name
+        Image logoImage = loadLogoImage(data.getSchoolLogoUrl());
+        if (logoImage != null) {
+            logoImage.scaleToFit(70, 70);
+            logoImage.setAlignment(Image.ALIGN_CENTER);
+            PdfPTable logoTable = new PdfPTable(1);
+            logoTable.setWidthPercentage(100);
+            logoTable.setSpacingAfter(4);
+            PdfPCell logoCell = new PdfPCell(logoImage, false);
+            logoCell.setBorder(Rectangle.NO_BORDER);
+            logoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+            logoCell.setPaddingTop(12);
+            logoCell.setPaddingBottom(4);
+            logoTable.addCell(logoCell);
+            doc.add(logoTable);
+        } else {
+            // Initials monogram in a circle (text fallback)
+            String name = safe(data.getSchoolName(), "School");
+            String[] words = name.trim().split("\\s+");
+            String initials = words.length >= 2
+                    ? ("" + words[0].charAt(0) + words[1].charAt(0)).toUpperCase()
+                    : name.substring(0, Math.min(2, name.length())).toUpperCase();
+            Font initialsFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 22, branding.primary);
+            PdfPTable logoTable = new PdfPTable(1);
+            logoTable.setWidthPercentage(100);
+            logoTable.setSpacingAfter(4);
+            PdfPCell initCell = new PdfPCell(new Phrase(initials, initialsFont));
+            initCell.setBorder(Rectangle.BOX);
+            initCell.setBorderColor(branding.primary);
+            initCell.setBorderWidth(1.5f);
+            initCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+            initCell.setFixedHeight(50f);
+            initCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+            initCell.setPaddingTop(12);
+            // make it look more like a circle by matching width = height
+            logoTable.setTotalWidth(50f);
+            logoTable.setLockedWidth(false);
+            initCell.setPaddingLeft(10);
+            initCell.setPaddingRight(10);
+            logoTable.addCell(initCell);
+            // Just add the initials text centered — circle drawing requires PdfContentByte
+            PdfPTable monoTable = new PdfPTable(3);
+            monoTable.setWidthPercentage(100);
+            monoTable.setSpacingAfter(4);
+            monoTable.addCell(emptyCell());
+            PdfPCell mono = new PdfPCell(new Phrase(initials, initialsFont));
+            mono.setBorder(Rectangle.BOX);
+            mono.setBorderColor(branding.primary);
+            mono.setBorderWidth(1.5f);
+            mono.setHorizontalAlignment(Element.ALIGN_CENTER);
+            mono.setVerticalAlignment(Element.ALIGN_MIDDLE);
+            mono.setFixedHeight(52f);
+            mono.setPadding(6);
+            monoTable.addCell(mono);
+            monoTable.addCell(emptyCell());
+            doc.add(monoTable);
+        }
+
+        // School name — large, uppercase, primary color
+        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 19, branding.primary);
+        Paragraph schoolName = new Paragraph(
+                safe(data.getSchoolName(), "School Name").toUpperCase(), schoolNameFont);
+        schoolName.setAlignment(Element.ALIGN_CENTER);
+        schoolName.setSpacingAfter(3);
+        doc.add(schoolName);
+
+        // Motto (italic, gold/crimson depending on layout)
+        if (branding.schoolMotto != null && !branding.schoolMotto.isBlank()) {
+            Color mottoColor = "WARM_ELEGANCE".equals(branding.layoutStyle)
+                    ? new Color(154, 122, 26)   // gold
+                    : new Color(192, 57, 43);   // crimson
+            Font mottoFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 9, mottoColor);
+            Paragraph motto = new Paragraph(branding.schoolMotto, mottoFont);
+            motto.setAlignment(Element.ALIGN_CENTER);
+            motto.setSpacingAfter(3);
+            doc.add(motto);
+        }
+
+        // Affiliation + address
+        StringBuilder metaLine = new StringBuilder();
+        if (data.getAffiliationNumber() != null && !data.getAffiliationNumber().isBlank())
+            metaLine.append("Affiliation No. ").append(data.getAffiliationNumber());
+        if (data.getSchoolAddress() != null && !data.getSchoolAddress().isBlank()) {
+            if (metaLine.length() > 0) metaLine.append("  \u2022  ");
+            metaLine.append(data.getSchoolAddress());
+        }
+        if (metaLine.length() > 0) {
+            Font metaFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7.5f, TEXT_MID);
+            Paragraph meta = new Paragraph(metaLine.toString(), metaFont);
+            meta.setAlignment(Element.ALIGN_CENTER);
+            meta.setSpacingAfter(6);
+            doc.add(meta);
+        }
+
+        // Layout-specific title band
+        addDocTitleBand(doc, data, branding);
     }
 
     /**
@@ -839,6 +1065,7 @@ public class ReportCardPdfGenerator {
 
     // ── ASSESSMENT_SUMMARY ────────────────────────────────────────────────
     // Compact bordered summary table — no colored KPI blocks.
+    // New layouts (WARM_ELEGANCE / NAVY_SCHOLAR): large-number KPI row.
 
     private void addAssessmentSummary(Document doc, ReportCardDataDTO data,
                                        BrandingConfig branding) throws DocumentException {
@@ -848,45 +1075,88 @@ public class ReportCardPdfGenerator {
         doc.add(sectionTitleBar("ASSESSMENT SUMMARY", branding.primary));
 
         boolean showCgpa = branding.showCgpa && data.getCgpa() != null;
-        float[] widths = showCgpa ? new float[]{2f, 1f, 1f, 1f} : new float[]{2f, 1f, 1f};
-
-        PdfPTable summaryTable = new PdfPTable(widths);
-        summaryTable.setWidthPercentage(100);
-        summaryTable.setSpacingAfter(4);
-
-        // Header row
-        summaryTable.addCell(thCell("Overall Percentage", branding.primary));
-        summaryTable.addCell(thCellCenter("Grade", branding.primary));
-        summaryTable.addCell(thCellCenter("Class Rank", branding.primary));
-        if (showCgpa) summaryTable.addCell(thCellCenter("CGPA", branding.primary));
-
-        // Data row
         String pctStr = DF1.format(wr.getWeightedPercentage()) + "%";
-        PdfPCell pctCell = new PdfPCell(
-            new Phrase(pctStr, FontFactory.getFont(FontFactory.TIMES_BOLD, 12, branding.primary)));
-        pctCell.setBorderColor(BORDER_GRAY);
-        pctCell.setPadding(8);
-        summaryTable.addCell(pctCell);
-
-        String grade = gradeFromPct(wr.getWeightedPercentage(), data.getGradingSystem());
-        PdfPCell gradeCell = new PdfPCell(new Phrase(grade, gradeFont(wr.getWeightedPercentage())));
-        gradeCell.setBorderColor(BORDER_GRAY);
-        gradeCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-        gradeCell.setPadding(8);
-        summaryTable.addCell(gradeCell);
-
+        String grade  = gradeFromPct(wr.getWeightedPercentage(), data.getGradingSystem());
         String rankStr = wr.getRank() > 0 ? String.valueOf(wr.getRank()) : "—";
-        summaryTable.addCell(tdCellCenter(rankStr, false));
 
-        if (showCgpa) {
-            PdfPCell cgpaCell = new PdfPCell(
-                new Phrase(DF1.format(data.getCgpa()), F_BODY_BOLD));
-            cgpaCell.setBorderColor(BORDER_GRAY);
-            cgpaCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-            cgpaCell.setPadding(8);
-            summaryTable.addCell(cgpaCell);
+        if (isNewLayout(branding)) {
+            // ── Large-number KPI row ──────────────────────────────────────
+            // Columns: Percentage | Grade | Rank [| CGPA]
+            int cols = showCgpa ? 4 : 3;
+            PdfPTable kpiTable = new PdfPTable(cols);
+            kpiTable.setWidthPercentage(100);
+            kpiTable.setSpacingAfter(6);
+
+            Font bigFont   = FontFactory.getFont(FontFactory.TIMES_BOLD, 20, branding.primary);
+            Font labelFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8, new Color(100, 100, 100));
+
+            // helper: one KPI cell (big number above, small label below, right-side divider except last)
+            String[] labels = showCgpa
+                    ? new String[]{"Overall Percentage", "Grade", "Class Rank", "CGPA"}
+                    : new String[]{"Overall Percentage", "Grade", "Class Rank"};
+            String[] values = showCgpa
+                    ? new String[]{pctStr, grade, rankStr, DF1.format(data.getCgpa())}
+                    : new String[]{pctStr, grade, rankStr};
+
+            for (int i = 0; i < cols; i++) {
+                PdfPCell kpi = new PdfPCell();
+                kpi.setBorder(Rectangle.BOX);
+                kpi.setBorderColor(BORDER_GRAY);
+                kpi.setPadding(10);
+                kpi.setHorizontalAlignment(Element.ALIGN_CENTER);
+
+                Paragraph bigVal = new Paragraph(values[i], bigFont);
+                bigVal.setAlignment(Element.ALIGN_CENTER);
+                bigVal.setSpacingAfter(3);
+                kpi.addElement(bigVal);
+
+                Paragraph lbl = new Paragraph(labels[i].toUpperCase(), labelFont);
+                lbl.setAlignment(Element.ALIGN_CENTER);
+                kpi.addElement(lbl);
+
+                kpiTable.addCell(kpi);
+            }
+            doc.add(kpiTable);
+
+        } else {
+            // ── Classic compact table ─────────────────────────────────────
+            float[] widths = showCgpa ? new float[]{2f, 1f, 1f, 1f} : new float[]{2f, 1f, 1f};
+
+            PdfPTable summaryTable = new PdfPTable(widths);
+            summaryTable.setWidthPercentage(100);
+            summaryTable.setSpacingAfter(4);
+
+            // Header row
+            summaryTable.addCell(thCell("Overall Percentage", branding.primary));
+            summaryTable.addCell(thCellCenter("Grade", branding.primary));
+            summaryTable.addCell(thCellCenter("Class Rank", branding.primary));
+            if (showCgpa) summaryTable.addCell(thCellCenter("CGPA", branding.primary));
+
+            // Data row
+            PdfPCell pctCell = new PdfPCell(
+                new Phrase(pctStr, FontFactory.getFont(FontFactory.TIMES_BOLD, 12, branding.primary)));
+            pctCell.setBorderColor(BORDER_GRAY);
+            pctCell.setPadding(8);
+            summaryTable.addCell(pctCell);
+
+            PdfPCell gradeCell = new PdfPCell(new Phrase(grade, gradeFont(wr.getWeightedPercentage())));
+            gradeCell.setBorderColor(BORDER_GRAY);
+            gradeCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+            gradeCell.setPadding(8);
+            summaryTable.addCell(gradeCell);
+
+            summaryTable.addCell(tdCellCenter(rankStr, false));
+
+            if (showCgpa) {
+                PdfPCell cgpaCell = new PdfPCell(
+                    new Phrase(DF1.format(data.getCgpa()), F_BODY_BOLD));
+                cgpaCell.setBorderColor(BORDER_GRAY);
+                cgpaCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                cgpaCell.setPadding(8);
+                summaryTable.addCell(cgpaCell);
+            }
+            doc.add(summaryTable);
         }
-        doc.add(summaryTable);
     }
 
     // ── ATTENDANCE ────────────────────────────────────────────────────────
@@ -1010,6 +1280,7 @@ public class ReportCardPdfGenerator {
 
     // ── PROMOTION_STATUS ──────────────────────────────────────────────────
     // Centered stamp-style badge — mirrors Angular's rc-result-stamp.
+    // New layouts: circular/oval badge with "PASSED WITH [GRADE] DISTINCTION".
 
     private void addPromotionStatus(Document doc, ReportCardDataDTO data,
                                      BrandingConfig branding) throws DocumentException {
@@ -1019,39 +1290,97 @@ public class ReportCardPdfGenerator {
         doc.add(sectionTitleBar("RESULT", branding.primary));
 
         boolean pass = wr.getWeightedPercentage() >= 33.0;
-        Color resultColor = pass ? PASS_COLOR : FAIL_COLOR;
-
-        // 3-column layout: spacer | stamp | spacer (stamp is centered)
-        PdfPTable outer = new PdfPTable(new float[]{1.2f, 1.6f, 1.2f});
-        outer.setWidthPercentage(100);
-        outer.setSpacingAfter(8);
-        outer.addCell(emptyCell());
-
-        // Stamp cell — bordered box with verdict + percentage + grade
-        PdfPCell stampCell = new PdfPCell();
-        stampCell.setBorder(Rectangle.BOX);
-        stampCell.setBorderColor(resultColor);
-        stampCell.setBorderWidth(1.5f);
-        stampCell.setPadding(10);
-        stampCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-        stampCell.setBackgroundColor(WHITE);
-
-        Font verdictFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 20, resultColor);
-        Paragraph verdictPara = new Paragraph(pass ? "PASS" : "FAIL", verdictFont);
-        verdictPara.setAlignment(Element.ALIGN_CENTER);
-        verdictPara.setSpacingAfter(3);
-        stampCell.addElement(verdictPara);
-
+        Color resultColor = pass ? branding.primary : FAIL_COLOR;
         String grade = gradeFromPct(wr.getWeightedPercentage(), data.getGradingSystem());
-        String metaText = DF1.format(wr.getWeightedPercentage()) + "%  \u2022  " + grade;
-        Font metaFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 9, resultColor);
-        Paragraph metaPara = new Paragraph(metaText, metaFont);
-        metaPara.setAlignment(Element.ALIGN_CENTER);
-        stampCell.addElement(metaPara);
+        String pctStr = DF1.format(wr.getWeightedPercentage()) + "%";
 
-        outer.addCell(stampCell);
-        outer.addCell(emptyCell());
-        doc.add(outer);
+        if (isNewLayout(branding)) {
+            // ── Circular-style badge (oval border, centered, multi-line) ──
+            // OpenPDF has no border-radius, so we use a tight bordered cell
+            // with generous padding to approximate a rounded badge feel.
+            PdfPTable outer = new PdfPTable(new float[]{1.5f, 2f, 1.5f});
+            outer.setWidthPercentage(100);
+            outer.setSpacingAfter(10);
+            outer.addCell(emptyCell());
+
+            PdfPCell badge = new PdfPCell();
+            badge.setBorder(Rectangle.BOX);
+            badge.setBorderColor(resultColor);
+            badge.setBorderWidth(2f);
+            badge.setPaddingTop(16);
+            badge.setPaddingBottom(16);
+            badge.setPaddingLeft(12);
+            badge.setPaddingRight(12);
+            badge.setHorizontalAlignment(Element.ALIGN_CENTER);
+            badge.setBackgroundColor(WHITE);
+
+            Font tinyFont    = FontFactory.getFont(FontFactory.TIMES_BOLD, 8, resultColor);
+            Font gradeFont2  = FontFactory.getFont(FontFactory.TIMES_BOLD, 22, resultColor);
+            Font distFont    = FontFactory.getFont(FontFactory.TIMES_BOLD, 7, resultColor);
+
+            if (pass) {
+                Paragraph passedWith = new Paragraph("PASSED WITH", tinyFont);
+                passedWith.setAlignment(Element.ALIGN_CENTER);
+                passedWith.setSpacingAfter(1);
+                badge.addElement(passedWith);
+
+                Paragraph gradePara = new Paragraph(grade, gradeFont2);
+                gradePara.setAlignment(Element.ALIGN_CENTER);
+                gradePara.setSpacingAfter(1);
+                badge.addElement(gradePara);
+
+                Paragraph distinction = new Paragraph("DISTINCTION", distFont);
+                distinction.setAlignment(Element.ALIGN_CENTER);
+                distinction.setSpacingAfter(5);
+                badge.addElement(distinction);
+            } else {
+                Font failBig = FontFactory.getFont(FontFactory.TIMES_BOLD, 20, FAIL_COLOR);
+                Paragraph failPara = new Paragraph("FAIL", failBig);
+                failPara.setAlignment(Element.ALIGN_CENTER);
+                failPara.setSpacingAfter(5);
+                badge.addElement(failPara);
+            }
+
+            Font pctSmall = FontFactory.getFont(FontFactory.TIMES_ITALIC, 9, new Color(80, 80, 80));
+            Paragraph pctPara = new Paragraph(pctStr, pctSmall);
+            pctPara.setAlignment(Element.ALIGN_CENTER);
+            badge.addElement(pctPara);
+
+            outer.addCell(badge);
+            outer.addCell(emptyCell());
+            doc.add(outer);
+
+        } else {
+            // ── Classic rectangular stamp ─────────────────────────────────
+            PdfPTable outer = new PdfPTable(new float[]{1.2f, 1.6f, 1.2f});
+            outer.setWidthPercentage(100);
+            outer.setSpacingAfter(8);
+            outer.addCell(emptyCell());
+
+            PdfPCell stampCell = new PdfPCell();
+            stampCell.setBorder(Rectangle.BOX);
+            stampCell.setBorderColor(resultColor);
+            stampCell.setBorderWidth(1.5f);
+            stampCell.setPadding(10);
+            stampCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+            stampCell.setBackgroundColor(WHITE);
+
+            Font verdictFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 20, resultColor);
+            Paragraph verdictPara = new Paragraph(pass ? "PASS" : "FAIL", verdictFont);
+            verdictPara.setAlignment(Element.ALIGN_CENTER);
+            verdictPara.setSpacingAfter(3);
+            stampCell.addElement(verdictPara);
+
+            String metaText = pctStr + "  \u2022  " + grade;
+            Font metaFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 9, resultColor);
+            Paragraph metaPara = new Paragraph(metaText, metaFont);
+            metaPara.setAlignment(Element.ALIGN_CENTER);
+            stampCell.addElement(metaPara);
+
+            outer.addCell(stampCell);
+            outer.addCell(emptyCell());
+            doc.add(outer);
+        }
     }
 
     // ── SIGNATURES ────────────────────────────────────────────────────────
