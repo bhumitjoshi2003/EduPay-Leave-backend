@@ -11,6 +11,7 @@ public class ReportCardDataDTO {
     private String studentId;
     private String studentName;
     private String className;
+    private String sectionName;
     private String rollNumber;
     private String session;
     private String fatherName;
@@ -25,6 +26,10 @@ public class ReportCardDataDTO {
     private String schoolPhone;
     private String schoolEmail;
     private String affiliationNumber;
+    /** Board type: CBSE, ICSE, STATE, OTHER — shown as subtitle in school header */
+    private String boardType;
+    /** Custom header image URL — when set, replaces the auto-generated school header in PDFs and web view. */
+    private String reportCardHeaderImageUrl;
 
     // ── Template ──────────────────────────────────────────────────────────
     private ReportCardTemplateDTO template;
@@ -67,6 +72,9 @@ public class ReportCardDataDTO {
     public String getClassName() { return className; }
     public void setClassName(String className) { this.className = className; }
 
+    public String getSectionName() { return sectionName; }
+    public void setSectionName(String sectionName) { this.sectionName = sectionName; }
+
     public String getRollNumber() { return rollNumber; }
     public void setRollNumber(String rollNumber) { this.rollNumber = rollNumber; }
 
@@ -102,6 +110,12 @@ public class ReportCardDataDTO {
 
     public String getAffiliationNumber() { return affiliationNumber; }
     public void setAffiliationNumber(String affiliationNumber) { this.affiliationNumber = affiliationNumber; }
+
+    public String getBoardType() { return boardType; }
+    public void setBoardType(String boardType) { this.boardType = boardType; }
+
+    public String getReportCardHeaderImageUrl() { return reportCardHeaderImageUrl; }
+    public void setReportCardHeaderImageUrl(String reportCardHeaderImageUrl) { this.reportCardHeaderImageUrl = reportCardHeaderImageUrl; }
 
     public ReportCardTemplateDTO getTemplate() { return template; }
     public void setTemplate(ReportCardTemplateDTO template) { this.template = template; }

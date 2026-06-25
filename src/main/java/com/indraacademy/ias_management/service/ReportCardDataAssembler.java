@@ -80,6 +80,7 @@ public class ReportCardDataAssembler {
         dto.setStudentId(student.getStudentId());
         dto.setStudentName(student.getName());
         dto.setClassName(student.getClassName());
+        dto.setSectionName(student.getSectionName());
         dto.setSession(session);
         dto.setFatherName(student.getFatherName());
         dto.setMotherName(student.getMotherName());
@@ -94,6 +95,11 @@ public class ReportCardDataAssembler {
         dto.setSchoolAddress(school.getAddress());
         dto.setSchoolPhone(school.getPhone());
         dto.setSchoolEmail(school.getEmail());
+        if (school.getBoardType() != null) {
+            dto.setBoardType(school.getBoardType().name());
+        }
+        dto.setAffiliationNumber(school.getAffiliationNumber());
+        dto.setReportCardHeaderImageUrl(school.getReportCardHeaderImageUrl());
 
         // Template
         dto.setTemplate(templateService.getTemplate(templateId));

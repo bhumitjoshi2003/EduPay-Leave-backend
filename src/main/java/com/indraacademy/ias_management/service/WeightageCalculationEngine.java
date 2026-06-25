@@ -154,12 +154,26 @@ public class WeightageCalculationEngine {
 
         // Batch: load all marks for this student across all subject entries
         Map<Long, StudentMark> markBySubjectEntryId = Collections.emptyMap();
+        Set<Long> studentSubjectEntryIds = Collections.emptySet();
         if (!allSubjectEntryIds.isEmpty()) {
             List<StudentMark> marks = markRepo.findByStudentIdAndExamSubjectEntryIdInAndSchoolId(
                     studentId, allSubjectEntryIds, schoolId);
             markBySubjectEntryId = marks.stream()
                     .collect(Collectors.toMap(StudentMark::getExamSubjectEntryId, m -> m));
+            // Track which subject entries this student has any mark record for.
+            // If a student never took an elective, no mark record exists at all → exclude it.
+            studentSubjectEntryIds = marks.stream()
+                    .map(StudentMark::getExamSubjectEntryId)
+                    .collect(Collectors.toSet());
         }
+        final Set<Long> studentEntryIds = studentSubjectEntryIds;
+
+        // Derive the set of subject NAMES this student is enrolled in (has any mark record).
+        // This filters out elective subjects the student didn't choose.
+        final Set<String> studentEnrolledSubjects = allSubjects.stream()
+                .filter(e -> studentEntryIds.contains(e.getId()))
+                .map(ExamSubjectEntry::getSubjectName)
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
 
         // Group subjects by examConfigId
         Map<Long, List<ExamSubjectEntry>> subjectsByExam = allSubjects.stream()
@@ -190,6 +204,10 @@ public class WeightageCalculationEngine {
             double examMax = 0.0;
 
             for (ExamSubjectEntry subject : subjects) {
+                // Skip subjects the student didn't enrol in (no mark record across any exam).
+                // Core subjects always have mark records; electives not chosen by the student don't.
+                if (!studentEnrolledSubjects.contains(subject.getSubjectName())) continue;
+
                 StudentMark mark = markBySubjectEntryId.get(subject.getId());
                 Double obtained = (mark != null) ? mark.getMarksObtained() : null;
                 double obtainedVal = (obtained != null) ? obtained : 0.0;

@@ -53,6 +53,16 @@ public class ReportCardPdfGenerator {
     @Value("${school.logo.directory:./uploads/school-logos}")
     private String logoDirectory;
 
+    @Value("${school.report-card-header.directory:./uploads/report-card-headers}")
+    private String headerDirectory;
+
+    /**
+     * Same directory StudentService writes student photos to.
+     * Relative paths like /uploads/student-photos/abc.jpg are resolved against this.
+     */
+    @Value("${student.photo.directory:./uploads/student-photos}")
+    private String studentPhotoDirectory;
+
     // ── Document palette ───────────────────────────────────────────────────
     private static final Color WHITE       = Color.WHITE;
     private static final Color BLACK       = Color.BLACK;
@@ -106,6 +116,7 @@ public class ReportCardPdfGenerator {
         Color   primary         = new Color(21, 101, 192);  // default blue
         boolean showWatermark   = false;
         String  watermarkText   = "";
+        String  watermarkType   = "TEXT";   // "TEXT" or "LOGO"
         String  footerText      = "";
         boolean showCgpa        = true;
         boolean showGradePoints = false;
@@ -125,6 +136,7 @@ public class ReportCardPdfGenerator {
 
             cfg.showWatermark   = Boolean.TRUE.equals(map.get("showWatermark"));
             cfg.watermarkText   = (String) map.getOrDefault("watermarkText", "");
+            cfg.watermarkType   = (String) map.getOrDefault("watermarkType", "TEXT");
             cfg.footerText      = (String) map.getOrDefault("footerText", "");
 
             Object sc  = map.get("showCgpa");
@@ -161,9 +173,20 @@ public class ReportCardPdfGenerator {
             currentVerificationToken = data.getVerificationToken();
 
             if (branding.showWatermark) {
-                String wm = (branding.watermarkText != null && !branding.watermarkText.isBlank())
-                        ? branding.watermarkText : safe(data.getSchoolName(), "CONFIDENTIAL");
-                writer.setPageEvent(new WatermarkEvent(wm));
+                if ("LOGO".equalsIgnoreCase(branding.watermarkType)) {
+                    byte[] logoBytes = loadLogoBytes(data.getSchoolLogoUrl());
+                    if (logoBytes != null) {
+                        writer.setPageEvent(new WatermarkEvent(logoBytes));
+                    } else {
+                        // Graceful fallback: logo couldn't be loaded, use text instead
+                        String wm = safe(data.getSchoolName(), "CONFIDENTIAL");
+                        writer.setPageEvent(new WatermarkEvent(wm));
+                    }
+                } else {
+                    String wm = (branding.watermarkText != null && !branding.watermarkText.isBlank())
+                            ? branding.watermarkText : safe(data.getSchoolName(), "CONFIDENTIAL");
+                    writer.setPageEvent(new WatermarkEvent(wm));
+                }
             }
 
             document.open();
@@ -185,8 +208,20 @@ public class ReportCardPdfGenerator {
     // ── Watermark ─────────────────────────────────────────────────────────
 
     private static class WatermarkEvent extends PdfPageEventHelper {
-        private final String text;
-        WatermarkEvent(String text) { this.text = text; }
+        private final String text;        // non-null → text watermark
+        private final byte[] logoBytes;   // non-null → logo watermark
+
+        /** Text watermark constructor */
+        WatermarkEvent(String text) {
+            this.text = text;
+            this.logoBytes = null;
+        }
+
+        /** Logo watermark constructor */
+        WatermarkEvent(byte[] logoBytes) {
+            this.text = null;
+            this.logoBytes = logoBytes;
+        }
 
         @Override
         public void onEndPage(PdfWriter writer, Document document) {
@@ -194,16 +229,40 @@ public class ReportCardPdfGenerator {
                 PdfContentByte cb = writer.getDirectContentUnder();
                 cb.saveState();
                 PdfGState gs = new PdfGState();
-                gs.setFillOpacity(0.07f);
-                cb.setGState(gs);
-                cb.beginText();
-                cb.setFontAndSize(BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED), 52);
-                cb.setColorFill(new Color(180, 180, 180));
-                cb.showTextAligned(Element.ALIGN_CENTER, text,
-                        document.getPageSize().getWidth()  / 2f,
-                        document.getPageSize().getHeight() / 2f,
-                        45f);
-                cb.endText();
+
+                if (logoBytes != null) {
+                    // ── Logo watermark ────────────────────────────────────────
+                    // 12% opacity — visible enough to recognize the logo but
+                    // light enough not to obscure printed text
+                    gs.setFillOpacity(0.12f);
+                    gs.setBlendMode(PdfGState.BM_NORMAL);
+                    cb.setGState(gs);
+
+                    Image img = Image.getInstance(logoBytes);
+                    float pw = document.getPageSize().getWidth();
+                    float ph = document.getPageSize().getHeight();
+                    // Scale logo to fit 50% of the shorter page dimension (centered square)
+                    float maxSize = Math.min(pw, ph) * 0.50f;
+                    img.scaleToFit(maxSize, maxSize);
+                    float x = (pw - img.getScaledWidth())  / 2f;
+                    float y = (ph - img.getScaledHeight()) / 2f;
+                    img.setAbsolutePosition(x, y);
+                    cb.addImage(img);
+                } else {
+                    // ── Text watermark (original behavior) ───────────────────
+                    gs.setFillOpacity(0.07f);
+                    cb.setGState(gs);
+                    cb.beginText();
+                    cb.setFontAndSize(
+                            BaseFont.createFont(BaseFont.HELVETICA, BaseFont.CP1252, BaseFont.NOT_EMBEDDED), 52);
+                    cb.setColorFill(new Color(180, 180, 180));
+                    cb.showTextAligned(Element.ALIGN_CENTER, text,
+                            document.getPageSize().getWidth()  / 2f,
+                            document.getPageSize().getHeight() / 2f,
+                            45f);
+                    cb.endText();
+                }
+
                 cb.restoreState();
             } catch (Exception ignored) {}
         }
@@ -239,6 +298,30 @@ public class ReportCardPdfGenerator {
 
     private void addSchoolHeader(Document doc, ReportCardDataDTO data,
                                   BrandingConfig branding) throws DocumentException {
+        // If a custom header image has been uploaded, use it and skip auto-generation
+        if (data.getReportCardHeaderImageUrl() != null && !data.getReportCardHeaderImageUrl().isBlank()) {
+            Image headerImg = loadHeaderImage(data.getReportCardHeaderImageUrl());
+            if (headerImg != null) {
+                // Scale to full page width, preserve aspect ratio
+                float pageWidth = doc.right() - doc.left();
+                headerImg.scaleToFit(pageWidth, 150);
+                headerImg.setAlignment(Image.ALIGN_CENTER);
+                doc.add(headerImg);
+                // Thin colored divider below
+                PdfPTable divider = new PdfPTable(1);
+                divider.setWidthPercentage(100);
+                divider.setSpacingAfter(6);
+                PdfPCell divLine = new PdfPCell(new Phrase(" "));
+                divLine.setBorder(Rectangle.BOTTOM);
+                divLine.setBorderColor(branding.primary);
+                divLine.setBorderWidthBottom(2f);
+                divLine.setMinimumHeight(0);
+                divider.addCell(divLine);
+                doc.add(divider);
+                return;
+            }
+        }
+
         // 1. Thin colored top stripe
         PdfPTable stripe = new PdfPTable(1);
         stripe.setWidthPercentage(100);
@@ -290,14 +373,27 @@ public class ReportCardPdfGenerator {
         schoolName.setSpacingAfter(3);
         center.addElement(schoolName);
 
-        // School type / affiliation line — shown even when no affiliation number
-        String affLine = "";
-        if (data.getAffiliationNumber() != null && !data.getAffiliationNumber().isBlank()) {
-            affLine = "Affiliation No: " + data.getAffiliationNumber();
+        // Board type subtitle — e.g. "CBSE Affiliated"
+        if (data.getBoardType() != null && !data.getBoardType().isBlank()) {
+            String boardLabel = switch (data.getBoardType()) {
+                case "CBSE"  -> "CBSE Affiliated";
+                case "ICSE"  -> "ICSE Affiliated";
+                case "STATE" -> "State Board";
+                default      -> "";
+            };
+            if (!boardLabel.isBlank()) {
+                Font boardFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 8.5f, TEXT_MID);
+                Paragraph boardPara = new Paragraph(boardLabel, boardFont);
+                boardPara.setAlignment(Element.ALIGN_CENTER);
+                boardPara.setSpacingAfter(2);
+                center.addElement(boardPara);
+            }
         }
-        if (!affLine.isBlank()) {
+
+        // Affiliation number (when present)
+        if (data.getAffiliationNumber() != null && !data.getAffiliationNumber().isBlank()) {
             Font affFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 8, TEXT_MID);
-            Paragraph affPara = new Paragraph(affLine, affFont);
+            Paragraph affPara = new Paragraph("Affiliation No: " + data.getAffiliationNumber(), affFont);
             affPara.setAlignment(Element.ALIGN_CENTER);
             center.addElement(affPara);
         }
@@ -388,36 +484,166 @@ public class ReportCardPdfGenerator {
         return null;
     }
 
+    /**
+     * Returns the raw bytes of the school logo for use in the logo watermark.
+     * Same URL-resolution logic as loadLogoImage() but returns bytes so they can
+     * be passed into the static WatermarkEvent class.
+     */
+    private byte[] loadLogoBytes(String logoUrl) {
+        if (logoUrl == null || logoUrl.isBlank()) return null;
+        try {
+            if (logoUrl.startsWith("http://") || logoUrl.startsWith("https://")) {
+                java.net.URL url = new java.net.URL(logoUrl);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(5000);
+                conn.connect();
+                if (conn.getResponseCode() == 200) {
+                    return conn.getInputStream().readAllBytes();
+                }
+            } else {
+                String filename = logoUrl.substring(logoUrl.lastIndexOf('/') + 1);
+                java.nio.file.Path filePath = java.nio.file.Paths.get(logoDirectory)
+                        .toAbsolutePath()
+                        .resolve(filename)
+                        .normalize();
+                if (java.nio.file.Files.exists(filePath)) {
+                    return java.nio.file.Files.readAllBytes(filePath);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Logo bytes could not be loaded for watermark ({}): {}", logoUrl, e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Loads the custom report card header image.
+     * Same URL-resolution logic as loadLogoImage — handles HTTP URLs and relative (/uploads/...) paths.
+     * Returns null silently on any error so the caller can fall back to the auto-generated header.
+     */
+    private Image loadHeaderImage(String headerUrl) {
+        if (headerUrl == null || headerUrl.isBlank()) return null;
+        try {
+            if (headerUrl.startsWith("http://") || headerUrl.startsWith("https://")) {
+                java.net.URL url = new java.net.URL(headerUrl);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(5000);
+                conn.connect();
+                if (conn.getResponseCode() == 200) {
+                    byte[] bytes = conn.getInputStream().readAllBytes();
+                    return Image.getInstance(bytes);
+                }
+                log.debug("Report card header HTTP {} for URL: {}", conn.getResponseCode(), headerUrl);
+            } else {
+                String filename = headerUrl.substring(headerUrl.lastIndexOf('/') + 1);
+                java.nio.file.Path filePath = java.nio.file.Paths.get(headerDirectory)
+                        .toAbsolutePath()
+                        .resolve(filename)
+                        .normalize();
+                if (java.nio.file.Files.exists(filePath)) {
+                    byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
+                    return Image.getInstance(bytes);
+                }
+                log.debug("Report card header file not found at: {}", filePath);
+            }
+        } catch (Exception e) {
+            log.debug("Report card header image could not be loaded ({}): {}", headerUrl, e.getMessage());
+        }
+        return null;
+    }
+
     // ── STUDENT_INFO ──────────────────────────────────────────────────────
-    // Label/value pair table — label is small gray bold, value is black body.
+    // Label/value pair table with passport-size photo on the right.
 
     private void addStudentInfo(Document doc, ReportCardDataDTO data,
                                  BrandingConfig branding) throws DocumentException {
         doc.add(sectionTitleBar("STUDENT INFORMATION", branding.primary));
 
-        // 4-column table: label | value | label | value
-        PdfPTable table = new PdfPTable(new float[]{1.2f, 2f, 1.2f, 2f});
+        // Load student photo (may be null → placeholder rectangle)
+        Image studentPhoto = loadStudentPhotoImage(data.getPhotoUrl());
+
+        // 5-column table: label | value | label | value | photo (rowspan 4)
+        PdfPTable table = new PdfPTable(new float[]{1.2f, 2f, 1.2f, 2f, 1f});
         table.setWidthPercentage(100);
         table.setSpacingAfter(8);
 
-        addSiRow(table, "Name",         safe(data.getStudentName(), "—"),
-                         "Student ID",   safe(data.getStudentId(),   "—"));
-        addSiRow(table, "Class",         safe(data.getClassName(),   "—"),
-                         "Roll No.",      safe(data.getRollNumber(), "—"));
-        addSiRow(table, "Date of Birth", safe(data.getDateOfBirth(), "—"),
-                         "Session",       safe(data.getSession(),    "—"));
-        addSiRow(table, "Father's Name", safe(data.getFatherName(),  "—"),
-                         "Mother's Name", safe(data.getMotherName(), "—"));
+        // Row 1 — Name + Student ID + photo cell (rowspan 4)
+        table.addCell(siLabelCell("Name"));
+        table.addCell(siValueCell(safe(data.getStudentName(), "—")));
+        table.addCell(siLabelCell("Student ID"));
+        table.addCell(siValueCell(safe(data.getStudentId(), "—")));
+
+        // Photo cell spanning all 4 rows
+        PdfPCell photoCell = new PdfPCell();
+        photoCell.setRowspan(4);
+        photoCell.setBorderColor(BORDER_GRAY);
+        photoCell.setPadding(4);
+        photoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        photoCell.setVerticalAlignment(Element.ALIGN_TOP);
+        if (studentPhoto != null) {
+            studentPhoto.scaleToFit(56, 72);
+            photoCell.setImage(studentPhoto);
+        } else {
+            // Passport-size dashed placeholder rectangle
+            photoCell.setFixedHeight(90f);
+            photoCell.setBackgroundColor(new Color(250, 250, 250));
+        }
+        table.addCell(photoCell);
+
+        // Rows 2–4
+        String classDisplay = (data.getSectionName() != null && !data.getSectionName().isBlank())
+                ? safe(data.getClassName(), "—") + " – " + data.getSectionName()
+                : safe(data.getClassName(), "—");
+        table.addCell(siLabelCell("Class & Section"));
+        table.addCell(siValueCell(classDisplay));
+        table.addCell(siLabelCell("Session"));
+        table.addCell(siValueCell(safe(data.getSession(), "—")));
+
+        table.addCell(siLabelCell("Admission No."));
+        table.addCell(siValueCell(safe(data.getStudentId(), "—")));
+        table.addCell(siLabelCell("Date of Birth"));
+        table.addCell(siValueCell(safe(data.getDateOfBirth(), "—")));
+
+        table.addCell(siLabelCell("Father's Name"));
+        table.addCell(siValueCell(safe(data.getFatherName(), "—")));
+        table.addCell(siLabelCell("Mother's Name"));
+        table.addCell(siValueCell(safe(data.getMotherName(), "—")));
+
         doc.add(table);
     }
 
-    private void addSiRow(PdfPTable table,
-                           String label1, String value1,
-                           String label2, String value2) {
-        table.addCell(siLabelCell(label1));
-        table.addCell(siValueCell(value1));
-        table.addCell(siLabelCell(label2));
-        table.addCell(siValueCell(value2));
+    /**
+     * Loads the student photo from disk — same logic as loadLogoImage() but using
+     * studentPhotoDirectory. Paths are stored as /uploads/student-photos/abc.jpg.
+     * Returns null silently so the caller can render a placeholder instead.
+     */
+    private Image loadStudentPhotoImage(String photoUrl) {
+        if (photoUrl == null || photoUrl.isBlank()) return null;
+        try {
+            if (photoUrl.startsWith("http://") || photoUrl.startsWith("https://")) {
+                java.net.URL url = new java.net.URL(photoUrl);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(3000);
+                conn.setReadTimeout(5000);
+                conn.connect();
+                if (conn.getResponseCode() == 200) {
+                    return Image.getInstance(conn.getInputStream().readAllBytes());
+                }
+            } else {
+                String filename = photoUrl.substring(photoUrl.lastIndexOf('/') + 1);
+                java.nio.file.Path filePath = java.nio.file.Paths.get(studentPhotoDirectory)
+                        .toAbsolutePath().resolve(filename).normalize();
+                if (java.nio.file.Files.exists(filePath)) {
+                    return Image.getInstance(java.nio.file.Files.readAllBytes(filePath));
+                }
+                log.debug("Student photo file not found at: {}", filePath);
+            }
+        } catch (Exception e) {
+            log.debug("Student photo could not be loaded ({}): {}", photoUrl, e.getMessage());
+        }
+        return null;
     }
 
     private PdfPCell siLabelCell(String text) {
@@ -473,9 +699,17 @@ public class ReportCardPdfGenerator {
             table.addCell(thCellCenter("GP", branding.primary));
         }
 
-        // Data rows — no alternating background (document style)
+        // Data rows — failed subject rows get italic dark-red text
         for (WeightedGroupResultDTO.MarksTableDTO.SubjectRowDTO row : mt.getSubjectRows()) {
-            table.addCell(tdCell(row.getSubjectName(), false));
+            boolean failed = row.getWeightedPercentage() < 33.0;
+            Font subjectFont = failed
+                    ? FontFactory.getFont(FontFactory.TIMES_ITALIC, 9, FAIL_COLOR)
+                    : F_BODY;
+
+            PdfPCell subCell = new PdfPCell(new Phrase(row.getSubjectName(), subjectFont));
+            subCell.setBorderColor(BORDER_GRAY);
+            subCell.setPadding(5);
+            table.addCell(subCell);
 
             List<WeightedGroupResultDTO.MarksTableDTO.SubjectExamMarkDTO> marks = row.getExamMarks();
             for (int i = 0; i < examCount; i++) {
@@ -485,7 +719,14 @@ public class ReportCardPdfGenerator {
                     table.addCell(tdCellCenter("Ab", true));
                 } else {
                     String txt = DF0.format(mark.getObtained()) + "/" + DF0.format(mark.getMax());
-                    table.addCell(tdCellCenter(txt, false));
+                    Font markFont = failed
+                            ? FontFactory.getFont(FontFactory.TIMES_ITALIC, 9, FAIL_COLOR)
+                            : F_BODY;
+                    PdfPCell mc = new PdfPCell(new Phrase(txt, markFont));
+                    mc.setHorizontalAlignment(Element.ALIGN_CENTER);
+                    mc.setBorderColor(BORDER_GRAY);
+                    mc.setPadding(5);
+                    table.addCell(mc);
                 }
             }
 
@@ -536,6 +777,64 @@ public class ReportCardPdfGenerator {
             }
         }
         doc.add(table);
+
+        // Grade scale legend — shown for CBSE and LETTER grading systems
+        addGradeLegend(doc, data.getGradingSystem(), branding);
+    }
+
+    /** Renders a compact one-line grade scale legend below the marks table. */
+    private void addGradeLegend(Document doc, String gradingSystem,
+                                 BrandingConfig branding) throws DocumentException {
+        String[][] rows;
+        if ("CBSE".equals(gradingSystem)) {
+            rows = new String[][]{
+                {"A1","91-100","Outstanding"}, {"A2","81-90","Excellent"},
+                {"B1","71-80","Very Good"},    {"B2","61-70","Good"},
+                {"C1","51-60","Satisfactory"}, {"C2","41-50","Average"},
+                {"D", "33-40","Needs Impr."},  {"E", "0-32", "Fail"}
+            };
+        } else if ("LETTER".equals(gradingSystem)) {
+            rows = new String[][]{
+                {"A+","90-100","Outstanding"}, {"A","80-89","Excellent"},
+                {"B+","70-79","Very Good"},    {"B","60-69","Good"},
+                {"C+","50-59","Satisfactory"}, {"C","40-49","Average"},
+                {"D", "33-39","Needs Impr."},  {"F","0-32", "Fail"}
+            };
+        } else {
+            return; // PERCENTAGE — no letter grade legend needed
+        }
+
+        Font legendLabelFont = FontFactory.getFont(FontFactory.TIMES_BOLD,   6.5f, TEXT_MID);
+        Font legendBodyFont  = FontFactory.getFont(FontFactory.TIMES_ROMAN,  6.5f, TEXT_MID);
+
+        // Single-row table: "Grading Scale:" | A1 (91-100) Outstanding | A2 ... | ...
+        float[] widths = new float[rows.length + 1];
+        widths[0] = 1.4f;
+        for (int i = 1; i <= rows.length; i++) widths[i] = 1f;
+
+        PdfPTable legend = new PdfPTable(widths);
+        legend.setWidthPercentage(100);
+        legend.setSpacingAfter(4);
+
+        PdfPCell title = new PdfPCell(new Phrase("Grading Scale:", legendLabelFont));
+        title.setBorder(Rectangle.NO_BORDER);
+        title.setPaddingLeft(2);
+        title.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        legend.addCell(title);
+
+        for (String[] r : rows) {
+            Phrase p = new Phrase();
+            p.add(new Chunk(r[0] + " ", legendLabelFont));
+            p.add(new Chunk("(" + r[1] + ") ", legendBodyFont));
+            p.add(new Chunk(r[2], legendBodyFont));
+            PdfPCell cell = new PdfPCell(p);
+            cell.setBorder(Rectangle.NO_BORDER);
+            cell.setPadding(2);
+            cell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+            legend.addCell(cell);
+        }
+
+        doc.add(legend);
     }
 
     // ── ASSESSMENT_SUMMARY ────────────────────────────────────────────────
@@ -707,32 +1006,10 @@ public class ReportCardPdfGenerator {
         }
         table.addCell(cell);
         doc.add(table);
-
-        // Signature line on the right
-        PdfPTable sig = new PdfPTable(new float[]{3f, 1f});
-        sig.setWidthPercentage(100);
-        sig.setSpacingAfter(8);
-
-        PdfPCell blank = new PdfPCell(new Phrase(" "));
-        blank.setBorder(Rectangle.NO_BORDER);
-        sig.addCell(blank);
-
-        PdfPCell signCell = new PdfPCell();
-        signCell.setBorder(Rectangle.TOP);
-        signCell.setBorderColor(BORDER_GRAY);
-        signCell.setPaddingTop(4);
-        signCell.setBorderWidth(0.8f);
-        String sigLabel = title.contains("Teacher") ? "Class Teacher's Signature" : "Principal's Signature";
-        Paragraph signLabel = new Paragraph(sigLabel, F_SIGN_LABEL);
-        signLabel.setAlignment(Element.ALIGN_CENTER);
-        signCell.addElement(signLabel);
-        sig.addCell(signCell);
-        doc.add(sig);
     }
 
     // ── PROMOTION_STATUS ──────────────────────────────────────────────────
-    // Plain text row: "RESULT: PASS" or "RESULT: FAIL" — no colored badge.
-    // Mirrors Angular's .rc-result-row with .rc-result-pass / .rc-result-fail text colors.
+    // Centered stamp-style badge — mirrors Angular's rc-result-stamp.
 
     private void addPromotionStatus(Document doc, ReportCardDataDTO data,
                                      BrandingConfig branding) throws DocumentException {
@@ -742,31 +1019,39 @@ public class ReportCardPdfGenerator {
         doc.add(sectionTitleBar("RESULT", branding.primary));
 
         boolean pass = wr.getWeightedPercentage() >= 33.0;
+        Color resultColor = pass ? PASS_COLOR : FAIL_COLOR;
 
-        PdfPTable table = new PdfPTable(new float[]{1f, 2f, 1f});
-        table.setWidthPercentage(100);
-        table.setSpacingAfter(8);
+        // 3-column layout: spacer | stamp | spacer (stamp is centered)
+        PdfPTable outer = new PdfPTable(new float[]{1.2f, 1.6f, 1.2f});
+        outer.setWidthPercentage(100);
+        outer.setSpacingAfter(8);
+        outer.addCell(emptyCell());
 
-        table.addCell(emptyCell());
+        // Stamp cell — bordered box with verdict + percentage + grade
+        PdfPCell stampCell = new PdfPCell();
+        stampCell.setBorder(Rectangle.BOX);
+        stampCell.setBorderColor(resultColor);
+        stampCell.setBorderWidth(1.5f);
+        stampCell.setPadding(10);
+        stampCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        stampCell.setBackgroundColor(WHITE);
 
-        PdfPCell resultCell = new PdfPCell();
-        resultCell.setBackgroundColor(WHITE);
-        resultCell.setBorderColor(BORDER_GRAY);
-        resultCell.setPadding(12);
-        resultCell.setHorizontalAlignment(Element.ALIGN_CENTER);
+        Font verdictFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 20, resultColor);
+        Paragraph verdictPara = new Paragraph(pass ? "PASS" : "FAIL", verdictFont);
+        verdictPara.setAlignment(Element.ALIGN_CENTER);
+        verdictPara.setSpacingAfter(3);
+        stampCell.addElement(verdictPara);
 
-        Font labelFont  = FontFactory.getFont(FontFactory.TIMES_ROMAN, 10, TEXT_MID);
-        Font resultFont = FontFactory.getFont(FontFactory.TIMES_BOLD,   14, pass ? PASS_COLOR : FAIL_COLOR);
+        String grade = gradeFromPct(wr.getWeightedPercentage(), data.getGradingSystem());
+        String metaText = DF1.format(wr.getWeightedPercentage()) + "%  \u2022  " + grade;
+        Font metaFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 9, resultColor);
+        Paragraph metaPara = new Paragraph(metaText, metaFont);
+        metaPara.setAlignment(Element.ALIGN_CENTER);
+        stampCell.addElement(metaPara);
 
-        Paragraph resultPara = new Paragraph();
-        resultPara.setAlignment(Element.ALIGN_CENTER);
-        resultPara.add(new Chunk("Result:  ", labelFont));
-        resultPara.add(new Chunk(pass ? "PASS" : "FAIL", resultFont));
-        resultCell.addElement(resultPara);
-        table.addCell(resultCell);
-
-        table.addCell(emptyCell());
-        doc.add(table);
+        outer.addCell(stampCell);
+        outer.addCell(emptyCell());
+        doc.add(outer);
     }
 
     // ── SIGNATURES ────────────────────────────────────────────────────────
@@ -788,7 +1073,7 @@ public class ReportCardPdfGenerator {
         PdfPTable table = new PdfPTable(3);
         table.setWidthPercentage(100);
 
-        for (String label : new String[]{"Class Teacher", "Principal", "Parent / Guardian"}) {
+        for (String label : new String[]{"Class Teacher", "Principal"}) {
             PdfPCell cell = new PdfPCell();
             cell.setBorder(Rectangle.TOP);
             cell.setBorderColor(BORDER_GRAY);

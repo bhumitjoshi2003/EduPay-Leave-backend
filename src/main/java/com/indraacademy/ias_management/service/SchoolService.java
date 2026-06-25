@@ -57,6 +57,11 @@ public class SchoolService {
     @Value("${school.logo.directory:./uploads/school-logos}")
     private String logoDirectory;
 
+    @Value("${school.report-card-header.directory:./uploads/report-card-headers}")
+    private String headerDirectory;
+
+    private static final long MAX_HEADER_SIZE = 10L * 1024 * 1024; // 10 MB
+
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private UserRepository userRepository;
@@ -285,6 +290,7 @@ public class SchoolService {
             validateGradingSystem(req.getGradingSystem());
             school.setGradingSystem(req.getGradingSystem().toUpperCase());
         }
+        if (req.getAffiliationNumber() != null) school.setAffiliationNumber(req.getAffiliationNumber());
 
         // Staff attendance settings
         if (req.getSchoolLatitude() != null) school.setSchoolLatitude(req.getSchoolLatitude());
@@ -379,6 +385,99 @@ public class SchoolService {
             log.error("Failed to store logo for schoolId={}", schoolId, e);
             throw new RuntimeException("Could not store school logo. Please try again.", e);
         }
+    }
+
+    /**
+     * Uploads and stores a custom report card header image.
+     * When set, this image replaces the auto-generated school header in all report card PDFs and web views.
+     * The file is saved as {schoolId}.{ext} — re-uploading replaces the previous one.
+     */
+    @Transactional
+    public String uploadReportCardHeader(MultipartFile file, HttpServletRequest request) {
+        String contentType = file.getContentType();
+        if (contentType == null || !contentType.startsWith("image/")) {
+            throw new IllegalArgumentException("Only image files are allowed.");
+        }
+        if (file.getSize() > MAX_HEADER_SIZE) {
+            throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
+        }
+
+        Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        try {
+            Path storageDir = Paths.get(headerDirectory).toAbsolutePath().normalize();
+            Files.createDirectories(storageDir);
+
+            boolean isPng = "image/png".equals(contentType);
+            String ext = isPng ? "png" : "jpg";
+            String fileName = schoolId + "." + ext;
+            Path targetLocation = storageDir.resolve(fileName);
+
+            // Delete any previous header with different extension
+            Files.deleteIfExists(storageDir.resolve(schoolId + "." + (isPng ? "jpg" : "png")));
+
+            // Store as-is — no resize, user provides the exact resolution they want
+            Files.write(targetLocation, file.getBytes());
+
+            String relativeUrl = "/uploads/report-card-headers/" + fileName;
+            school.setReportCardHeaderImageUrl(relativeUrl);
+            schoolRepository.save(school);
+
+            auditService.log(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPLOAD_REPORT_CARD_HEADER",
+                    "School",
+                    String.valueOf(schoolId),
+                    null,
+                    relativeUrl,
+                    request.getRemoteAddr()
+            );
+
+            log.info("Report card header uploaded for schoolId={}: {}", schoolId, relativeUrl);
+            return relativeUrl;
+        } catch (IOException e) {
+            log.error("Failed to store report card header for schoolId={}", schoolId, e);
+            throw new RuntimeException("Could not store header image. Please try again.", e);
+        }
+    }
+
+    /**
+     * Removes the custom report card header image, reverting to the auto-generated header.
+     */
+    @Transactional
+    public void removeReportCardHeader(HttpServletRequest request) {
+        Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+
+        String oldUrl = school.getReportCardHeaderImageUrl();
+        school.setReportCardHeaderImageUrl(null);
+        schoolRepository.save(school);
+
+        // Best-effort file deletion
+        if (oldUrl != null && !oldUrl.isBlank()) {
+            try {
+                String filename = oldUrl.substring(oldUrl.lastIndexOf('/') + 1);
+                Path filePath = Paths.get(headerDirectory).toAbsolutePath().normalize().resolve(filename);
+                Files.deleteIfExists(filePath);
+            } catch (IOException e) {
+                log.warn("Could not delete report card header file for schoolId={}", schoolId, e);
+            }
+        }
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "REMOVE_REPORT_CARD_HEADER",
+                "School",
+                String.valueOf(schoolId),
+                oldUrl,
+                null,
+                request.getRemoteAddr()
+        );
     }
 
     /**

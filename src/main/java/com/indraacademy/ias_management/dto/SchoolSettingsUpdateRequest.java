@@ -24,6 +24,7 @@ public class SchoolSettingsUpdateRequest {
     private Integer academicYearStartMonth;
     private String workingDays;
     private String gradingSystem;
+    private String affiliationNumber;
 
     // Staff attendance / GPS check-in settings
     private Double schoolLatitude;
@@ -78,6 +79,9 @@ public class SchoolSettingsUpdateRequest {
 
     public String getGradingSystem() { return gradingSystem; }
     public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }
+
+    public String getAffiliationNumber() { return affiliationNumber; }
+    public void setAffiliationNumber(String affiliationNumber) { this.affiliationNumber = affiliationNumber; }
 
     public Double getSchoolLatitude() { return schoolLatitude; }
     public void setSchoolLatitude(Double schoolLatitude) { this.schoolLatitude = schoolLatitude; }

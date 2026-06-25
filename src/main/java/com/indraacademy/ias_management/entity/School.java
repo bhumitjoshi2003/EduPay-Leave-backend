@@ -111,6 +111,14 @@ public class School {
     @Column(name = "grading_system", length = 20)
     private String gradingSystem = "CBSE";
 
+    /** Board affiliation number — e.g. CBSE school number, ICSE index number. */
+    @Column(name = "affiliation_number", length = 100)
+    private String affiliationNumber;
+
+    /** Custom report card header image — when set, replaces the auto-generated header in PDFs and web view. */
+    @Column(name = "report_card_header_image_url", length = 500)
+    private String reportCardHeaderImageUrl;
+
     // ── Staff attendance / GPS check-in settings ──
 
     @Column(name = "school_latitude")
@@ -213,6 +221,12 @@ public class School {
 
     public String getGradingSystem() { return gradingSystem; }
     public void setGradingSystem(String gradingSystem) { this.gradingSystem = gradingSystem; }
+
+    public String getAffiliationNumber() { return affiliationNumber; }
+    public void setAffiliationNumber(String affiliationNumber) { this.affiliationNumber = affiliationNumber; }
+
+    public String getReportCardHeaderImageUrl() { return reportCardHeaderImageUrl; }
+    public void setReportCardHeaderImageUrl(String reportCardHeaderImageUrl) { this.reportCardHeaderImageUrl = reportCardHeaderImageUrl; }
 
     public Double getSchoolLatitude() { return schoolLatitude; }
     public void setSchoolLatitude(Double schoolLatitude) { this.schoolLatitude = schoolLatitude; }

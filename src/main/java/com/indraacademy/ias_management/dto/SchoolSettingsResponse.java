@@ -44,6 +44,8 @@ public class SchoolSettingsResponse {
     private int academicYearStartMonth;
     private String workingDays;
     private String gradingSystem;
+    private String affiliationNumber;
+    private String reportCardHeaderImageUrl;
 
     // Staff attendance settings
     private Double schoolLatitude;
@@ -80,6 +82,8 @@ public class SchoolSettingsResponse {
         r.academicYearStartMonth = school.getAcademicYearStartMonth();
         r.workingDays = school.getWorkingDays();
         r.gradingSystem = school.getGradingSystem();
+        r.affiliationNumber = school.getAffiliationNumber();
+        r.reportCardHeaderImageUrl = school.getReportCardHeaderImageUrl();
         r.schoolLatitude = school.getSchoolLatitude();
         r.schoolLongitude = school.getSchoolLongitude();
         r.geofenceRadius = school.getGeofenceRadius();
@@ -117,6 +121,8 @@ public class SchoolSettingsResponse {
     public int getAcademicYearStartMonth() { return academicYearStartMonth; }
     public String getWorkingDays() { return workingDays; }
     public String getGradingSystem() { return gradingSystem; }
+    public String getAffiliationNumber() { return affiliationNumber; }
+    public String getReportCardHeaderImageUrl() { return reportCardHeaderImageUrl; }
 
     public Double getSchoolLatitude() { return schoolLatitude; }
     public Double getSchoolLongitude() { return schoolLongitude; }

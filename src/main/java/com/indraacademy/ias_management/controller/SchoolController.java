@@ -195,6 +195,42 @@ public class SchoolController {
     }
 
     /**
+     * POST /api/school/report-card-header
+     * Upload or replace the school's report card header image.
+     * When set, it replaces the auto-generated header in all report card PDFs and web views.
+     */
+    @PostMapping("/api/school/report-card-header")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> uploadReportCardHeader(@RequestParam("file") MultipartFile file,
+                                                    HttpServletRequest request) {
+        log.info("POST /api/school/report-card-header — size={}", file.getSize());
+        try {
+            String headerUrl = schoolService.uploadReportCardHeader(file, request);
+            return ResponseEntity.ok(Map.of("headerImageUrl", headerUrl));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
+     * DELETE /api/school/report-card-header
+     * Remove the custom report card header image, reverting to auto-generated.
+     */
+    @DeleteMapping("/api/school/report-card-header")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> removeReportCardHeader(HttpServletRequest request) {
+        log.info("DELETE /api/school/report-card-header");
+        try {
+            schoolService.removeReportCardHeader(request);
+            return ResponseEntity.ok(Map.of("message", "Report card header removed successfully."));
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /**
      * PUT /api/school/razorpay
      * Update the school's Razorpay key ID and secret.
      */
