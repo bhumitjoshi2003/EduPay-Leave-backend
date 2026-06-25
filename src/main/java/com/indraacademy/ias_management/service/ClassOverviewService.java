@@ -2,10 +2,9 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.ClassOverviewDTO;
 import com.indraacademy.ias_management.dto.ReportCardTemplateDTO;
-import com.indraacademy.ias_management.entity.AssessmentGroupResult;
+import com.indraacademy.ias_management.dto.WeightedGroupResultDTO.StudentGroupResultDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
-import com.indraacademy.ias_management.repository.AssessmentGroupResultRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
@@ -27,10 +26,10 @@ public class ClassOverviewService {
     private static final Logger log = LoggerFactory.getLogger(ClassOverviewService.class);
     private static final double PASS_THRESHOLD = 33.0;
 
-    @Autowired private ReportCardTemplateService        templateService;
-    @Autowired private AssessmentGroupResultRepository  resultRepo;
-    @Autowired private StudentRepository                studentRepository;
-    @Autowired private SecurityUtil                     securityUtil;
+    @Autowired private ReportCardTemplateService    templateService;
+    @Autowired private WeightageCalculationEngine   engine;
+    @Autowired private StudentRepository            studentRepository;
+    @Autowired private SecurityUtil                 securityUtil;
 
     public ClassOverviewDTO getClassOverview(Long templateId, String session, String className) {
         Long schoolId = securityUtil.getSchoolId();
@@ -49,51 +48,32 @@ public class ClassOverviewService {
             return ClassOverviewDTO.empty(className, session, template.getName());
         }
 
-        Set<String> classStudentIds = classStudents.stream()
+        List<String> studentIds = classStudents.stream()
                 .map(Student::getStudentId)
-                .collect(Collectors.toSet());
+                .collect(Collectors.toList());
         Map<String, String> nameMap = classStudents.stream()
                 .collect(Collectors.toMap(Student::getStudentId, Student::getName));
 
-        // ── Pre-computed results (all classes, filtered to this class) ─────
-        List<AssessmentGroupResult> allGroupResults = resultRepo
-                .findByAssessmentGroupIdAndSessionOrderByWeightedScoreDesc(groupId, session);
+        // ── Compute weighted results on-the-fly and persist for caching ────
+        List<StudentGroupResultDTO> computed =
+                engine.computeAndRankForClass(studentIds, nameMap, groupId, session);
 
-        List<AssessmentGroupResult> classResults = allGroupResults.stream()
-                .filter(r -> classStudentIds.contains(r.getStudentId()))
-                .toList(); // already sorted desc
-
-        Set<String> resultStudentIds = classResults.stream()
-                .map(AssessmentGroupResult::getStudentId)
-                .collect(Collectors.toSet());
-
-        // ── Build student summaries (ranked within class) ──────────────────
+        // ── Build student summaries ────────────────────────────────────────
         List<ClassOverviewDTO.StudentSummaryDTO> students = new ArrayList<>();
-        int rank = 1;
-        for (AssessmentGroupResult r : classResults) {
-            double pct = r.getWeightedScore() != null
-                    ? round1(r.getWeightedScore().doubleValue()) : 0.0;
+        for (StudentGroupResultDTO r : computed) {
+            double pct    = round1(r.getWeightedPercentage());
             String grade  = gradeFromPct(pct, gradingSystem);
             boolean passed = pct >= PASS_THRESHOLD;
             students.add(new ClassOverviewDTO.StudentSummaryDTO(
-                    r.getStudentId(),
-                    nameMap.getOrDefault(r.getStudentId(), r.getStudentId()),
-                    pct, grade, rank++, passed));
-        }
-        // Students with no result yet — append without rank
-        for (Student s : classStudents) {
-            if (!resultStudentIds.contains(s.getStudentId())) {
-                students.add(new ClassOverviewDTO.StudentSummaryDTO(
-                        s.getStudentId(), s.getName(), 0.0, "—", 0, false));
-            }
+                    r.getStudentId(), r.getStudentName(), pct, grade, r.getRank(), passed));
         }
 
         // ── Statistics ─────────────────────────────────────────────────────
         int total     = students.size();
         int passCount = (int) students.stream().filter(ClassOverviewDTO.StudentSummaryDTO::isPassed).count();
         int failCount = total - passCount;
-        double classAvg = classResults.stream()
-                .mapToDouble(r -> r.getWeightedScore() != null ? r.getWeightedScore().doubleValue() : 0.0)
+        double classAvg = computed.stream()
+                .mapToDouble(StudentGroupResultDTO::getWeightedPercentage)
                 .average()
                 .orElse(0.0);
         classAvg = round1(classAvg);
