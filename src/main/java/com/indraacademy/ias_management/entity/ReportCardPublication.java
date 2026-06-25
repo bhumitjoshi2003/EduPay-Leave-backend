@@ -37,6 +37,10 @@ public class ReportCardPublication {
     @Column(name = "email_count", nullable = false)
     private Integer emailCount = 0;
 
+    /** Unique UUID used to generate a QR verification URL embedded in the PDF. */
+    @Column(name = "verification_token", length = 36, unique = true)
+    private String verificationToken;
+
     public Long getId()                          { return id; }
     public Long getSchoolId()                    { return schoolId; }
     public void setSchoolId(Long schoolId)       { this.schoolId = schoolId; }
@@ -54,4 +58,6 @@ public class ReportCardPublication {
     public void setEmailSentAt(LocalDateTime emailSentAt)        { this.emailSentAt = emailSentAt; }
     public Integer getEmailCount()                               { return emailCount; }
     public void setEmailCount(Integer emailCount)                { this.emailCount = emailCount; }
+    public String getVerificationToken()                         { return verificationToken; }
+    public void setVerificationToken(String verificationToken)   { this.verificationToken = verificationToken; }
 }

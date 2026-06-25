@@ -16,6 +16,8 @@ public interface ReportCardPublicationRepository extends JpaRepository<ReportCar
     boolean existsBySchoolIdAndTemplateIdAndSessionAndClassName(
             Long schoolId, Long templateId, String session, String className);
 
+    Optional<ReportCardPublication> findByVerificationToken(String verificationToken);
+
     @Transactional
     void deleteBySchoolIdAndTemplateIdAndSessionAndClassName(
             Long schoolId, Long templateId, String session, String className);

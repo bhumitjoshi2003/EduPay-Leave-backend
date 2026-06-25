@@ -51,6 +51,8 @@ public class ReportCardDataDTO {
     private String overallGrade;
     /** CGPA (0-10) computed from subject-level CBSE grade points. Null if not CBSE grading. */
     private Double cgpa;
+    /** UUID token for QR-based public verification. Null if not yet published. */
+    private String verificationToken;
 
     public ReportCardDataDTO() {}
 
@@ -127,6 +129,9 @@ public class ReportCardDataDTO {
 
     public Double getCgpa() { return cgpa; }
     public void setCgpa(Double cgpa) { this.cgpa = cgpa; }
+
+    public String getVerificationToken() { return verificationToken; }
+    public void setVerificationToken(String verificationToken) { this.verificationToken = verificationToken; }
 
     // ── Nested: CoScholasticGrade ─────────────────────────────────────────
 

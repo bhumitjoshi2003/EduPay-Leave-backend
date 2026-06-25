@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.*;
+import com.indraacademy.ias_management.dto.VerifyRcDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -164,6 +165,15 @@ public class ReportCardController {
     // ── PDF Download ──────────────────────────────────────────────────────
 
     /**
+     * Public QR verification endpoint — no authentication required.
+     * GET /api/public/verify-rc?token={uuid}
+     */
+    @GetMapping("/public/verify-rc")
+    public ResponseEntity<VerifyRcDTO> verifyReportCard(@RequestParam String token) {
+        return ResponseEntity.ok(publicationService.verifyByToken(token));
+    }
+
+    /**
      * Generate and download a single student's report card as PDF.
      * GET /api/report-cards/pdf?studentId=&templateId=&session=
      */
@@ -175,6 +185,11 @@ public class ReportCardController {
             @RequestParam String session) {
 
         ReportCardDataDTO data = assembler.assemble(studentId, templateId, session);
+
+        // Embed verification token if the report card is published
+        publicationService.getVerificationToken(templateId, session, data.getClassName())
+            .ifPresent(data::setVerificationToken);
+
         byte[] pdf = pdfGenerator.generate(data);
 
         String filename = sanitizeFilename(data.getStudentName()) + "_" + session + "_ReportCard.pdf";

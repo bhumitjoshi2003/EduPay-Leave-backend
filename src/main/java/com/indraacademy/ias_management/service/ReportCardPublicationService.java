@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.ReportCardPublicationDTO;
 import com.indraacademy.ias_management.dto.ReportCardTemplateDTO;
+import com.indraacademy.ias_management.dto.VerifyRcDTO;
 import com.indraacademy.ias_management.entity.ReportCardPublication;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
@@ -26,11 +27,12 @@ public class ReportCardPublicationService {
     private static final Logger log = LoggerFactory.getLogger(ReportCardPublicationService.class);
     private static final DateTimeFormatter ISO = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
-    @Autowired private ReportCardPublicationRepository pubRepo;
-    @Autowired private ReportCardTemplateService       templateService;
-    @Autowired private StudentRepository               studentRepository;
-    @Autowired private ReportCardEmailBlastService     blastService;
-    @Autowired private SecurityUtil                    securityUtil;
+    @Autowired private ReportCardPublicationRepository                             pubRepo;
+    @Autowired private ReportCardTemplateService                                   templateService;
+    @Autowired private StudentRepository                                           studentRepository;
+    @Autowired private ReportCardEmailBlastService                                 blastService;
+    @Autowired private SecurityUtil                                                securityUtil;
+    @Autowired private com.indraacademy.ias_management.repository.SchoolRepository schoolRepository;
 
     // ── Status ─────────────────────────────────────────────────────────────
 
@@ -69,6 +71,10 @@ public class ReportCardPublicationService {
 
         pub.setPublishedAt(LocalDateTime.now());
         pub.setPublishedBy(username);
+        // Auto-assign a verification token on first publish
+        if (pub.getVerificationToken() == null) {
+            pub.setVerificationToken(java.util.UUID.randomUUID().toString());
+        }
         pub = pubRepo.save(pub);
 
         log.info("Report card published: template={} session={} class={} by={}",
@@ -115,6 +121,40 @@ public class ReportCardPublicationService {
 
         blastService.execute(templateId, session, className, schoolId, students, schoolName);
         return withEmail;
+    }
+
+    // ── QR Verification ───────────────────────────────────────────────────
+
+    /**
+     * Returns the verification token for an existing publication,
+     * so the PDF generator can embed it as a QR code.
+     */
+    public java.util.Optional<String> getVerificationToken(Long templateId, String session, String className) {
+        Long schoolId = securityUtil.getSchoolId();
+        return pubRepo
+            .findBySchoolIdAndTemplateIdAndSessionAndClassName(schoolId, templateId, session, className)
+            .map(ReportCardPublication::getVerificationToken);
+    }
+
+    /**
+     * Public (unauthenticated) lookup — called by GET /api/public/verify-rc?token=...
+     * Returns school name, class, session, published date. Never returns marks or personal data.
+     */
+    public VerifyRcDTO verifyByToken(String token) {
+        if (token == null || token.isBlank()) {
+            return VerifyRcDTO.invalid("Invalid verification link.");
+        }
+        return pubRepo.findByVerificationToken(token)
+            .map(pub -> {
+                String schoolName = schoolRepository.findById(pub.getSchoolId())
+                    .map(s -> s.getName())
+                    .orElse("School");
+                String publishedAt = pub.getPublishedAt() != null
+                    ? pub.getPublishedAt().format(ISO) : null;
+                return VerifyRcDTO.valid(schoolName, pub.getClassName(),
+                    pub.getSession(), publishedAt, pub.getPublishedBy());
+            })
+            .orElse(VerifyRcDTO.invalid("This report card could not be verified. The QR code may be invalid or the report card was unpublished."));
     }
 
     // ── Helper ─────────────────────────────────────────────────────────────
