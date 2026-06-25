@@ -269,26 +269,42 @@ public class ReportCardPdfGenerator {
             header.addCell(logoCell);
         }
 
-        // Center: school name, address, affiliation, contact
+        // Center: school name (centered, prominent) + address + affiliation + contact
         PdfPCell center = new PdfPCell();
         center.setBackgroundColor(WHITE);
         center.setBorder(Rectangle.NO_BORDER);
-        center.setPaddingTop(10);
-        center.setPaddingBottom(10);
+        center.setPaddingTop(8);
+        center.setPaddingBottom(8);
+        center.setHorizontalAlignment(Element.ALIGN_CENTER);
 
-        Paragraph schoolName = new Paragraph(safe(data.getSchoolName(), "School Name"), F_SCHOOL_NAME);
+        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 18, branding.primary);
+        Paragraph schoolName = new Paragraph(safe(data.getSchoolName(), "School Name").toUpperCase(), schoolNameFont);
+        schoolName.setAlignment(Element.ALIGN_CENTER);
         schoolName.setSpacingAfter(3);
         center.addElement(schoolName);
 
-        if (data.getSchoolAddress() != null && !data.getSchoolAddress().isBlank()) {
-            center.addElement(new Paragraph(data.getSchoolAddress(), F_SCHOOL_DET));
-        }
+        // School type / affiliation line — shown even when no affiliation number
+        String affLine = "";
         if (data.getAffiliationNumber() != null && !data.getAffiliationNumber().isBlank()) {
-            center.addElement(new Paragraph("Affiliation No: " + data.getAffiliationNumber(), F_SCHOOL_DET));
+            affLine = "Affiliation No: " + data.getAffiliationNumber();
+        }
+        if (!affLine.isBlank()) {
+            Font affFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 8, TEXT_MID);
+            Paragraph affPara = new Paragraph(affLine, affFont);
+            affPara.setAlignment(Element.ALIGN_CENTER);
+            center.addElement(affPara);
+        }
+
+        if (data.getSchoolAddress() != null && !data.getSchoolAddress().isBlank()) {
+            Paragraph addr = new Paragraph(data.getSchoolAddress(), F_SCHOOL_DET);
+            addr.setAlignment(Element.ALIGN_CENTER);
+            center.addElement(addr);
         }
         String contact = buildContact(data);
         if (!contact.isBlank()) {
-            center.addElement(new Paragraph(contact, F_SCHOOL_DET));
+            Paragraph contactPara = new Paragraph(contact, F_SCHOOL_DET);
+            contactPara.setAlignment(Element.ALIGN_CENTER);
+            center.addElement(contactPara);
         }
         header.addCell(center);
 
@@ -439,8 +455,7 @@ public class ReportCardPdfGenerator {
                 if (mark == null || mark.getObtained() == null) {
                     table.addCell(tdCellCenter("Ab", true));
                 } else {
-                    String txt = DF0.format(mark.getObtained()) + "/" + DF0.format(mark.getMax())
-                            + "\n" + gradeFromPct(mark.getPercentage(), data.getGradingSystem());
+                    String txt = DF0.format(mark.getObtained()) + "/" + DF0.format(mark.getMax());
                     table.addCell(tdCellCenter(txt, false));
                 }
             }
@@ -544,48 +559,6 @@ public class ReportCardPdfGenerator {
             summaryTable.addCell(cgpaCell);
         }
         doc.add(summaryTable);
-
-        // Exam breakdown
-        if (wr.getExamBreakdowns() != null && !wr.getExamBreakdowns().isEmpty()) {
-            PdfPTable bd = new PdfPTable(new float[]{2f, 1f, 1f, 1f, 1f});
-            bd.setWidthPercentage(100);
-            bd.setSpacingAfter(8);
-
-            bd.addCell(thCell("Exam", branding.primary));
-            bd.addCell(thCellCenter("Obtained / Max", branding.primary));
-            bd.addCell(thCellCenter("Percentage", branding.primary));
-            bd.addCell(thCellCenter("Weightage", branding.primary));
-            bd.addCell(thCellCenter("Contribution", branding.primary));
-
-            for (WeightedGroupResultDTO.ExamBreakdownDTO ex : wr.getExamBreakdowns()) {
-                bd.addCell(tdCell(ex.getExamName(), false));
-                bd.addCell(tdCellCenter(DF0.format(ex.getObtained()) + " / " + DF0.format(ex.getMax()), false));
-                bd.addCell(tdCellCenter(DF1.format(ex.getPercentage()) + "%", false));
-                bd.addCell(tdCellCenter(DF0.format(ex.getWeightage() * 100) + "%", false));
-                bd.addCell(tdCellCenter(DF1.format(ex.getContribution()) + " pts", false));
-            }
-            doc.add(bd);
-        }
-
-        // Group breakdown
-        if (wr.getGroupBreakdowns() != null && !wr.getGroupBreakdowns().isEmpty()) {
-            PdfPTable gd = new PdfPTable(new float[]{2f, 1f, 1f, 1f});
-            gd.setWidthPercentage(100);
-            gd.setSpacingAfter(8);
-
-            gd.addCell(thCell("Component", branding.primary));
-            gd.addCell(thCellCenter("Percentage", branding.primary));
-            gd.addCell(thCellCenter("Weightage", branding.primary));
-            gd.addCell(thCellCenter("Contribution", branding.primary));
-
-            for (WeightedGroupResultDTO.GroupBreakdownDTO grp : wr.getGroupBreakdowns()) {
-                gd.addCell(tdCell(grp.getGroupName(), false));
-                gd.addCell(tdCellCenter(DF1.format(grp.getPercentage()) + "%", false));
-                gd.addCell(tdCellCenter(DF0.format(grp.getWeightage() * 100) + "%", false));
-                gd.addCell(tdCellCenter(DF1.format(grp.getContribution()) + " pts", false));
-            }
-            doc.add(gd);
-        }
     }
 
     // ── ATTENDANCE ────────────────────────────────────────────────────────
@@ -800,6 +773,13 @@ public class ReportCardPdfGenerator {
         }
         doc.add(table);
 
+        // Footer — small, gray, centered
+        Font footerFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7, new Color(180, 180, 180));
+        Paragraph footer = new Paragraph("Powered by Edunexify\u00ae", footerFont);
+        footer.setAlignment(Element.ALIGN_CENTER);
+        footer.setSpacingBefore(10);
+        doc.add(footer);
+
         // QR verification code — only when published (token present)
         if (currentVerificationToken != null && !currentVerificationToken.isBlank()) {
             addQrVerification(doc, currentVerificationToken, branding);
@@ -915,17 +895,39 @@ public class ReportCardPdfGenerator {
 
     // ── Cell / table builders ─────────────────────────────────────────────
 
-    /** Solid-colored section title bar with white Times-Bold text. */
+    /**
+     * Elegant section separator — 3pt left accent bar in primary color, light tinted
+     * background, title text in primary color. Replaces the old solid-filled blue bar.
+     * Mirrors Angular's .rc-section-title with border-left + tinted background.
+     */
     private PdfPTable sectionTitleBar(String title, Color color) throws DocumentException {
-        PdfPTable t = new PdfPTable(1);
+        // Two-column approach: narrow colored left bar | label text
+        PdfPTable t = new PdfPTable(new float[]{0.025f, 1f});
         t.setWidthPercentage(100);
-        t.setSpacingBefore(8);
-        t.setSpacingAfter(4);
-        PdfPCell cell = new PdfPCell(new Phrase(title, F_SEC_TITLE));
-        cell.setBackgroundColor(color);
-        cell.setPadding(6);
-        cell.setBorderColor(color);
-        t.addCell(cell);
+        t.setSpacingBefore(10);
+        t.setSpacingAfter(3);
+
+        // Left accent bar — solid primary color, no border
+        PdfPCell accent = new PdfPCell(new Phrase(" "));
+        accent.setBackgroundColor(color);
+        accent.setBorder(Rectangle.NO_BORDER);
+        t.addCell(accent);
+
+        // Very light tint: 8% primary + 92% white
+        Color lightTint = new Color(
+            (int)(color.getRed()   * 0.08 + 247),
+            (int)(color.getGreen() * 0.08 + 247),
+            (int)(color.getBlue()  * 0.08 + 247)
+        );
+        Font titleFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 8, color);
+        PdfPCell label = new PdfPCell(new Phrase(title, titleFont));
+        label.setBackgroundColor(lightTint);
+        label.setBorderColor(new Color(210, 210, 210));
+        label.setPaddingLeft(8);
+        label.setPaddingTop(5);
+        label.setPaddingBottom(5);
+        t.addCell(label);
+
         return t;
     }
 
