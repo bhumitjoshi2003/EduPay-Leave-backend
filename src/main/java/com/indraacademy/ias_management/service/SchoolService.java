@@ -291,6 +291,7 @@ public class SchoolService {
             school.setGradingSystem(req.getGradingSystem().toUpperCase());
         }
         if (req.getAffiliationNumber() != null) school.setAffiliationNumber(req.getAffiliationNumber());
+        if (req.getSchoolCode() != null) school.setSchoolCode(req.getSchoolCode());
 
         // Staff attendance settings
         if (req.getSchoolLatitude() != null) school.setSchoolLatitude(req.getSchoolLatitude());

@@ -99,6 +99,8 @@ public class ReportCardDataAssembler {
             dto.setBoardType(school.getBoardType().name());
         }
         dto.setAffiliationNumber(school.getAffiliationNumber());
+        dto.setSchoolCode(school.getSchoolCode());
+        dto.setSchoolCity(school.getCity());
         dto.setReportCardHeaderImageUrl(school.getReportCardHeaderImageUrl());
 
         // Template

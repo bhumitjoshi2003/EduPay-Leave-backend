@@ -45,6 +45,7 @@ public class SchoolSettingsResponse {
     private String workingDays;
     private String gradingSystem;
     private String affiliationNumber;
+    private String schoolCode;
     private String reportCardHeaderImageUrl;
 
     // Staff attendance settings
@@ -83,6 +84,7 @@ public class SchoolSettingsResponse {
         r.workingDays = school.getWorkingDays();
         r.gradingSystem = school.getGradingSystem();
         r.affiliationNumber = school.getAffiliationNumber();
+        r.schoolCode = school.getSchoolCode();
         r.reportCardHeaderImageUrl = school.getReportCardHeaderImageUrl();
         r.schoolLatitude = school.getSchoolLatitude();
         r.schoolLongitude = school.getSchoolLongitude();
@@ -122,6 +124,7 @@ public class SchoolSettingsResponse {
     public String getWorkingDays() { return workingDays; }
     public String getGradingSystem() { return gradingSystem; }
     public String getAffiliationNumber() { return affiliationNumber; }
+    public String getSchoolCode() { return schoolCode; }
     public String getReportCardHeaderImageUrl() { return reportCardHeaderImageUrl; }
 
     public Double getSchoolLatitude() { return schoolLatitude; }

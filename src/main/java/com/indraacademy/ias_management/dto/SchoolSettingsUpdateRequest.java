@@ -25,6 +25,7 @@ public class SchoolSettingsUpdateRequest {
     private String workingDays;
     private String gradingSystem;
     private String affiliationNumber;
+    private String schoolCode;
 
     // Staff attendance / GPS check-in settings
     private Double schoolLatitude;
@@ -82,6 +83,9 @@ public class SchoolSettingsUpdateRequest {
 
     public String getAffiliationNumber() { return affiliationNumber; }
     public void setAffiliationNumber(String affiliationNumber) { this.affiliationNumber = affiliationNumber; }
+
+    public String getSchoolCode() { return schoolCode; }
+    public void setSchoolCode(String schoolCode) { this.schoolCode = schoolCode; }
 
     public Double getSchoolLatitude() { return schoolLatitude; }
     public void setSchoolLatitude(Double schoolLatitude) { this.schoolLatitude = schoolLatitude; }

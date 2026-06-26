@@ -26,6 +26,8 @@ public class ReportCardDataDTO {
     private String schoolPhone;
     private String schoolEmail;
     private String affiliationNumber;
+    private String schoolCode;
+    private String schoolCity;
     /** Board type: CBSE, ICSE, STATE, OTHER — shown as subtitle in school header */
     private String boardType;
     /** Custom header image URL — when set, replaces the auto-generated school header in PDFs and web view. */
@@ -110,6 +112,12 @@ public class ReportCardDataDTO {
 
     public String getAffiliationNumber() { return affiliationNumber; }
     public void setAffiliationNumber(String affiliationNumber) { this.affiliationNumber = affiliationNumber; }
+
+    public String getSchoolCode() { return schoolCode; }
+    public void setSchoolCode(String schoolCode) { this.schoolCode = schoolCode; }
+
+    public String getSchoolCity() { return schoolCity; }
+    public void setSchoolCity(String schoolCity) { this.schoolCity = schoolCity; }
 
     public String getBoardType() { return boardType; }
     public void setBoardType(String boardType) { this.boardType = boardType; }

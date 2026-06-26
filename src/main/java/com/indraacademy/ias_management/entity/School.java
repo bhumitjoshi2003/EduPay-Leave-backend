@@ -115,6 +115,10 @@ public class School {
     @Column(name = "affiliation_number", length = 100)
     private String affiliationNumber;
 
+    /** School identification code — e.g. government registration code or board-assigned code. */
+    @Column(name = "school_code", length = 50)
+    private String schoolCode;
+
     /** Custom report card header image — when set, replaces the auto-generated header in PDFs and web view. */
     @Column(name = "report_card_header_image_url", length = 500)
     private String reportCardHeaderImageUrl;
@@ -224,6 +228,9 @@ public class School {
 
     public String getAffiliationNumber() { return affiliationNumber; }
     public void setAffiliationNumber(String affiliationNumber) { this.affiliationNumber = affiliationNumber; }
+
+    public String getSchoolCode() { return schoolCode; }
+    public void setSchoolCode(String schoolCode) { this.schoolCode = schoolCode; }
 
     public String getReportCardHeaderImageUrl() { return reportCardHeaderImageUrl; }
     public void setReportCardHeaderImageUrl(String reportCardHeaderImageUrl) { this.reportCardHeaderImageUrl = reportCardHeaderImageUrl; }
