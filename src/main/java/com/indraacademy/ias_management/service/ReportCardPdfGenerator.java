@@ -464,7 +464,7 @@ public class ReportCardPdfGenerator {
         if ("WARM_ELEGANCE".equals(layout)) {
             // Gold rules bracket the title; the session sits below the lower rule.
             addHRule(doc, GOLD, 4);
-            Font rcFont = FontFactory.getFont("Didot", 12.5f, Font.NORMAL, TEXT_DARK);
+            Font rcFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 12.5f, TEXT_DARK);
             Paragraph rcTitle = new Paragraph("R E P O R T     C A R D", rcFont);
             rcTitle.setAlignment(Element.ALIGN_CENTER);
             rcTitle.setSpacingBefore(3);
@@ -667,7 +667,7 @@ public class ReportCardPdfGenerator {
         }
 
         // School name — large, uppercase, widely tracked, primary color.
-        Font schoolNameFont = FontFactory.getFont("Didot", 22, Font.NORMAL, DARK_GREEN);
+        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 22, DARK_GREEN);
         String rawName = safe(data.getSchoolName(), "School Name").toUpperCase();
         Paragraph schoolName = new Paragraph(spacedTitle(rawName), schoolNameFont);
         schoolName.setAlignment(Element.ALIGN_CENTER);
@@ -677,7 +677,7 @@ public class ReportCardPdfGenerator {
         // Motto (italic, gold)
         if (branding.schoolMotto != null && !branding.schoolMotto.isBlank()) {
             Color mottoColor = GOLD;
-            Font mottoFont = FontFactory.getFont("Didot", 8.5f, Font.ITALIC, mottoColor);
+            Font mottoFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.5f, mottoColor);
             Paragraph motto = new Paragraph("\u2767  " + branding.schoolMotto + "  \u2767", mottoFont);
             motto.setAlignment(Element.ALIGN_CENTER);
             motto.setSpacingAfter(2);
@@ -1298,7 +1298,7 @@ public class ReportCardPdfGenerator {
         leftCell.setBorder(Rectangle.NO_BORDER);
         leftCell.setPaddingRight(8);
 
-        Font sectionTitleFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 7.5f, TEXT_DARK);
+        Font sectionTitleFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7.8f, TEXT_DARK);
         Paragraph attTitle = new Paragraph("A T T E N D A N C E", sectionTitleFont);
         attTitle.setAlignment(Element.ALIGN_CENTER);
         attTitle.setSpacingAfter(6);
@@ -1848,7 +1848,7 @@ public class ReportCardPdfGenerator {
 
     /** Plain centered spaced-uppercase section title — matches the Angular design. */
     private Paragraph centeredSectionTitle(String text) {
-        Font f = FontFactory.getFont("Didot", 8.1f, Font.NORMAL, TEXT_DARK);
+        Font f = FontFactory.getFont(FontFactory.TIMES_ROMAN, 8.1f, TEXT_DARK);
         Paragraph p = new Paragraph(text, f);
         p.setAlignment(Element.ALIGN_CENTER);
         p.setSpacingBefore(6);
