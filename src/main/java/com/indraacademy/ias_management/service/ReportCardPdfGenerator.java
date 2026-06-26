@@ -65,8 +65,7 @@ public class ReportCardPdfGenerator {
 
     // ── Document palette ───────────────────────────────────────────────────
     private static final Color WHITE       = Color.WHITE;
-    private static final Color BLACK       = Color.BLACK;
-    private static final Color TEXT_DARK   = new Color(36,  61,  54);   // muted ink
+    private static final Color TEXT_DARK   = new Color(82, 100,  94);   // softened grey-green ink
     private static final Color TEXT_MID    = new Color(126, 139, 133);  // muted grey-green
     private static final Color BORDER_GRAY = new Color(213, 201, 184);  // #d5c9b8 — parchment border
     private static final Color ROW_ALT     = new Color(245, 240, 232);  // #f5f0e8 — warm zebra
@@ -74,7 +73,7 @@ public class ReportCardPdfGenerator {
 
     // ── Indra Academy fixed design palette ────────────────────────────────
     private static final Color PARCHMENT   = new Color(250, 248, 242);  // #faf8f2 — page background
-    private static final Color DARK_GREEN  = new Color(33,  66,  56);   // #214238 — headers, titles
+    private static final Color DARK_GREEN  = new Color(69,  95,  87);   // softened school-title ink
     private static final Color GOLD        = new Color(194, 155, 75);   // #c29b4b — rules, badge, footer
 
     // Grade text colors (text-only, no backgrounds)
@@ -465,7 +464,7 @@ public class ReportCardPdfGenerator {
         if ("WARM_ELEGANCE".equals(layout)) {
             // Gold rules bracket the title; the session sits below the lower rule.
             addHRule(doc, GOLD, 4);
-            Font rcFont = FontFactory.getFont("Didot", 12.5f, Font.BOLD, TEXT_DARK);
+            Font rcFont = FontFactory.getFont("Didot", 12.5f, Font.NORMAL, TEXT_DARK);
             Paragraph rcTitle = new Paragraph("R E P O R T     C A R D", rcFont);
             rcTitle.setAlignment(Element.ALIGN_CENTER);
             rcTitle.setSpacingBefore(3);
@@ -668,7 +667,7 @@ public class ReportCardPdfGenerator {
         }
 
         // School name — large, uppercase, widely tracked, primary color.
-        Font schoolNameFont = FontFactory.getFont("Didot", 22, Font.BOLD, DARK_GREEN);
+        Font schoolNameFont = FontFactory.getFont("Didot", 22, Font.NORMAL, DARK_GREEN);
         String rawName = safe(data.getSchoolName(), "School Name").toUpperCase();
         Paragraph schoolName = new Paragraph(spacedTitle(rawName), schoolNameFont);
         schoolName.setAlignment(Element.ALIGN_CENTER);
@@ -858,10 +857,10 @@ public class ReportCardPdfGenerator {
         photoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
         photoCell.setVerticalAlignment(Element.ALIGN_TOP);
         if (studentPhoto != null) {
-            studentPhoto.scaleToFit(50, 66);
+            studentPhoto.scaleToFit(50, 76);
             photoCell.setImage(studentPhoto);
         } else {
-            photoCell.setFixedHeight(66f);
+            photoCell.setFixedHeight(76f);
         }
 
         // Row 1: Name | value | [spacer] | Class & Section | value | [photo starts]
@@ -926,9 +925,9 @@ public class ReportCardPdfGenerator {
         c.setBorder(Rectangle.BOTTOM);
         c.setBorderColor(BORDER_GRAY);
         c.setBorderWidth(0.5f);
-        c.setFixedHeight(22f);
-        c.setPaddingTop(3);
-        c.setPaddingBottom(3);
+        c.setFixedHeight(25.3f);
+        c.setPaddingTop(4);
+        c.setPaddingBottom(4);
         c.setPaddingLeft(2);
         c.setPaddingRight(4);
         c.setVerticalAlignment(Element.ALIGN_MIDDLE);
@@ -942,9 +941,9 @@ public class ReportCardPdfGenerator {
         c.setBorder(Rectangle.BOTTOM);
         c.setBorderColor(BORDER_GRAY);
         c.setBorderWidth(0.5f);
-        c.setFixedHeight(22f);
-        c.setPaddingTop(3);
-        c.setPaddingBottom(3);
+        c.setFixedHeight(25.3f);
+        c.setPaddingTop(4);
+        c.setPaddingBottom(4);
         c.setPaddingRight(2);
         c.setHorizontalAlignment(Element.ALIGN_RIGHT);
         c.setVerticalAlignment(Element.ALIGN_MIDDLE);
@@ -990,9 +989,9 @@ public class ReportCardPdfGenerator {
         table.setWidthPercentage(100);
         table.setSpacingAfter(veryDense ? 3 : 5);
 
-        // Header row — no fill, gold rules, dark widely-spaced labels.
-        Color headerBg = PARCHMENT;
-        Font thFont = FontFactory.getFont(FontFactory.TIMES_BOLD, veryDense ? 6.8f : 7.4f, TEXT_DARK);
+        // Header row — subtle grey fill, gold rules, widely-spaced labels.
+        Color headerBg = new Color(238, 233, 223);
+        Font thFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, veryDense ? 6.8f : 7.4f, TEXT_DARK);
         PdfPCell subjectTh = new PdfPCell(new Phrase("S U B J E C T", thFont));
         subjectTh.setBackgroundColor(headerBg);
         subjectTh.setBorderColor(GOLD);
@@ -1116,7 +1115,7 @@ public class ReportCardPdfGenerator {
             String overallGrade = gradeFromPct(wr.getWeightedPercentage(), data.getGradingSystem());
             PdfPCell og = new PdfPCell(new Phrase(overallGrade, FontFactory.getFont(FontFactory.TIMES_BOLD, markFontSize, DARK_GREEN)));
             og.setBackgroundColor(PARCHMENT);
-            og.setHorizontalAlignment(Element.ALIGN_CENTER);
+            og.setHorizontalAlignment(Element.ALIGN_RIGHT);
             og.setBorderColor(GOLD);
             og.setBorder(Rectangle.TOP);
             og.setBorderWidthTop(1.5f);
@@ -1475,9 +1474,9 @@ public class ReportCardPdfGenerator {
         Font labelFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 7f, TEXT_MID);
         Font remarkFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.2f, TEXT_DARK);
 
-        PdfPTable row = new PdfPTable(new float[]{1.05f, 4.35f});
+        PdfPTable row = new PdfPTable(new float[]{0.85f, 4.55f});
         row.setWidthPercentage(100);
-        row.setSpacingBefore(2);
+        row.setSpacingBefore(4);
         row.setSpacingAfter(2);
 
         PdfPCell lbl = new PdfPCell(new Phrase(label, labelFont));
@@ -1504,12 +1503,42 @@ public class ReportCardPdfGenerator {
         WeightedGroupResultDTO wr = data.getWeightedResult();
         if (wr == null) return;
 
-        boolean pass = wr.getWeightedPercentage() >= 33.0;
-        Color resultColor = pass ? GOLD : FAIL_COLOR;
-        String grade  = gradeFromPct(wr.getWeightedPercentage(), data.getGradingSystem());
-        String pctStr = DF1.format(wr.getWeightedPercentage()) + "%";
+        if (currentWriter != null) {
+            PdfContentByte cb = currentWriter.getDirectContent();
+            float pageLeft = doc.left();
+            float pageRight = doc.right();
+            float pageWidth = pageRight - pageLeft;
+            float leftCenter = pageLeft + pageWidth * 0.18f;
+            float rightCenter = pageRight - pageWidth * 0.18f;
+            float lineY = doc.bottom() + 78f;
+            float labelY = doc.bottom() + 60f;
+            float halfLine = 70f;
 
-        // 3-column layout: [CLASS TEACHER sig] | [gold badge] | [PRINCIPAL sig]
+            cb.saveState();
+            cb.setColorStroke(TEXT_DARK);
+            cb.setLineWidth(0.8f);
+            cb.moveTo(leftCenter - halfLine, lineY);
+            cb.lineTo(leftCenter + halfLine, lineY);
+            cb.moveTo(rightCenter - halfLine, lineY);
+            cb.lineTo(rightCenter + halfLine, lineY);
+            cb.stroke();
+            cb.restoreState();
+
+            try {
+                BaseFont regular = BaseFont.createFont(BaseFont.TIMES_ROMAN, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
+                cb.beginText();
+                cb.setColorFill(TEXT_MID);
+                cb.setFontAndSize(regular, 7.5f);
+                cb.showTextAligned(Element.ALIGN_CENTER, "C L A S S   T E A C H E R", leftCenter, labelY, 0);
+                cb.showTextAligned(Element.ALIGN_CENTER, "P R I N C I P A L", rightCenter, labelY, 0);
+                cb.endText();
+            } catch (Exception e) {
+                log.debug("Could not draw fixed signature labels: {}", e.getMessage());
+            }
+            return;
+        }
+
+        // 3-column layout: [CLASS TEACHER sig] | [blank center] | [PRINCIPAL sig]
         PdfPTable outer = new PdfPTable(new float[]{2f, 2f, 2f});
         outer.setWidthPercentage(100);
         outer.setSpacingBefore(3);
@@ -1529,7 +1558,7 @@ public class ReportCardPdfGenerator {
         ll.setBorder(Rectangle.TOP);
         ll.setBorderColor(TEXT_DARK);
         ll.setBorderWidthTop(0.8f);
-        ll.setPaddingTop(8);
+        ll.setPaddingTop(2);
         leftLine.addCell(ll);
         leftSig.addElement(leftLine);
         Paragraph ctLabel = new Paragraph("C L A S S   T E A C H E R", sigLabelFont);
@@ -1537,19 +1566,13 @@ public class ReportCardPdfGenerator {
         leftSig.addElement(ctLabel);
         outer.addCell(leftSig);
 
-        // ── Center: circular seal badge ───────────────────────────────────
+        // ── Center: intentionally blank. Result badge text is not shown in the fixed design.
         PdfPCell badgeCell = new PdfPCell();
         badgeCell.setBorder(Rectangle.NO_BORDER);
         badgeCell.setBackgroundColor(PARCHMENT);
         badgeCell.setPaddingTop(0);
         badgeCell.setPaddingBottom(0);
         badgeCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-
-        Image badge = createResultBadgeImage(grade, pctStr, pass, resultColor);
-        if (badge != null) {
-            badge.scaleToFit(82, 82);
-            badgeCell.addElement(badge);
-        }
         outer.addCell(badgeCell);
 
         // ── Right: Principal signature line ───────────────────────────────
@@ -1565,7 +1588,7 @@ public class ReportCardPdfGenerator {
         rl.setBorder(Rectangle.TOP);
         rl.setBorderColor(TEXT_DARK);
         rl.setBorderWidthTop(0.8f);
-        rl.setPaddingTop(8);
+        rl.setPaddingTop(2);
         rightLine.addCell(rl);
         rightSig.addElement(rightLine);
         Paragraph prLabel = new Paragraph("P R I N C I P A L", sigLabelFont);
@@ -1825,7 +1848,7 @@ public class ReportCardPdfGenerator {
 
     /** Plain centered spaced-uppercase section title — matches the Angular design. */
     private Paragraph centeredSectionTitle(String text) {
-        Font f = FontFactory.getFont("Didot", 8.1f, Font.BOLD, TEXT_DARK);
+        Font f = FontFactory.getFont("Didot", 8.1f, Font.NORMAL, TEXT_DARK);
         Paragraph p = new Paragraph(text, f);
         p.setAlignment(Element.ALIGN_CENTER);
         p.setSpacingBefore(6);
