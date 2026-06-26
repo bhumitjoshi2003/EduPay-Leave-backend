@@ -66,16 +66,16 @@ public class ReportCardPdfGenerator {
     // ── Document palette ───────────────────────────────────────────────────
     private static final Color WHITE       = Color.WHITE;
     private static final Color BLACK       = Color.BLACK;
-    private static final Color TEXT_DARK   = new Color(26,  26,  26);   // #1a1a1a
-    private static final Color TEXT_MID    = new Color(100, 100, 100);  // #646464
+    private static final Color TEXT_DARK   = new Color(29,  47,  42);   // muted ink
+    private static final Color TEXT_MID    = new Color(120, 133, 127);  // muted grey-green
     private static final Color BORDER_GRAY = new Color(213, 201, 184);  // #d5c9b8 — parchment border
     private static final Color ROW_ALT     = new Color(245, 240, 232);  // #f5f0e8 — warm zebra
     private static final Color TOTALS_BG   = new Color(245, 240, 232);  // same warm tint for totals
 
     // ── Indra Academy fixed design palette ────────────────────────────────
     private static final Color PARCHMENT   = new Color(250, 248, 242);  // #faf8f2 — page background
-    private static final Color DARK_GREEN  = new Color(30,  61,  30);   // #1e3d1e — headers, titles
-    private static final Color GOLD        = new Color(138, 106, 16);   // #8a6a10 — rules, badge, footer
+    private static final Color DARK_GREEN  = new Color(24,  59,  51);   // #183b33 — headers, titles
+    private static final Color GOLD        = new Color(181, 138, 36);   // #b58a24 — rules, badge, footer
 
     // Grade text colors (text-only, no backgrounds)
     private static final Color GRADE_A_COLOR = new Color(20,  90,  20);   // dark green
@@ -221,6 +221,7 @@ public class ReportCardPdfGenerator {
             addAssessmentSummary(document, data, branding);
             addRemarks(document, "Class Teacher's Remarks", data.getTeacherRemarks(), branding);
             addRemarks(document, "Principal's Remarks", data.getPrincipalRemarks(), branding);
+            addBottomBalanceSpacer(document, data);
             addPromotionStatus(document, data, branding);
             addSignatures(document, branding);
 
@@ -464,7 +465,7 @@ public class ReportCardPdfGenerator {
         if ("WARM_ELEGANCE".equals(layout)) {
             // Gold horizontal rule + widely-spaced "R E P O R T  C A R D" + gold rule
             addHRule(doc, GOLD, 3);
-            Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 13, TEXT_DARK);
+            Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 13, DARK_GREEN);
             Paragraph rcTitle = new Paragraph("R E P O R T     C A R D", rcFont);
             rcTitle.setAlignment(Element.ALIGN_CENTER);
             rcTitle.setSpacingBefore(3);
@@ -666,16 +667,10 @@ public class ReportCardPdfGenerator {
             }
         }
 
-        // School name — large, uppercase, primary color
-        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 21, DARK_GREEN);
+        // School name — large, uppercase, widely tracked, primary color.
+        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 22, DARK_GREEN);
         String rawName = safe(data.getSchoolName(), "School Name").toUpperCase();
-        // Simulate letter-spacing by inserting thin spaces between characters
-        StringBuilder spaced = new StringBuilder();
-        for (int i = 0; i < rawName.length(); i++) {
-            spaced.append(rawName.charAt(i));
-            if (i < rawName.length() - 1) spaced.append('\u2009'); // thin space
-        }
-        Paragraph schoolName = new Paragraph(spaced.toString(), schoolNameFont);
+        Paragraph schoolName = new Paragraph(spacedTitle(rawName), schoolNameFont);
         schoolName.setAlignment(Element.ALIGN_CENTER);
         schoolName.setSpacingAfter(2);
         doc.add(schoolName);
@@ -991,13 +986,14 @@ public class ReportCardPdfGenerator {
         table.setWidthPercentage(100);
         table.setSpacingAfter(veryDense ? 3 : 5);
 
-        // Header row — warm gray background, dark spaced-uppercase text, bottom border
-        Color headerBg = new Color(232, 227, 216);  // warm gray #e8e3d8
+        // Header row — no fill, gold rules, dark widely-spaced labels.
+        Color headerBg = PARCHMENT;
         Font thFont = FontFactory.getFont(FontFactory.TIMES_BOLD, veryDense ? 6.8f : 7.4f, TEXT_DARK);
         PdfPCell subjectTh = new PdfPCell(new Phrase("S U B J E C T", thFont));
         subjectTh.setBackgroundColor(headerBg);
-        subjectTh.setBorderColor(BORDER_GRAY);
-        subjectTh.setBorder(Rectangle.BOTTOM);
+        subjectTh.setBorderColor(GOLD);
+        subjectTh.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
+        subjectTh.setBorderWidthTop(1f);
         subjectTh.setBorderWidthBottom(1f);
         subjectTh.setPadding(cellPad);
         table.addCell(subjectTh);
@@ -1006,8 +1002,9 @@ public class ReportCardPdfGenerator {
             PdfPCell th = new PdfPCell(new Phrase(label, thFont));
             th.setBackgroundColor(headerBg);
             th.setHorizontalAlignment(Element.ALIGN_CENTER);
-            th.setBorderColor(BORDER_GRAY);
-            th.setBorder(Rectangle.BOTTOM);
+            th.setBorderColor(GOLD);
+            th.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
+            th.setBorderWidthTop(1f);
             th.setBorderWidthBottom(1f);
             th.setPadding(cellPad);
             table.addCell(th);
@@ -1015,8 +1012,9 @@ public class ReportCardPdfGenerator {
         PdfPCell gradeTh = new PdfPCell(new Phrase("G R A D E", thFont));
         gradeTh.setBackgroundColor(headerBg);
         gradeTh.setHorizontalAlignment(Element.ALIGN_RIGHT);
-        gradeTh.setBorderColor(BORDER_GRAY);
-        gradeTh.setBorder(Rectangle.BOTTOM);
+        gradeTh.setBorderColor(GOLD);
+        gradeTh.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
+        gradeTh.setBorderWidthTop(1f);
         gradeTh.setBorderWidthBottom(1f);
         gradeTh.setPadding(cellPad);
         table.addCell(gradeTh);
@@ -1024,8 +1022,9 @@ public class ReportCardPdfGenerator {
             PdfPCell gpTh = new PdfPCell(new Phrase("G P", thFont));
             gpTh.setBackgroundColor(headerBg);
             gpTh.setHorizontalAlignment(Element.ALIGN_RIGHT);
-            gpTh.setBorderColor(BORDER_GRAY);
-            gpTh.setBorder(Rectangle.BOTTOM);
+            gpTh.setBorderColor(GOLD);
+            gpTh.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
+            gpTh.setBorderWidthTop(1f);
             gpTh.setBorderWidthBottom(1f);
             gpTh.setPadding(cellPad);
             table.addCell(gpTh);
@@ -1092,7 +1091,7 @@ public class ReportCardPdfGenerator {
 
             PdfPCell totalLabel = new PdfPCell(new Phrase("TOTAL", totalFont));
             totalLabel.setBackgroundColor(PARCHMENT);
-            totalLabel.setBorderColor(DARK_GREEN);
+            totalLabel.setBorderColor(GOLD);
             totalLabel.setBorder(Rectangle.TOP);
             totalLabel.setBorderWidthTop(1.5f);
             totalLabel.setPadding(cellPad);
@@ -1103,7 +1102,7 @@ public class ReportCardPdfGenerator {
                         DF0.format(total.getObtained()) + " / " + DF0.format(total.getMax()), totalFont));
                 tc.setBackgroundColor(PARCHMENT);
                 tc.setHorizontalAlignment(Element.ALIGN_CENTER);
-                tc.setBorderColor(DARK_GREEN);
+                tc.setBorderColor(GOLD);
                 tc.setBorder(Rectangle.TOP);
                 tc.setBorderWidthTop(1.5f);
                 tc.setPadding(cellPad);
@@ -1114,7 +1113,7 @@ public class ReportCardPdfGenerator {
             PdfPCell og = new PdfPCell(new Phrase(overallGrade, FontFactory.getFont(FontFactory.TIMES_BOLD, markFontSize, DARK_GREEN)));
             og.setBackgroundColor(PARCHMENT);
             og.setHorizontalAlignment(Element.ALIGN_CENTER);
-            og.setBorderColor(DARK_GREEN);
+            og.setBorderColor(GOLD);
             og.setBorder(Rectangle.TOP);
             og.setBorderWidthTop(1.5f);
             og.setPadding(cellPad);
@@ -1125,7 +1124,7 @@ public class ReportCardPdfGenerator {
                 PdfPCell gpCell = new PdfPCell(new Phrase(DF1.format(cgpVal), totalFont));
                 gpCell.setBackgroundColor(PARCHMENT);
                 gpCell.setHorizontalAlignment(Element.ALIGN_CENTER);
-                gpCell.setBorderColor(DARK_GREEN);
+                gpCell.setBorderColor(GOLD);
                 gpCell.setBorder(Rectangle.TOP);
                 gpCell.setBorderWidthTop(1.5f);
                 gpCell.setPadding(cellPad);
@@ -1135,7 +1134,8 @@ public class ReportCardPdfGenerator {
         doc.add(table);
 
         // Grade scale legend — shown for CBSE and LETTER grading systems
-        if (!veryDense) addGradeLegend(doc, data.getGradingSystem(), branding);
+        // The fixed Edunexify design intentionally omits the grading scale to
+        // keep the A4 page clean and aligned with the approved visual reference.
     }
 
     /** Renders a compact one-line grade scale legend below the marks table. */
@@ -1533,41 +1533,19 @@ public class ReportCardPdfGenerator {
         leftSig.addElement(ctLabel);
         outer.addCell(leftSig);
 
-        // ── Center: Badge ─────────────────────────────────────────────────
+        // ── Center: circular seal badge ───────────────────────────────────
         PdfPCell badgeCell = new PdfPCell();
-        badgeCell.setBorder(Rectangle.BOX);
-        badgeCell.setBorderColor(resultColor);
-        badgeCell.setBorderWidth(2f);
+        badgeCell.setBorder(Rectangle.NO_BORDER);
         badgeCell.setBackgroundColor(PARCHMENT);
-        badgeCell.setPaddingTop(7);
-        badgeCell.setPaddingBottom(7);
-        badgeCell.setPaddingLeft(10);
-        badgeCell.setPaddingRight(10);
+        badgeCell.setPaddingTop(0);
+        badgeCell.setPaddingBottom(0);
         badgeCell.setHorizontalAlignment(Element.ALIGN_CENTER);
 
-        Font tinyFont   = FontFactory.getFont(FontFactory.TIMES_BOLD, 6.2f, resultColor);
-        Font gradeFont2 = FontFactory.getFont(FontFactory.TIMES_BOLD, 18, resultColor);
-        Font distFont   = FontFactory.getFont(FontFactory.TIMES_BOLD, 5.8f, resultColor);
-        Font pctFont    = FontFactory.getFont(FontFactory.TIMES_ITALIC, 7, TEXT_MID);
-
-        if (pass) {
-            Paragraph pw = new Paragraph("PASSED WITH", tinyFont);
-            pw.setAlignment(Element.ALIGN_CENTER); pw.setSpacingAfter(1);
-            badgeCell.addElement(pw);
-            Paragraph gp = new Paragraph(grade, gradeFont2);
-            gp.setAlignment(Element.ALIGN_CENTER); gp.setSpacingAfter(1);
-            badgeCell.addElement(gp);
-            Paragraph dp = new Paragraph("D I S T I N C T I O N", distFont);
-            dp.setAlignment(Element.ALIGN_CENTER); dp.setSpacingAfter(4);
-            badgeCell.addElement(dp);
-        } else {
-            Paragraph fp = new Paragraph("FAIL", gradeFont2);
-            fp.setAlignment(Element.ALIGN_CENTER); fp.setSpacingAfter(4);
-            badgeCell.addElement(fp);
+        Image badge = createResultBadgeImage(grade, pctStr, pass, resultColor);
+        if (badge != null) {
+            badge.scaleToFit(82, 82);
+            badgeCell.addElement(badge);
         }
-        Paragraph pctP = new Paragraph(pctStr, pctFont);
-        pctP.setAlignment(Element.ALIGN_CENTER);
-        badgeCell.addElement(pctP);
         outer.addCell(badgeCell);
 
         // ── Right: Principal signature line ───────────────────────────────
@@ -1592,6 +1570,71 @@ public class ReportCardPdfGenerator {
         outer.addCell(rightSig);
 
         doc.add(outer);
+    }
+
+    private Image createResultBadgeImage(String grade, String pctStr, boolean pass, Color resultColor) {
+        if (currentWriter == null) return null;
+        try {
+            PdfTemplate tpl = currentWriter.getDirectContent().createTemplate(86, 86);
+            tpl.saveState();
+            tpl.setColorStroke(resultColor);
+            tpl.setLineWidth(1.3f);
+            tpl.circle(43, 43, 40);
+            tpl.stroke();
+            tpl.setColorStroke(DARK_GREEN);
+            tpl.setLineWidth(0.8f);
+            tpl.circle(43, 43, 34);
+            tpl.stroke();
+            tpl.restoreState();
+
+            BaseFont bold = BaseFont.createFont(BaseFont.TIMES_BOLD, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
+            BaseFont italic = BaseFont.createFont(BaseFont.TIMES_ITALIC, BaseFont.CP1252, BaseFont.NOT_EMBEDDED);
+
+            tpl.beginText();
+            tpl.setColorFill(resultColor);
+            tpl.setFontAndSize(bold, 5.8f);
+            tpl.showTextAligned(Element.ALIGN_CENTER, pass ? "P A S S E D   W I T H" : "R E S U L T", 43, 62, 0);
+            tpl.setFontAndSize(bold, 19f);
+            tpl.showTextAligned(Element.ALIGN_CENTER, grade, 43, 40, 0);
+            tpl.setFontAndSize(bold, 5.8f);
+            tpl.showTextAligned(Element.ALIGN_CENTER, pass ? "D I S T I N C T I O N" : "N E E D S   R E V I E W", 43, 27, 0);
+            tpl.setColorFill(TEXT_MID);
+            tpl.setFontAndSize(italic, 7f);
+            tpl.showTextAligned(Element.ALIGN_CENTER, pctStr, 43, 15, 0);
+            tpl.endText();
+
+            return Image.getInstance(tpl);
+        } catch (Exception e) {
+            log.debug("Could not draw circular result badge: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private void addBottomBalanceSpacer(Document doc, ReportCardDataDTO data) throws DocumentException {
+        if (currentWriter == null) return;
+        int marksRows = 0;
+        int examCols = 0;
+        if (data.getWeightedResult() != null && data.getWeightedResult().getMarksTable() != null) {
+            WeightedGroupResultDTO.MarksTableDTO mt = data.getWeightedResult().getMarksTable();
+            marksRows = mt.getSubjectRows() != null ? mt.getSubjectRows().size() : 0;
+            examCols = mt.getExamColumns() != null ? mt.getExamColumns().size() : 0;
+        }
+        boolean dense = marksRows > 6 || examCols > 2;
+        if (dense) return;
+
+        float y = currentWriter.getVerticalPosition(false);
+        float targetBeforeSignatures = 205f;
+        if (y <= targetBeforeSignatures) return;
+
+        float spacerHeight = Math.min(42f, y - targetBeforeSignatures);
+        PdfPTable spacer = new PdfPTable(1);
+        spacer.setWidthPercentage(100);
+        PdfPCell cell = new PdfPCell(new Phrase(" "));
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setFixedHeight(spacerHeight);
+        cell.setBackgroundColor(PARCHMENT);
+        spacer.addCell(cell);
+        doc.add(spacer);
     }
 
     // ── SIGNATURES ────────────────────────────────────────────────────────
@@ -1867,6 +1910,22 @@ public class ReportCardPdfGenerator {
 
     private String safe(String value, String fallback) {
         return (value != null && !value.isBlank()) ? value : fallback;
+    }
+
+    private String spacedTitle(String value) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (Character.isWhitespace(ch)) {
+                out.append("   ");
+            } else {
+                out.append(ch);
+                if (i < value.length() - 1 && !Character.isWhitespace(value.charAt(i + 1))) {
+                    out.append(' ');
+                }
+            }
+        }
+        return out.toString();
     }
 
     private String buildContact(ReportCardDataDTO data) {
