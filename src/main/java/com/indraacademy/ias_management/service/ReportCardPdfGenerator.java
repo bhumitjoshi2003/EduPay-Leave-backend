@@ -1558,9 +1558,9 @@ public class ReportCardPdfGenerator {
 
         // Very light tint: 8% primary + 92% white
         Color lightTint = new Color(
-            (int)(color.getRed()   * 0.08 + 247),
-            (int)(color.getGreen() * 0.08 + 247),
-            (int)(color.getBlue()  * 0.08 + 247)
+            Math.min(255, (int)(color.getRed()   * 0.08 + 247)),
+            Math.min(255, (int)(color.getGreen() * 0.08 + 247)),
+            Math.min(255, (int)(color.getBlue()  * 0.08 + 247))
         );
         Font titleFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 8, color);
         PdfPCell label = new PdfPCell(new Phrase(title, titleFont));
