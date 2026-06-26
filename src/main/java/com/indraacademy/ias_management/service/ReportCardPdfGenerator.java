@@ -66,15 +66,15 @@ public class ReportCardPdfGenerator {
     // ── Document palette ───────────────────────────────────────────────────
     private static final Color WHITE       = Color.WHITE;
     private static final Color BLACK       = Color.BLACK;
-    private static final Color TEXT_DARK   = new Color(29,  47,  42);   // muted ink
-    private static final Color TEXT_MID    = new Color(120, 133, 127);  // muted grey-green
+    private static final Color TEXT_DARK   = new Color(36,  61,  54);   // muted ink
+    private static final Color TEXT_MID    = new Color(126, 139, 133);  // muted grey-green
     private static final Color BORDER_GRAY = new Color(213, 201, 184);  // #d5c9b8 — parchment border
     private static final Color ROW_ALT     = new Color(245, 240, 232);  // #f5f0e8 — warm zebra
     private static final Color TOTALS_BG   = new Color(245, 240, 232);  // same warm tint for totals
 
     // ── Indra Academy fixed design palette ────────────────────────────────
     private static final Color PARCHMENT   = new Color(250, 248, 242);  // #faf8f2 — page background
-    private static final Color DARK_GREEN  = new Color(24,  59,  51);   // #183b33 — headers, titles
+    private static final Color DARK_GREEN  = new Color(33,  66,  56);   // #214238 — headers, titles
     private static final Color GOLD        = new Color(181, 138, 36);   // #b58a24 — rules, badge, footer
 
     // Grade text colors (text-only, no backgrounds)
@@ -89,7 +89,7 @@ public class ReportCardPdfGenerator {
 
     // ── Fonts (Times-Roman throughout) ─────────────────────────────────────
     // School header
-    private static final Font F_SCHOOL_NAME = FontFactory.getFont(FontFactory.TIMES_BOLD,   16, TEXT_DARK);
+    private static final Font F_SCHOOL_NAME = FontFactory.getFont(FontFactory.TIMES_BOLD,   16, DARK_GREEN);
     private static final Font F_SCHOOL_DET  = FontFactory.getFont(FontFactory.TIMES_ROMAN,   8, TEXT_MID);
     private static final Font F_RC_LABEL    = FontFactory.getFont(FontFactory.TIMES_BOLD,   11, TEXT_DARK);  // colored at build time
     private static final Font F_SESSION     = FontFactory.getFont(FontFactory.TIMES_ROMAN,   8, TEXT_MID);
@@ -98,7 +98,7 @@ public class ReportCardPdfGenerator {
     private static final Font F_SEC_TITLE   = FontFactory.getFont(FontFactory.TIMES_BOLD,    9, WHITE);
     private static final Font F_TH          = FontFactory.getFont(FontFactory.TIMES_BOLD,    8, WHITE);
     private static final Font F_SI_LABEL    = FontFactory.getFont(FontFactory.TIMES_BOLD,    7, TEXT_MID);  // student-info label
-    private static final Font F_SI_VALUE    = FontFactory.getFont(FontFactory.TIMES_BOLD,    9, TEXT_DARK); // student-info value
+    private static final Font F_SI_VALUE    = FontFactory.getFont(FontFactory.TIMES_BOLD,  8.5f, TEXT_DARK); // student-info value
     private static final Font F_BODY        = FontFactory.getFont(FontFactory.TIMES_ROMAN,   9, TEXT_DARK);
     private static final Font F_BODY_SM     = FontFactory.getFont(FontFactory.TIMES_ROMAN,   8, TEXT_MID);
     private static final Font F_BODY_BOLD   = FontFactory.getFont(FontFactory.TIMES_BOLD,    9, TEXT_DARK);
@@ -463,24 +463,24 @@ public class ReportCardPdfGenerator {
         String layout = branding.layoutStyle;
 
         if ("WARM_ELEGANCE".equals(layout)) {
-            // Gold horizontal rule + widely-spaced "R E P O R T  C A R D" + gold rule
-            addHRule(doc, GOLD, 3);
-            Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 13, DARK_GREEN);
+            // Gold rules bracket the title; the session sits below the lower rule.
+            addHRule(doc, GOLD, 4);
+            Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 12.5f, TEXT_DARK);
             Paragraph rcTitle = new Paragraph("R E P O R T     C A R D", rcFont);
             rcTitle.setAlignment(Element.ALIGN_CENTER);
             rcTitle.setSpacingBefore(3);
-            rcTitle.setSpacingAfter(2);
+            rcTitle.setSpacingAfter(4);
             doc.add(rcTitle);
-            // Session line
+            addHRule(doc, GOLD, 3);
+
             String session = buildSessionLine(data, branding);
             if (!session.isBlank()) {
                 Font sessionFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.5f, TEXT_MID);
                 Paragraph sessionPara = new Paragraph(session, sessionFont);
                 sessionPara.setAlignment(Element.ALIGN_CENTER);
-                sessionPara.setSpacingAfter(3);
+                sessionPara.setSpacingAfter(5);
                 doc.add(sessionPara);
             }
-            addHRule(doc, GOLD, 5);
             return;
         }
 
@@ -858,10 +858,10 @@ public class ReportCardPdfGenerator {
         photoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
         photoCell.setVerticalAlignment(Element.ALIGN_TOP);
         if (studentPhoto != null) {
-            studentPhoto.scaleToFit(56, 72);
+            studentPhoto.scaleToFit(50, 66);
             photoCell.setImage(studentPhoto);
         } else {
-            photoCell.setFixedHeight(90f);
+            photoCell.setFixedHeight(66f);
         }
 
         // Row 1: Name | value | [spacer] | Class & Section | value | [photo starts]
@@ -926,10 +926,12 @@ public class ReportCardPdfGenerator {
         c.setBorder(Rectangle.BOTTOM);
         c.setBorderColor(BORDER_GRAY);
         c.setBorderWidth(0.5f);
-        c.setPaddingTop(4);
-        c.setPaddingBottom(4);
+        c.setFixedHeight(22f);
+        c.setPaddingTop(3);
+        c.setPaddingBottom(3);
         c.setPaddingLeft(2);
         c.setPaddingRight(4);
+        c.setVerticalAlignment(Element.ALIGN_MIDDLE);
         c.setBackgroundColor(PARCHMENT);
         return c;
     }
@@ -940,10 +942,12 @@ public class ReportCardPdfGenerator {
         c.setBorder(Rectangle.BOTTOM);
         c.setBorderColor(BORDER_GRAY);
         c.setBorderWidth(0.5f);
-        c.setPaddingTop(4);
-        c.setPaddingBottom(4);
+        c.setFixedHeight(22f);
+        c.setPaddingTop(3);
+        c.setPaddingBottom(3);
         c.setPaddingRight(2);
         c.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        c.setVerticalAlignment(Element.ALIGN_MIDDLE);
         c.setBackgroundColor(PARCHMENT);
         return c;
     }
@@ -1050,7 +1054,7 @@ public class ReportCardPdfGenerator {
                         (marks != null && i < marks.size()) ? marks.get(i) : null;
                 Font markFont = failed
                         ? FontFactory.getFont(FontFactory.TIMES_BOLD, markFontSize, FAIL_COLOR)
-                        : FontFactory.getFont(FontFactory.TIMES_BOLD, markFontSize, TEXT_DARK);
+                        : FontFactory.getFont(FontFactory.TIMES_ROMAN, markFontSize, TEXT_DARK);
                 String txt = (mark == null || mark.getObtained() == null)
                         ? "Ab"
                         : DF0.format(mark.getObtained()) + " / " + DF0.format(mark.getMax());
@@ -1064,7 +1068,7 @@ public class ReportCardPdfGenerator {
             }
 
             String subGrade = gradeFromPct(row.getWeightedPercentage(), data.getGradingSystem());
-            Font gradeF = FontFactory.getFont(FontFactory.TIMES_BOLD, markFontSize, TEXT_DARK);
+            Font gradeF = FontFactory.getFont(FontFactory.TIMES_ROMAN, markFontSize, TEXT_DARK);
             PdfPCell gc = new PdfPCell(new Phrase(subGrade, gradeF));
             gc.setBackgroundColor(PARCHMENT);
             gc.setHorizontalAlignment(Element.ALIGN_RIGHT);
@@ -1305,7 +1309,7 @@ public class ReportCardPdfGenerator {
             ReportCardDataDTO.AttendanceBlock att = data.getAttendance();
 
             Font labelFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.2f, TEXT_MID);
-            Font valueFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 8.2f, TEXT_DARK);
+            Font valueFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 8.2f, TEXT_DARK);
 
             String[][] rows = {
                 {"Working Days",  String.valueOf(att.getWorkingDays())},
@@ -1351,7 +1355,7 @@ public class ReportCardPdfGenerator {
         List<ReportCardDataDTO.CoScholasticGrade> grades = data.getCoScholasticGrades();
         if (grades != null && !grades.isEmpty()) {
             Font labelFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.2f, TEXT_MID);
-            Font valueFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 8.2f, TEXT_DARK);
+            Font valueFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 8.2f, TEXT_DARK);
             for (ReportCardDataDTO.CoScholasticGrade g : grades) {
                 PdfPTable rowTable = new PdfPTable(new float[]{2f, 1f});
                 rowTable.setWidthPercentage(100);
