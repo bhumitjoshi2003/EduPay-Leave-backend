@@ -75,7 +75,7 @@ public class ReportCardPdfGenerator {
     // ── Indra Academy fixed design palette ────────────────────────────────
     private static final Color PARCHMENT   = new Color(250, 248, 242);  // #faf8f2 — page background
     private static final Color DARK_GREEN  = new Color(33,  66,  56);   // #214238 — headers, titles
-    private static final Color GOLD        = new Color(181, 138, 36);   // #b58a24 — rules, badge, footer
+    private static final Color GOLD        = new Color(194, 155, 75);   // #c29b4b — rules, badge, footer
 
     // Grade text colors (text-only, no backgrounds)
     private static final Color GRADE_A_COLOR = new Color(20,  90,  20);   // dark green
@@ -465,7 +465,7 @@ public class ReportCardPdfGenerator {
         if ("WARM_ELEGANCE".equals(layout)) {
             // Gold rules bracket the title; the session sits below the lower rule.
             addHRule(doc, GOLD, 4);
-            Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 12.5f, TEXT_DARK);
+            Font rcFont = FontFactory.getFont("Didot", 12.5f, Font.BOLD, TEXT_DARK);
             Paragraph rcTitle = new Paragraph("R E P O R T     C A R D", rcFont);
             rcTitle.setAlignment(Element.ALIGN_CENTER);
             rcTitle.setSpacingBefore(3);
@@ -668,7 +668,7 @@ public class ReportCardPdfGenerator {
         }
 
         // School name — large, uppercase, widely tracked, primary color.
-        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 22, DARK_GREEN);
+        Font schoolNameFont = FontFactory.getFont("Didot", 22, Font.BOLD, DARK_GREEN);
         String rawName = safe(data.getSchoolName(), "School Name").toUpperCase();
         Paragraph schoolName = new Paragraph(spacedTitle(rawName), schoolNameFont);
         schoolName.setAlignment(Element.ALIGN_CENTER);
@@ -678,7 +678,7 @@ public class ReportCardPdfGenerator {
         // Motto (italic, gold)
         if (branding.schoolMotto != null && !branding.schoolMotto.isBlank()) {
             Color mottoColor = GOLD;
-            Font mottoFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.5f, mottoColor);
+            Font mottoFont = FontFactory.getFont("Didot", 8.5f, Font.ITALIC, mottoColor);
             Paragraph motto = new Paragraph("\u2767  " + branding.schoolMotto + "  \u2767", mottoFont);
             motto.setAlignment(Element.ALIGN_CENTER);
             motto.setSpacingAfter(2);
@@ -1475,7 +1475,7 @@ public class ReportCardPdfGenerator {
         Font labelFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 7f, TEXT_MID);
         Font remarkFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.2f, TEXT_DARK);
 
-        PdfPTable row = new PdfPTable(new float[]{1.4f, 4f});
+        PdfPTable row = new PdfPTable(new float[]{1.05f, 4.35f});
         row.setWidthPercentage(100);
         row.setSpacingBefore(2);
         row.setSpacingAfter(2);
@@ -1512,7 +1512,7 @@ public class ReportCardPdfGenerator {
         // 3-column layout: [CLASS TEACHER sig] | [gold badge] | [PRINCIPAL sig]
         PdfPTable outer = new PdfPTable(new float[]{2f, 2f, 2f});
         outer.setWidthPercentage(100);
-        outer.setSpacingBefore(6);
+        outer.setSpacingBefore(3);
         outer.setSpacingAfter(3);
 
         // ── Left: Class Teacher signature line ────────────────────────────
@@ -1529,7 +1529,7 @@ public class ReportCardPdfGenerator {
         ll.setBorder(Rectangle.TOP);
         ll.setBorderColor(TEXT_DARK);
         ll.setBorderWidthTop(0.8f);
-        ll.setPaddingTop(20);
+        ll.setPaddingTop(8);
         leftLine.addCell(ll);
         leftSig.addElement(leftLine);
         Paragraph ctLabel = new Paragraph("C L A S S   T E A C H E R", sigLabelFont);
@@ -1565,7 +1565,7 @@ public class ReportCardPdfGenerator {
         rl.setBorder(Rectangle.TOP);
         rl.setBorderColor(TEXT_DARK);
         rl.setBorderWidthTop(0.8f);
-        rl.setPaddingTop(20);
+        rl.setPaddingTop(8);
         rightLine.addCell(rl);
         rightSig.addElement(rightLine);
         Paragraph prLabel = new Paragraph("P R I N C I P A L", sigLabelFont);
@@ -1653,14 +1653,25 @@ public class ReportCardPdfGenerator {
         if (branding.session != null && !branding.session.isBlank()) {
             sealLine += "  \u00b7  " + branding.session;
         }
+
+        // "Powered by Edunexify" — gold, centered
+        Font footerFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 6.5f, GOLD);
+        if (currentWriter != null) {
+            float centerX = (doc.left() + doc.right()) / 2f;
+            PdfContentByte cb = currentWriter.getDirectContent();
+            ColumnText.showTextAligned(cb, Element.ALIGN_CENTER,
+                    new Phrase(sealLine, sealFont), centerX, doc.bottom() + 17f, 0);
+            ColumnText.showTextAligned(cb, Element.ALIGN_CENTER,
+                    new Phrase("Powered by Edunexify", footerFont), centerX, doc.bottom() + 8f, 0);
+            return;
+        }
+
         Paragraph sealPara = new Paragraph(sealLine, sealFont);
         sealPara.setAlignment(Element.ALIGN_CENTER);
         sealPara.setSpacingBefore(2);
         sealPara.setSpacingAfter(2);
         doc.add(sealPara);
 
-        // "Powered by Edunexify" — gold, centered
-        Font footerFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 6.5f, GOLD);
         Paragraph footer = new Paragraph("Powered by Edunexify", footerFont);
         footer.setAlignment(Element.ALIGN_CENTER);
         footer.setSpacingBefore(2);
@@ -1814,7 +1825,7 @@ public class ReportCardPdfGenerator {
 
     /** Plain centered spaced-uppercase section title — matches the Angular design. */
     private Paragraph centeredSectionTitle(String text) {
-        Font f = FontFactory.getFont(FontFactory.TIMES_BOLD, 7.5f, TEXT_DARK);
+        Font f = FontFactory.getFont("Didot", 8.1f, Font.BOLD, TEXT_DARK);
         Paragraph p = new Paragraph(text, f);
         p.setAlignment(Element.ALIGN_CENTER);
         p.setSpacingBefore(6);
