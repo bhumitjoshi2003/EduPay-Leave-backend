@@ -656,9 +656,15 @@ public class ReportCardPdfGenerator {
         }
 
         // School name — large, uppercase, primary color
-        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 19, branding.primary);
-        Paragraph schoolName = new Paragraph(
-                safe(data.getSchoolName(), "School Name").toUpperCase(), schoolNameFont);
+        Font schoolNameFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 22, branding.primary);
+        String rawName = safe(data.getSchoolName(), "School Name").toUpperCase();
+        // Simulate letter-spacing by inserting thin spaces between characters
+        StringBuilder spaced = new StringBuilder();
+        for (int i = 0; i < rawName.length(); i++) {
+            spaced.append(rawName.charAt(i));
+            if (i < rawName.length() - 1) spaced.append('\u2009'); // thin space
+        }
+        Paragraph schoolName = new Paragraph(spaced.toString(), schoolNameFont);
         schoolName.setAlignment(Element.ALIGN_CENTER);
         schoolName.setSpacingAfter(3);
         doc.add(schoolName);
@@ -830,7 +836,7 @@ public class ReportCardPdfGenerator {
 
         // 5-column table: label | value | label | value | photo (rowspan 3)
         // Rows: [Name | Class&Section], [Admission No. | Date of Birth], [Father's Name | Mother's Name]
-        PdfPTable table = new PdfPTable(new float[]{1.3f, 2f, 1.3f, 2f, 1f});
+        PdfPTable table = new PdfPTable(new float[]{1.3f, 2f, 0.3f, 1.3f, 2f, 1f});
         table.setWidthPercentage(100);
         table.setSpacingAfter(8);
 
@@ -841,9 +847,7 @@ public class ReportCardPdfGenerator {
         // Photo cell spanning 3 rows
         PdfPCell photoCell = new PdfPCell();
         photoCell.setRowspan(3);
-        photoCell.setBorder(Rectangle.BOX);
-        photoCell.setBorderColor(BORDER_GRAY);
-        photoCell.setBorderWidth(0.6f);
+        photoCell.setBorder(Rectangle.NO_BORDER);
         photoCell.setPadding(4);
         photoCell.setHorizontalAlignment(Element.ALIGN_CENTER);
         photoCell.setVerticalAlignment(Element.ALIGN_TOP);
@@ -852,27 +856,23 @@ public class ReportCardPdfGenerator {
             photoCell.setImage(studentPhoto);
         } else {
             photoCell.setFixedHeight(90f);
-            photoCell.setBackgroundColor(new Color(250, 250, 250));
-            Font photoHint = FontFactory.getFont(FontFactory.TIMES_ROMAN, 6, TEXT_MID);
-            Paragraph ph = new Paragraph("PHOTO", photoHint);
-            ph.setAlignment(Element.ALIGN_CENTER);
-            photoCell.addElement(ph);
         }
 
-        // Row 1: Name | Class & Section | [photo starts]
+        // Row 1: Name | value | [spacer] | Class & Section | value | [photo starts]
         table.addCell(siLabelCell("Name"));
         table.addCell(siValueCell(safe(data.getStudentName(), "—")));
+        table.addCell(siSpacerCell(3));  // will define below
         table.addCell(siLabelCell("Class \u0026 Section"));
         table.addCell(siValueCell(classDisplay));
         table.addCell(photoCell);
 
-        // Row 2: Admission No. | Date of Birth
+        // Row 2: Admission No. | value | [spacer col spanned from row 1] | Date of Birth | value
         table.addCell(siLabelCell("Admission No."));
         table.addCell(siValueCell(safe(data.getStudentId(), "—")));
         table.addCell(siLabelCell("Date of Birth"));
         table.addCell(siValueCell(safe(data.getDateOfBirth(), "—")));
 
-        // Row 3: Father's Name | Mother's Name
+        // Row 3: Father's Name | value | [spacer col spanned from row 1] | Mother's Name | value
         table.addCell(siLabelCell("Father\u2019s Name"));
         table.addCell(siValueCell(safe(data.getFatherName(), "\u2014")));
         table.addCell(siLabelCell("Mother\u2019s Name"));
@@ -939,6 +939,14 @@ public class ReportCardPdfGenerator {
         c.setPaddingRight(2);
         c.setHorizontalAlignment(Element.ALIGN_RIGHT);
         c.setBackgroundColor(PARCHMENT);
+        return c;
+    }
+
+    private PdfPCell siSpacerCell(int rowspan) {
+        PdfPCell c = new PdfPCell(new Phrase(" "));
+        c.setBorder(Rectangle.NO_BORDER);
+        c.setBackgroundColor(PARCHMENT);
+        if (rowspan > 1) c.setRowspan(rowspan);
         return c;
     }
 
@@ -1279,7 +1287,6 @@ public class ReportCardPdfGenerator {
 
         if (data.getAttendance() != null) {
             ReportCardDataDTO.AttendanceBlock att = data.getAttendance();
-            int absent = att.getWorkingDays() - att.getPresentDays();
 
             Font labelFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 9, TEXT_MID);
             Font valueFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 9, TEXT_DARK);
@@ -1287,7 +1294,6 @@ public class ReportCardPdfGenerator {
             String[][] rows = {
                 {"Working Days",  String.valueOf(att.getWorkingDays())},
                 {"Days Present",  String.valueOf(att.getPresentDays())},
-                {"Days Absent",   String.valueOf(absent)},
                 {"Percentage",    DF1.format(att.getPercentage()) + "%"},
             };
             for (String[] row : rows) {
@@ -1445,7 +1451,7 @@ public class ReportCardPdfGenerator {
     private void addRemarks(Document doc, String title, String text,
                              BrandingConfig branding) throws DocumentException {
         // Inline style: "CLASS TEACHER   italic remark text" on one line
-        String label = title.contains("TEACHER") ? "CLASS TEACHER" : "PRINCIPAL";
+        String label = title.toUpperCase().contains("TEACHER") ? "CLASS TEACHER" : "PRINCIPAL";
         Font labelFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 7.5f, TEXT_MID);
         Font remarkFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 9, TEXT_DARK);
 
