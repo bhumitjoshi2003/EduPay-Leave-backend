@@ -1399,7 +1399,7 @@ public class ReportCardPdfGenerator {
         }
 
         // Signature lines
-        PdfPTable table = new PdfPTable(3);
+        PdfPTable table = new PdfPTable(2);
         table.setWidthPercentage(100);
 
         for (String label : new String[]{"Class Teacher", "Principal"}) {

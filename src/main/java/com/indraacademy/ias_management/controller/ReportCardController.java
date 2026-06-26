@@ -227,6 +227,8 @@ public class ReportCardController {
                     zip.closeEntry();
                 } catch (Exception e) {
                     // Skip students with incomplete data; continue with rest
+                    org.slf4j.LoggerFactory.getLogger(ReportCardController.class)
+                        .warn("Skipping report card for student {}: {}", student.getStudentId(), e.getMessage());
                 }
             }
         } catch (Exception e) {
