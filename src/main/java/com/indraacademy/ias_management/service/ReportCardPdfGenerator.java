@@ -66,11 +66,16 @@ public class ReportCardPdfGenerator {
     // ── Document palette ───────────────────────────────────────────────────
     private static final Color WHITE       = Color.WHITE;
     private static final Color BLACK       = Color.BLACK;
-    private static final Color TEXT_DARK   = new Color(15,  23,  42);   // #0f172a
-    private static final Color TEXT_MID    = new Color(100, 116, 139);  // #64748b
-    private static final Color BORDER_GRAY = new Color(153, 153, 153);  // #999
-    private static final Color ROW_ALT     = new Color(248, 248, 248);  // very subtle zebra
-    private static final Color TOTALS_BG   = new Color(241, 245, 249);  // #f1f5f9 — totals row only
+    private static final Color TEXT_DARK   = new Color(26,  26,  26);   // #1a1a1a
+    private static final Color TEXT_MID    = new Color(100, 100, 100);  // #646464
+    private static final Color BORDER_GRAY = new Color(213, 201, 184);  // #d5c9b8 — parchment border
+    private static final Color ROW_ALT     = new Color(245, 240, 232);  // #f5f0e8 — warm zebra
+    private static final Color TOTALS_BG   = new Color(245, 240, 232);  // same warm tint for totals
+
+    // ── Indra Academy fixed design palette ────────────────────────────────
+    private static final Color PARCHMENT   = new Color(250, 248, 242);  // #faf8f2 — page background
+    private static final Color DARK_GREEN  = new Color(30,  61,  30);   // #1e3d1e — headers, titles
+    private static final Color GOLD        = new Color(138, 106, 16);   // #8a6a10 — rules, badge, footer
 
     // Grade text colors (text-only, no backgrounds)
     private static final Color GRADE_A_COLOR = new Color(20,  90,  20);   // dark green
@@ -113,19 +118,21 @@ public class ReportCardPdfGenerator {
     // ── Branding config ────────────────────────────────────────────────────
 
     private static class BrandingConfig {
-        Color   primary         = new Color(21, 101, 192);  // default blue
+        Color   primary         = DARK_GREEN;  // fixed Indra Academy dark green
         boolean showWatermark   = false;
         String  watermarkText   = "";
-        String  watermarkType   = "TEXT";   // "TEXT" or "LOGO"
+        String  watermarkType   = "TEXT";
         String  footerText      = "";
         boolean showCgpa        = true;
         boolean showGradePoints = false;
-        String  layoutStyle     = "CLASSIC"; // "CLASSIC" | "WARM_ELEGANCE" | "NAVY_SCHOLAR"
-        String  schoolMotto     = "";        // shown in new layout headers
+        String  layoutStyle     = "WARM_ELEGANCE"; // fixed — single Indra Academy design
+        String  schoolMotto     = "";
+        String  examTerm        = "";  // e.g. "Half-Yearly" → shown as "Half-Yearly Examination"
     }
 
     private BrandingConfig parseBranding(ReportCardTemplateDTO template) {
         BrandingConfig cfg = new BrandingConfig();
+        // Always use fixed Indra Academy design — layoutStyle and primary are hardcoded
         if (template == null || template.getBrandingJson() == null
                 || template.getBrandingJson().isBlank()) return cfg;
         try {
@@ -133,15 +140,13 @@ public class ReportCardPdfGenerator {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = om.readValue(template.getBrandingJson(), Map.class);
 
-            String pc = (String) map.get("primaryColor");
-            if (pc != null) cfg.primary = hexToColor(pc);
-
+            // primaryColor and layoutStyle intentionally ignored — design is fixed
             cfg.showWatermark   = Boolean.TRUE.equals(map.get("showWatermark"));
             cfg.watermarkText   = (String) map.getOrDefault("watermarkText", "");
             cfg.watermarkType   = (String) map.getOrDefault("watermarkType", "TEXT");
             cfg.footerText      = (String) map.getOrDefault("footerText", "");
-            cfg.layoutStyle     = (String) map.getOrDefault("layoutStyle", "CLASSIC");
             cfg.schoolMotto     = (String) map.getOrDefault("schoolMotto", "");
+            cfg.examTerm        = (String) map.getOrDefault("examTerm", "");
 
             Object sc  = map.get("showCgpa");
             if (sc  instanceof Boolean) cfg.showCgpa        = (Boolean) sc;
@@ -180,22 +185,21 @@ public class ReportCardPdfGenerator {
             BrandingConfig branding = parseBranding(data.getTemplate());
             currentVerificationToken = data.getVerificationToken();
 
+            // Always draw parchment background; optionally add watermark on top
+            String watermarkText = null;
+            byte[] watermarkLogoBytes = null;
             if (branding.showWatermark) {
                 if ("LOGO".equalsIgnoreCase(branding.watermarkType)) {
-                    byte[] logoBytes = loadLogoBytes(data.getSchoolLogoUrl());
-                    if (logoBytes != null) {
-                        writer.setPageEvent(new WatermarkEvent(logoBytes));
-                    } else {
-                        // Graceful fallback: logo couldn't be loaded, use text instead
-                        String wm = safe(data.getSchoolName(), "CONFIDENTIAL");
-                        writer.setPageEvent(new WatermarkEvent(wm));
+                    watermarkLogoBytes = loadLogoBytes(data.getSchoolLogoUrl());
+                    if (watermarkLogoBytes == null) {
+                        watermarkText = safe(data.getSchoolName(), "CONFIDENTIAL");
                     }
                 } else {
-                    String wm = (branding.watermarkText != null && !branding.watermarkText.isBlank())
+                    watermarkText = (branding.watermarkText != null && !branding.watermarkText.isBlank())
                             ? branding.watermarkText : safe(data.getSchoolName(), "CONFIDENTIAL");
-                    writer.setPageEvent(new WatermarkEvent(wm));
                 }
             }
+            writer.setPageEvent(new PageSetupEvent(watermarkText, watermarkLogoBytes));
 
             document.open();
 
@@ -213,43 +217,47 @@ public class ReportCardPdfGenerator {
         return baos.toByteArray();
     }
 
-    // ── Watermark ─────────────────────────────────────────────────────────
+    // ── Page setup event: parchment background + optional watermark ──────
 
-    private static class WatermarkEvent extends PdfPageEventHelper {
-        private final String text;        // non-null → text watermark
-        private final byte[] logoBytes;   // non-null → logo watermark
+    private static class PageSetupEvent extends PdfPageEventHelper {
+        private final String text;       // non-null → text watermark
+        private final byte[] logoBytes;  // non-null → logo watermark
 
-        /** Text watermark constructor */
-        WatermarkEvent(String text) {
+        PageSetupEvent(String text, byte[] logoBytes) {
             this.text = text;
-            this.logoBytes = null;
-        }
-
-        /** Logo watermark constructor */
-        WatermarkEvent(byte[] logoBytes) {
-            this.text = null;
             this.logoBytes = logoBytes;
         }
 
         @Override
+        public void onStartPage(PdfWriter writer, Document document) {
+            // Fill entire page with parchment/cream color
+            try {
+                PdfContentByte cb = writer.getDirectContentUnder();
+                cb.saveState();
+                cb.setColorFill(PARCHMENT);
+                cb.rectangle(0, 0,
+                        document.getPageSize().getWidth(),
+                        document.getPageSize().getHeight());
+                cb.fill();
+                cb.restoreState();
+            } catch (Exception ignored) {}
+        }
+
+        @Override
         public void onEndPage(PdfWriter writer, Document document) {
+            if (text == null && logoBytes == null) return;
             try {
                 PdfContentByte cb = writer.getDirectContentUnder();
                 cb.saveState();
                 PdfGState gs = new PdfGState();
 
                 if (logoBytes != null) {
-                    // ── Logo watermark ────────────────────────────────────────
-                    // 12% opacity — visible enough to recognize the logo but
-                    // light enough not to obscure printed text
-                    gs.setFillOpacity(0.12f);
+                    gs.setFillOpacity(0.06f);
                     gs.setBlendMode(PdfGState.BM_NORMAL);
                     cb.setGState(gs);
-
                     Image img = Image.getInstance(logoBytes);
                     float pw = document.getPageSize().getWidth();
                     float ph = document.getPageSize().getHeight();
-                    // Scale logo to fit 50% of the shorter page dimension (centered square)
                     float maxSize = Math.min(pw, ph) * 0.50f;
                     img.scaleToFit(maxSize, maxSize);
                     float x = (pw - img.getScaledWidth())  / 2f;
@@ -257,8 +265,7 @@ public class ReportCardPdfGenerator {
                     img.setAbsolutePosition(x, y);
                     cb.addImage(img);
                 } else {
-                    // ── Text watermark (original behavior) ───────────────────
-                    gs.setFillOpacity(0.07f);
+                    gs.setFillOpacity(0.06f);
                     cb.setGState(gs);
                     cb.beginText();
                     cb.setFontAndSize(
@@ -270,7 +277,6 @@ public class ReportCardPdfGenerator {
                             45f);
                     cb.endText();
                 }
-
                 cb.restoreState();
             } catch (Exception ignored) {}
         }
@@ -443,8 +449,8 @@ public class ReportCardPdfGenerator {
         String layout = branding.layoutStyle;
 
         if ("WARM_ELEGANCE".equals(layout)) {
-            // Double horizontal rule + widely-spaced "R E P O R T  C A R D"
-            addHRule(doc, branding.primary, 4);
+            // Gold horizontal rule + widely-spaced "R E P O R T  C A R D" + gold rule
+            addHRule(doc, GOLD, 4);
             Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 13, TEXT_DARK);
             Paragraph rcTitle = new Paragraph("R E P O R T     C A R D", rcFont);
             rcTitle.setAlignment(Element.ALIGN_CENTER);
@@ -452,7 +458,7 @@ public class ReportCardPdfGenerator {
             rcTitle.setSpacingAfter(3);
             doc.add(rcTitle);
             // Session line
-            String session = buildSessionLine(data);
+            String session = buildSessionLine(data, branding);
             if (!session.isBlank()) {
                 Font sessionFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 8.5f, TEXT_MID);
                 Paragraph sessionPara = new Paragraph(session, sessionFont);
@@ -460,12 +466,11 @@ public class ReportCardPdfGenerator {
                 sessionPara.setSpacingAfter(5);
                 doc.add(sessionPara);
             }
-            addHRule(doc, branding.primary, 8);
+            addHRule(doc, GOLD, 8);
             return;
         }
 
         if ("NAVY_SCHOLAR".equals(layout)) {
-            // Simple separator + large "Report Card" title + underline + session in small caps
             addHRule(doc, new Color(200, 200, 200), 6);
             Font rcFont = FontFactory.getFont(FontFactory.TIMES_BOLD, 22, branding.primary);
             Paragraph rcTitle = new Paragraph("Report Card", rcFont);
@@ -474,9 +479,9 @@ public class ReportCardPdfGenerator {
             rcTitle.setSpacingAfter(2);
             doc.add(rcTitle);
             addHRuleCentered(doc, branding.primary, 4);
-            String session = buildSessionLine(data);
+            String session = buildSessionLine(data, branding);
             if (!session.isBlank()) {
-                Font sessionFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7.5f, new Color(192, 57, 43));
+                Font sessionFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7.5f, GOLD);
                 Paragraph sessionPara = new Paragraph(session.toUpperCase(), sessionFont);
                 sessionPara.setAlignment(Element.ALIGN_CENTER);
                 sessionPara.setSpacingAfter(10);
@@ -515,17 +520,27 @@ public class ReportCardPdfGenerator {
         doc.add(band);
     }
 
-    private String buildSessionLine(ReportCardDataDTO data) {
+    private String buildSessionLine(ReportCardDataDTO data, BrandingConfig branding) {
         StringBuilder meta = new StringBuilder();
         if (data.getSession() != null && !data.getSession().isBlank())
-            meta.append("Academic Session: ").append(data.getSession());
-        if (data.getWeightedResult() != null
-                && data.getWeightedResult().getGroupName() != null
-                && !data.getWeightedResult().getGroupName().isBlank()) {
-            if (meta.length() > 0) meta.append("   \u2022   ");
-            meta.append(data.getWeightedResult().getGroupName());
+            meta.append("Academic Session ").append(data.getSession());
+        // Prefer examTerm from branding; fall back to assessment group name
+        String term = (branding.examTerm != null && !branding.examTerm.isBlank())
+                ? branding.examTerm
+                : (data.getWeightedResult() != null
+                        && data.getWeightedResult().getGroupName() != null
+                        ? data.getWeightedResult().getGroupName() : "");
+        if (!term.isBlank()) {
+            if (meta.length() > 0) meta.append(" \u00b7 ");
+            meta.append(term);
+            if (!term.toLowerCase().contains("exam")) meta.append(" Examination");
         }
         return meta.toString();
+    }
+
+    /** Overload for callers that don't have branding context */
+    private String buildSessionLine(ReportCardDataDTO data) {
+        return buildSessionLine(data, new BrandingConfig());
     }
 
     private void addHRule(Document doc, Color color, float spacingAfter) throws DocumentException {
@@ -630,11 +645,9 @@ public class ReportCardPdfGenerator {
         schoolName.setSpacingAfter(3);
         doc.add(schoolName);
 
-        // Motto (italic, gold/crimson depending on layout)
+        // Motto (italic, gold)
         if (branding.schoolMotto != null && !branding.schoolMotto.isBlank()) {
-            Color mottoColor = "WARM_ELEGANCE".equals(branding.layoutStyle)
-                    ? new Color(154, 122, 26)   // gold
-                    : new Color(192, 57, 43);   // crimson
+            Color mottoColor = GOLD;
             Font mottoFont = FontFactory.getFont(FontFactory.TIMES_ITALIC, 9, mottoColor);
             Paragraph motto = new Paragraph(branding.schoolMotto, mottoFont);
             motto.setAlignment(Element.ALIGN_CENTER);
@@ -1290,7 +1303,7 @@ public class ReportCardPdfGenerator {
         doc.add(sectionTitleBar("RESULT", branding.primary));
 
         boolean pass = wr.getWeightedPercentage() >= 33.0;
-        Color resultColor = pass ? branding.primary : FAIL_COLOR;
+        Color resultColor = pass ? GOLD : FAIL_COLOR;
         String grade = gradeFromPct(wr.getWeightedPercentage(), data.getGradingSystem());
         String pctStr = DF1.format(wr.getWeightedPercentage()) + "%";
 
@@ -1416,8 +1429,8 @@ public class ReportCardPdfGenerator {
         }
         doc.add(table);
 
-        // Footer — small, gray, centered
-        Font footerFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7, new Color(180, 180, 180));
+        // Footer — small, gold, centered
+        Font footerFont = FontFactory.getFont(FontFactory.TIMES_ROMAN, 7, GOLD);
         Paragraph footer = new Paragraph("Powered by Edunexify\u00ae", footerFont);
         footer.setAlignment(Element.ALIGN_CENTER);
         footer.setSpacingBefore(10);
