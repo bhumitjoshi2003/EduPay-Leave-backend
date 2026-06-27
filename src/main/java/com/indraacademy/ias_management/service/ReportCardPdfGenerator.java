@@ -996,8 +996,8 @@ public class ReportCardPdfGenerator {
         subjectTh.setBackgroundColor(headerBg);
         subjectTh.setBorderColor(GOLD);
         subjectTh.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
-        subjectTh.setBorderWidthTop(1f);
-        subjectTh.setBorderWidthBottom(1f);
+        subjectTh.setBorderWidthTop(0.6f);
+        subjectTh.setBorderWidthBottom(0.6f);
         subjectTh.setPadding(cellPad);
         table.addCell(subjectTh);
         for (WeightedGroupResultDTO.MarksTableDTO.ExamColumnDTO col : mt.getExamColumns()) {
@@ -1007,8 +1007,8 @@ public class ReportCardPdfGenerator {
             th.setHorizontalAlignment(Element.ALIGN_CENTER);
             th.setBorderColor(GOLD);
             th.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
-            th.setBorderWidthTop(1f);
-            th.setBorderWidthBottom(1f);
+            th.setBorderWidthTop(0.6f);
+            th.setBorderWidthBottom(0.6f);
             th.setPadding(cellPad);
             table.addCell(th);
         }
@@ -1017,8 +1017,8 @@ public class ReportCardPdfGenerator {
         gradeTh.setHorizontalAlignment(Element.ALIGN_RIGHT);
         gradeTh.setBorderColor(GOLD);
         gradeTh.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
-        gradeTh.setBorderWidthTop(1f);
-        gradeTh.setBorderWidthBottom(1f);
+        gradeTh.setBorderWidthTop(0.6f);
+        gradeTh.setBorderWidthBottom(0.6f);
         gradeTh.setPadding(cellPad);
         table.addCell(gradeTh);
         if (branding.showGradePoints) {
@@ -1027,8 +1027,8 @@ public class ReportCardPdfGenerator {
             gpTh.setHorizontalAlignment(Element.ALIGN_RIGHT);
             gpTh.setBorderColor(GOLD);
             gpTh.setBorder(Rectangle.TOP | Rectangle.BOTTOM);
-            gpTh.setBorderWidthTop(1f);
-            gpTh.setBorderWidthBottom(1f);
+            gpTh.setBorderWidthTop(0.6f);
+            gpTh.setBorderWidthBottom(0.6f);
             gpTh.setPadding(cellPad);
             table.addCell(gpTh);
         }
@@ -1096,7 +1096,7 @@ public class ReportCardPdfGenerator {
             totalLabel.setBackgroundColor(PARCHMENT);
             totalLabel.setBorderColor(GOLD);
             totalLabel.setBorder(Rectangle.TOP);
-            totalLabel.setBorderWidthTop(1.5f);
+            totalLabel.setBorderWidthTop(0.8f);
             totalLabel.setPadding(cellPad);
             table.addCell(totalLabel);
 
@@ -1107,7 +1107,7 @@ public class ReportCardPdfGenerator {
                 tc.setHorizontalAlignment(Element.ALIGN_CENTER);
                 tc.setBorderColor(GOLD);
                 tc.setBorder(Rectangle.TOP);
-                tc.setBorderWidthTop(1.5f);
+                tc.setBorderWidthTop(0.8f);
                 tc.setPadding(cellPad);
                 table.addCell(tc);
             }
@@ -1118,7 +1118,7 @@ public class ReportCardPdfGenerator {
             og.setHorizontalAlignment(Element.ALIGN_RIGHT);
             og.setBorderColor(GOLD);
             og.setBorder(Rectangle.TOP);
-            og.setBorderWidthTop(1.5f);
+            og.setBorderWidthTop(0.8f);
             og.setPadding(cellPad);
             table.addCell(og);
 
@@ -1129,7 +1129,7 @@ public class ReportCardPdfGenerator {
                 gpCell.setHorizontalAlignment(Element.ALIGN_CENTER);
                 gpCell.setBorderColor(GOLD);
                 gpCell.setBorder(Rectangle.TOP);
-                gpCell.setBorderWidthTop(1.5f);
+                gpCell.setBorderWidthTop(0.8f);
                 gpCell.setPadding(cellPad);
                 table.addCell(gpCell);
             }
