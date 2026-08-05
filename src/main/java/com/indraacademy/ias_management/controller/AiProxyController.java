@@ -78,6 +78,18 @@ public class AiProxyController {
             return ResponseEntity.badRequest().body(Map.of("error", "message is required"));
         }
 
+        // conversationId scopes short-term memory in the Python service, keyed together
+        // with the trusted schoolId/userId below. It never crosses tenants or users even
+        // if tampered with, but we still constrain its shape since it flows into a Redis
+        // key downstream.
+        String conversationId = body.get("conversationId");
+        if (conversationId == null || conversationId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "conversationId is required"));
+        }
+        if (conversationId.length() > 100 || !conversationId.matches("[A-Za-z0-9_-]+")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "conversationId is invalid"));
+        }
+
         // These values come from the SecurityContext, populated by JwtAuthFilter
         // after validating the JWT. The client cannot forge these.
         String userId = authService.getUserId();
@@ -108,6 +120,7 @@ public class AiProxyController {
 
         Map<String, Object> aiPayload = new LinkedHashMap<>();
         aiPayload.put("message", message);
+        aiPayload.put("conversationId", conversationId);
         aiPayload.put("user", userCtx);
         aiPayload.put("accessToken", accessTokenCookie.getValue());
 

@@ -39,6 +39,12 @@ jobs:
             cd ~/EduPay-Leave-backend
             git fetch origin && git reset --hard origin/main
 
+            # Shared internal network with the AI service container — lets this
+            # container reach it (and vice versa) by container name instead of
+            # localhost, which doesn't cross container network namespaces.
+            # Idempotent: whichever of the two deploy pipelines runs first creates it.
+            docker network create edunexify-net 2>/dev/null || true
+
             docker stop edunexify-backend-container || true
             docker rm -f edunexify-backend-container || true
 
@@ -54,6 +60,7 @@ jobs:
               --health-timeout=5s \
               --health-retries=3 \
               --name edunexify-backend-container \
+              --network edunexify-net \
               -p 127.0.0.1:8080:8080 \
               -e SPRING_PROFILES_ACTIVE=prod \
               -e SPRING_DATASOURCE_URL='${{ secrets.DB_URL }}' \
@@ -71,4 +78,6 @@ jobs:
               -e FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json \
               -e REDIS_URL='${{ secrets.REDIS_URL }}' \
               -e DEMO_NOTIFY_EMAIL='${{ secrets.DEMO_NOTIFY_EMAIL }}' \
+              -e AI_SERVICE_URL='${{ secrets.AI_SERVICE_URL }}' \
+              -e AI_INTERNAL_SECRET='${{ secrets.AI_INTERNAL_SECRET }}' \
               edunexify-backend
