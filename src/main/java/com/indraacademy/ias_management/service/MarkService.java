@@ -42,6 +42,7 @@ public class MarkService {
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private StudentRepository studentRepository;
 
     // ─── Mark Entry Mode A: by subject ───────────────────────────────────────
 
@@ -383,6 +384,95 @@ public class MarkService {
 
         results.sort(Comparator.comparingInt(ClassStudentResultDTO::getRank));
         return results;
+    }
+
+    // ─── Consolidated exam performance (teacher/admin) ─────────────────────────
+    // Collapses the "resolve latest/named exam, then fetch+aggregate results"
+    // round trip that used to happen client-side (one HTTP call per step, times
+    // one per class for the school-wide view) into single in-process calls.
+
+    @Transactional(readOnly = true)
+    public List<ExamConfig> getExamsForClass(String session, String className) {
+        return examConfigRepository.findBySessionAndClassNameAndSchoolId(session, className, securityUtil.getSchoolId());
+    }
+
+    /** Named exam if given (case-insensitive match), else the most recently created one (highest id). */
+    public Optional<ExamConfig> resolveExam(List<ExamConfig> exams, String examName) {
+        if (examName != null && !examName.isBlank()) {
+            return exams.stream().filter(e -> e.getExamName().equalsIgnoreCase(examName)).findFirst();
+        }
+        return exams.stream().max(Comparator.comparing(ExamConfig::getId));
+    }
+
+    /**
+     * Aggregates one class's one exam into class average, ranked student list, and
+     * subject averages. A rank of 0 (see computeOverallRank) means no mark was
+     * entered for that student — those students are excluded from the ranking and
+     * averages and listed separately in studentsWithNoMarksEntered instead, so they
+     * don't silently drag the class average down as if they'd scored zero.
+     */
+    @Transactional(readOnly = true)
+    public ClassExamPerformanceDTO computeClassExamPerformance(String className, ExamConfig exam) {
+        List<ClassStudentResultDTO> results = getClassResults(className, exam.getId(), null);
+
+        List<ClassStudentResultDTO> scored = results.stream()
+                .filter(r -> r.getRank() != null && r.getRank() > 0)
+                .collect(Collectors.toList());
+        List<String> noMarksEntered = results.stream()
+                .filter(r -> r.getRank() == null || r.getRank() == 0)
+                .map(ClassStudentResultDTO::getStudentName)
+                .collect(Collectors.toList());
+
+        List<ClassExamPerformanceDTO.StudentScoreDTO> ranked = scored.stream()
+                .sorted(Comparator.comparingDouble(ClassStudentResultDTO::getPercentage).reversed())
+                .map(r -> new ClassExamPerformanceDTO.StudentScoreDTO(r.getStudentName(), r.getPercentage(), r.getRank()))
+                .collect(Collectors.toList());
+
+        Double classAvg = scored.isEmpty() ? null
+                : round2(scored.stream().mapToDouble(ClassStudentResultDTO::getPercentage).average().orElse(0));
+
+        Map<String, List<Double>> subjectScores = new LinkedHashMap<>();
+        for (ClassStudentResultDTO r : scored) {
+            for (ClassStudentResultDTO.SubjectMarkDTO s : r.getSubjects()) {
+                if (s.getMarksObtained() != null && s.getMaxMarks() != null && s.getMaxMarks() > 0) {
+                    subjectScores.computeIfAbsent(s.getSubjectName(), k -> new ArrayList<>())
+                            .add(s.getMarksObtained() / s.getMaxMarks() * 100);
+                }
+            }
+        }
+        Map<String, Double> subjectAverages = new LinkedHashMap<>();
+        subjectScores.forEach((subject, scoresList) ->
+                subjectAverages.put(subject, round2(scoresList.stream().mapToDouble(Double::doubleValue).average().orElse(0))));
+
+        return new ClassExamPerformanceDTO(className, exam.getExamName(), classAvg, ranked, noMarksEntered, subjectAverages);
+    }
+
+    /** Every active class's own latest exam performance, in one call — see ClassExamPerformanceDTO. */
+    @Transactional(readOnly = true)
+    public SchoolPerformanceSummaryDTO getSchoolPerformanceSummary(String session) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<String> classNames = studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId);
+
+        List<ClassExamPerformanceDTO> classResults = new ArrayList<>();
+        List<String> noExamConfigured = new ArrayList<>();
+        List<String> examButNoMarks = new ArrayList<>();
+
+        for (String className : classNames) {
+            List<ExamConfig> exams = getExamsForClass(session, className);
+            if (exams.isEmpty()) {
+                noExamConfigured.add(className);
+                continue;
+            }
+            ExamConfig latest = resolveExam(exams, null).orElseThrow();
+            ClassExamPerformanceDTO dto = computeClassExamPerformance(className, latest);
+            if (dto.getStudentsRanked().isEmpty()) {
+                examButNoMarks.add(className);
+                continue;
+            }
+            classResults.add(dto);
+        }
+
+        return new SchoolPerformanceSummaryDTO(session, classResults, noExamConfigured, examButNoMarks);
     }
 
     /**

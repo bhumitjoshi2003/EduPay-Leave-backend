@@ -521,6 +521,7 @@ public class AttendanceService {
                     return new ClassAttendanceSummaryDTO(
                             s.getStudentId(),
                             s.getName(),
+                            className,
                             workingDays,
                             present,
                             absences,
@@ -531,6 +532,23 @@ public class AttendanceService {
                 .collect(Collectors.toList());
 
         log.info("Class summary for {} ({} {}): {} students", className, type, session != null ? session : month + "/" + year, result.size());
+        return result;
+    }
+
+    /**
+     * Same per-student attendance data as getClassSummary, but flattened across every
+     * active class in the school in one call — avoids N separate per-class requests
+     * for school-wide comparisons/low-attendance lookups.
+     */
+    @Transactional(readOnly = true)
+    public List<ClassAttendanceSummaryDTO> getSchoolSummary(String type, Integer month, Integer year, String session) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<String> classNames = studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId);
+
+        List<ClassAttendanceSummaryDTO> result = new ArrayList<>();
+        for (String className : classNames) {
+            result.addAll(getClassSummary(className, type, month, year, session, null));
+        }
         return result;
     }
 

@@ -229,6 +229,31 @@ public class AttendanceController {
     }
 
     /**
+     * GET /api/attendance/summary/school?type=year&session=2025-2026
+     *   ?type=month&month=4&year=2026
+     * Same shape as /summary/class/{className} but flattened across every class in
+     * the school (className is included per row) — for admin-level comparisons and
+     * low-attendance lookups that would otherwise need one request per class.
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @GetMapping("/summary/school")
+    public ResponseEntity<?> getSchoolAttendanceSummary(
+            @RequestParam(defaultValue = "year") String type,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) String session) {
+
+        if (month != null || year != null) {
+            ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
+            if (rangeError != null) return rangeError;
+        }
+
+        log.info("School attendance summary request — type: {}, month: {}, year: {}, session: {}", type, month, year, session);
+        List<ClassAttendanceSummaryDTO> summary = attendanceService.getSchoolSummary(type, month, year, session);
+        return ResponseEntity.ok(summary);
+    }
+
+    /**
      * Validates that month is in [1, 12] and year is in [2000, 2100].
      * Returns a 400 ResponseEntity if invalid, null if valid.
      */

@@ -16,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/marks")
@@ -145,6 +146,54 @@ public class MarkController {
 
         List<ClassStudentResultDTO> results = markService.getClassResults(className, examConfigId, sectionId);
         return ResponseEntity.ok(results);
+    }
+
+    // ─── Consolidated exam performance ─────────────────────────────────────────
+
+    /**
+     * One class's exam, fully aggregated: class average, ranked student list
+     * (top/lowest scorer are just the first/last entries), and subject averages.
+     * TEACHER: only accessible for their own class. ADMIN: full access.
+     * Replaces the old client-side "fetch exam list, pick one, fetch results,
+     * aggregate" round trip with a single call.
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
+    @GetMapping("/class/{className}/exam-performance")
+    public ResponseEntity<?> getClassExamPerformance(
+            @PathVariable String className,
+            @RequestParam String session,
+            @RequestParam(required = false) String examName) {
+        log.info("GET /api/marks/class/{}/exam-performance?session={}&examName={}", className, session, examName);
+        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
+        if (authCheck != null) return authCheck;
+
+        List<com.indraacademy.ias_management.entity.ExamConfig> exams = markService.getExamsForClass(session, className);
+        if (exams.isEmpty()) {
+            return ResponseEntity.ok(Map.of(
+                    "className", className, "session", session, "noExamsYet", true,
+                    "message", "No exams are configured for " + className + " in session " + session + " yet."));
+        }
+
+        var chosen = markService.resolveExam(exams, examName);
+        if (chosen.isEmpty()) {
+            return ResponseEntity.ok(Map.of(
+                    "error", "No exam named '" + examName + "' found for " + className + " in " + session + ".",
+                    "availableExams", exams.stream().map(com.indraacademy.ias_management.entity.ExamConfig::getExamName).toList()));
+        }
+
+        return ResponseEntity.ok(markService.computeClassExamPerformance(className, chosen.get()));
+    }
+
+    /**
+     * Every active class's own latest exam performance, in one call — ADMIN only.
+     * See MarkService.getSchoolPerformanceSummary for why "no exam configured" and
+     * "exam configured but no marks entered" are kept as separate lists.
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @GetMapping("/school/performance-summary")
+    public ResponseEntity<?> getSchoolPerformanceSummary(@RequestParam String session) {
+        log.info("GET /api/marks/school/performance-summary?session={}", session);
+        return ResponseEntity.ok(markService.getSchoolPerformanceSummary(session));
     }
 
     // ─── Helper ───────────────────────────────────────────────────────────────

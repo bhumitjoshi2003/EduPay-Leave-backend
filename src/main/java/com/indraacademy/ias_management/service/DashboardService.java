@@ -149,7 +149,7 @@ public class DashboardService {
                 attendanceRate = Math.round((double) (totalPossible - totalAbsences) / totalPossible * 1000.0) / 10.0;
             }
 
-            result.add(new ClassStatsDto(cls, studentCount, attendanceRate));
+            result.add(new ClassStatsDto(cls, studentCount, attendanceRate, workingDays));
         }
 
         // Sort by class name: numeric classes first (1-12), then non-numeric (LKG, UKG, etc.)
