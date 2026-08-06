@@ -250,18 +250,22 @@ public class AiProxyController {
                 HttpResponse<InputStream> pythonResponse = streamingHttpClient.send(
                         pythonRequest, HttpResponse.BodyHandlers.ofInputStream());
 
-                if (pythonResponse.statusCode() != 200) {
-                    String errorBody = new String(pythonResponse.body().readAllBytes(), StandardCharsets.UTF_8);
-                    log.error("AI stream call returned {} for userId={}: {}", pythonResponse.statusCode(), userId, errorBody);
-                    writeAndFlush(outputStream, "AI Copilot is temporarily unavailable. Please try again later.");
-                    return;
+                try (InputStream pythonBody = pythonResponse.body()) {
+                    if (pythonResponse.statusCode() != 200) {
+                        String errorBody = new String(pythonBody.readAllBytes(), StandardCharsets.UTF_8);
+                        log.error("AI stream call returned {} for userId={}: {}", pythonResponse.statusCode(), userId, errorBody);
+                        writeAndFlush(outputStream, "AI Copilot is temporarily unavailable. Please try again later.");
+                        return;
+                    }
+
+                    copyStream(pythonBody, outputStream);
+                    log.info("AI copilot stream completed for userId={}, role={}", userId, role);
                 }
 
-                copyStream(pythonResponse.body(), outputStream);
-                log.info("AI copilot stream completed for userId={}, role={}", userId, role);
-
             } catch (Exception e) {
-                log.error("AI stream failed for userId={}: {}", userId, e.getMessage());
+                // Full stack trace, not just getMessage() — some IOExceptions (e.g. a
+                // client/proxy hangup mid-write) carry little in the message alone.
+                log.error("AI stream failed for userId={}", userId, e);
                 writeAndFlush(outputStream, "\n\n⚠️ AI Copilot is temporarily unavailable. Please try again later.");
             }
         };
