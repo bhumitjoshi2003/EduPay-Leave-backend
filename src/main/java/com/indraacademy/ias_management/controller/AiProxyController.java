@@ -83,7 +83,15 @@ public class AiProxyController {
     // reads the whole response body before returning, which defeats streaming.
     // HttpClient with BodyHandlers.ofInputStream() hands back a live InputStream
     // we can copy from as bytes arrive. Safe to share across requests/threads.
+    //
+    // version(HTTP_1_1) is required, not cosmetic: HttpClient defaults to attempting
+    // an HTTP/2 (h2c) upgrade even over plain HTTP, and uvicorn only speaks HTTP/1.1.
+    // Against that mismatch the client silently drops the request body — Python saw
+    // a completely empty body (FastAPI 422 "field required", input: null) even though
+    // this code was sending one. Reproduced and confirmed via a standalone HttpClient
+    // call; forcing HTTP/1.1 fixed it immediately.
     private final HttpClient streamingHttpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
@@ -243,7 +251,8 @@ public class AiProxyController {
                         pythonRequest, HttpResponse.BodyHandlers.ofInputStream());
 
                 if (pythonResponse.statusCode() != 200) {
-                    log.error("AI stream call returned {} for userId={}", pythonResponse.statusCode(), userId);
+                    String errorBody = new String(pythonResponse.body().readAllBytes(), StandardCharsets.UTF_8);
+                    log.error("AI stream call returned {} for userId={}: {}", pythonResponse.statusCode(), userId, errorBody);
                     writeAndFlush(outputStream, "AI Copilot is temporarily unavailable. Please try again later.");
                     return;
                 }
