@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -15,8 +16,17 @@ import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 import org.springframework.web.util.WebUtils;
 
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -64,9 +74,18 @@ public class AiProxyController {
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private AdminRepository adminRepository;
+    @Autowired private ObjectMapper objectMapper;
 
     // RestTemplate is fine here — calls are infrequent and latency-bound by LLM anyway.
     private final RestTemplate restTemplate = new RestTemplate();
+
+    // java.net.http.HttpClient (not RestTemplate) for /chat/stream: RestTemplate
+    // reads the whole response body before returning, which defeats streaming.
+    // HttpClient with BodyHandlers.ofInputStream() hands back a live InputStream
+    // we can copy from as bytes arrive. Safe to share across requests/threads.
+    private final HttpClient streamingHttpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
 
     @PostMapping("/chat")
     public ResponseEntity<?> chat(
@@ -144,6 +163,121 @@ public class AiProxyController {
             log.error("AI service call failed for userId={}: {}", userId, e.getMessage());
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "AI Copilot is temporarily unavailable. Please try again later."));
+        }
+    }
+
+    /**
+     * Streaming counterpart to /chat. Same auth, same context-building, same
+     * Python endpoint family (Python's /chat/stream) — the only difference is
+     * that the Python response body is copied to the client as bytes arrive,
+     * instead of being read into a Map first. RestTemplate can't do this (it
+     * buffers the full body before returning), so this uses java.net.http.HttpClient
+     * + StreamingResponseBody instead, which Spring MVC runs on a separate async
+     * thread and flushes to the client as we write to it — no WebFlux required.
+     *
+     * Tool-call turns produce no user-facing content in Python's stream (only
+     * the final turn does), so nothing extra is needed here to "hide" tool
+     * calls — we're a dumb byte pipe, Python already only streams the final answer.
+     */
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_PLAIN_VALUE + ";charset=UTF-8")
+    public ResponseEntity<StreamingResponseBody> chatStream(
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request) {
+
+        String message = body.get("message");
+        if (message == null || message.isBlank()) {
+            return ResponseEntity.badRequest().body(out -> out.write(
+                    "message is required".getBytes(StandardCharsets.UTF_8)));
+        }
+
+        String conversationId = body.get("conversationId");
+        if (conversationId == null || conversationId.isBlank()
+                || conversationId.length() > 100 || !conversationId.matches("[A-Za-z0-9_-]+")) {
+            return ResponseEntity.badRequest().body(out -> out.write(
+                    "conversationId is required and must be alphanumeric".getBytes(StandardCharsets.UTF_8)));
+        }
+
+        String userId = authService.getUserId();
+        String role = authService.getRole();
+        Long schoolId = securityUtil.getSchoolId();
+
+        jakarta.servlet.http.Cookie accessTokenCookie = WebUtils.getCookie(request, "accessToken");
+        if (accessTokenCookie == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(out -> out.write(
+                    "Access token missing".getBytes(StandardCharsets.UTF_8)));
+        }
+
+        Map<String, Object> userCtx = new LinkedHashMap<>();
+        userCtx.put("userId", userId);
+        userCtx.put("role", role);
+        userCtx.put("schoolId", schoolId);
+        userCtx.put("name", resolveName(userId, role, schoolId));
+        userCtx.put("className", resolveClassName(userId, role, schoolId));
+
+        Map<String, Object> aiPayload = new LinkedHashMap<>();
+        aiPayload.put("message", message);
+        aiPayload.put("conversationId", conversationId);
+        aiPayload.put("user", userCtx);
+        aiPayload.put("accessToken", accessTokenCookie.getValue());
+
+        String requestBody;
+        try {
+            requestBody = objectMapper.writeValueAsString(aiPayload);
+        } catch (Exception e) {
+            log.error("Failed to serialize AI payload for userId={}: {}", userId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(out -> out.write(
+                    "Failed to prepare AI request".getBytes(StandardCharsets.UTF_8)));
+        }
+
+        StreamingResponseBody stream = outputStream -> {
+            HttpRequest pythonRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(aiServiceUrl + "/chat/stream"))
+                    .header("Content-Type", "application/json")
+                    .header("X-Internal-Secret", aiInternalSecret)
+                    .timeout(Duration.ofSeconds(90))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
+                    .build();
+
+            try {
+                HttpResponse<InputStream> pythonResponse = streamingHttpClient.send(
+                        pythonRequest, HttpResponse.BodyHandlers.ofInputStream());
+
+                if (pythonResponse.statusCode() != 200) {
+                    log.error("AI stream call returned {} for userId={}", pythonResponse.statusCode(), userId);
+                    writeAndFlush(outputStream, "AI Copilot is temporarily unavailable. Please try again later.");
+                    return;
+                }
+
+                copyStream(pythonResponse.body(), outputStream);
+                log.info("AI copilot stream completed for userId={}, role={}", userId, role);
+
+            } catch (Exception e) {
+                log.error("AI stream failed for userId={}: {}", userId, e.getMessage());
+                writeAndFlush(outputStream, "\n\n⚠️ AI Copilot is temporarily unavailable. Please try again later.");
+            }
+        };
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(MediaType.TEXT_PLAIN_VALUE + ";charset=UTF-8"))
+                .body(stream);
+    }
+
+    /** Copies bytes from Python's response to the client, flushing after every chunk — no buffering. */
+    private void copyStream(InputStream in, OutputStream out) throws Exception {
+        byte[] buffer = new byte[512];
+        int bytesRead;
+        while ((bytesRead = in.read(buffer)) != -1) {
+            out.write(buffer, 0, bytesRead);
+            out.flush();
+        }
+    }
+
+    private void writeAndFlush(OutputStream out, String text) {
+        try {
+            out.write(text.getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        } catch (Exception ignored) {
+            // Client likely already disconnected — nothing more we can do.
         }
     }
 
