@@ -38,6 +38,10 @@ public class KnowledgeChunk {
     @Column(name = "chunk_text", nullable = false, columnDefinition = "TEXT")
     private String chunkText;
 
+    /** 1-indexed PDF page this chunk came from, for citations. Null for DOCX/TXT/MD (no native pagination). */
+    @Column(name = "page_number")
+    private Integer pageNumber;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

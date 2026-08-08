@@ -53,6 +53,18 @@ public class KnowledgeDocumentService {
     @Value("${ai.internal.secret}")
     private String aiInternalSecret;
 
+    /**
+     * Relevance floor for search results — see KnowledgeSearchRepository.search()'s
+     * javadoc for why this exists. 0.35 is an evidence-based starting point, not a
+     * universal constant: measured directly against real text-embedding-3-small
+     * output on a real uploaded test document, genuinely-answering chunks scored
+     * 0.48-0.56 while topically-unrelated chunks scored 0.29-0.34. Expect to retune
+     * this as more real school documents accumulate — externalized as a property
+     * specifically so retuning doesn't require a redeploy.
+     */
+    @Value("${knowledge.search.min-similarity:0.35}")
+    private double minSimilarity;
+
     @Autowired private KnowledgeDocumentRepository documentRepository;
     @Autowired private KnowledgeChunkRepository chunkRepository;
     @Autowired private KnowledgeSearchRepository searchRepository;
@@ -159,6 +171,8 @@ public class KnowledgeDocumentService {
             for (Map<String, Object> chunkData : chunks) {
                 int chunkIndex = ((Number) chunkData.get("chunkIndex")).intValue();
                 String text = (String) chunkData.get("text");
+                Object pageNumberRaw = chunkData.get("pageNumber");
+                Integer pageNumber = pageNumberRaw != null ? ((Number) pageNumberRaw).intValue() : null;
                 List<Number> embeddingRaw = (List<Number>) chunkData.get("embedding");
                 List<Float> embedding = embeddingRaw.stream().map(Number::floatValue).collect(Collectors.toList());
 
@@ -167,6 +181,7 @@ public class KnowledgeDocumentService {
                 chunk.setSchoolId(document.getSchoolId());
                 chunk.setChunkIndex(chunkIndex);
                 chunk.setChunkText(text);
+                chunk.setPageNumber(pageNumber);
                 chunk = chunkRepository.save(chunk);
                 searchRepository.saveEmbedding(chunk.getId(), embedding);
             }
@@ -223,7 +238,7 @@ public class KnowledgeDocumentService {
     public List<KnowledgeSearchResultDTO> search(List<Float> embedding, Integer topK) {
         Long schoolId = securityUtil.getSchoolId();
         int k = (topK == null || topK <= 0) ? TOP_K_DEFAULT : Math.min(topK, TOP_K_MAX);
-        return searchRepository.search(schoolId, embedding, k);
+        return searchRepository.search(schoolId, embedding, k, minSimilarity);
     }
 
     private String extensionOf(String filename) {
