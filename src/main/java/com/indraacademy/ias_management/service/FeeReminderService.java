@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.OverdueStudentDto;
 import com.indraacademy.ias_management.entity.BusFees;
 import com.indraacademy.ias_management.entity.FeeStructure;
+import com.indraacademy.ias_management.entity.FeeStructureRule;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentStatus;
@@ -45,6 +46,7 @@ public class FeeReminderService {
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private FeeStructureRepository feeStructureRepository;
+    @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private BusFeesRepository busFeesRepository;
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private EmailService emailService;
@@ -138,7 +140,11 @@ public class FeeReminderService {
         Map<String, List<StudentFees>> byStudent = overdue.stream()
                 .collect(Collectors.groupingBy(StudentFees::getStudentId));
 
-        // Cache FeeStructure per class to avoid repeated DB hits
+        // Cache per class to avoid repeated DB hits. Dynamic rules are the authoritative,
+        // actively-maintained fee configuration (the admin fee-structure UI writes only to
+        // FeeHead/FeeStructureRule now) — legacy FeeStructure is a fallback for a class/
+        // session that was never migrated, not the primary source. See FeeCalculationService.
+        Map<String, List<FeeStructureRule>> dynamicRulesByClass = new HashMap<>();
         Map<String, FeeStructure> feeStructureByClass = new HashMap<>();
 
         List<OverdueStudentDto> result = new ArrayList<>();
@@ -161,16 +167,27 @@ public class FeeReminderService {
                     .map(sf -> getMonthName(sf.getMonth(), startMonth))
                     .collect(Collectors.toList());
 
-            // totalDue: sum each month's exact amount due (mirrors what the student sees on their receipt).
-            // fs == null means no FeeStructure is configured for this class/session — that's "amount
-            // unknown", NOT "₹0 due". Every month here shares the same fs (looked up once per class),
-            // so this is a clean per-student either-fully-known-or-fully-unknown split, never partial.
+            // totalDue: sum each month's exact amount due (mirrors what the student sees on their
+            // receipt). Dynamic FeeStructureRule is tried first — that's the class's real, current
+            // configuration; legacy FeeStructure is only a fallback for a class/session that was
+            // never migrated onto fee heads. If NEITHER has anything configured, the amount is
+            // genuinely unknown (null), not ₹0 — never fabricate a figure here.
             String cls = student.getClassName();
-            FeeStructure fs = feeStructureByClass.computeIfAbsent(cls,
-                    c -> feeStructureRepository.findByAcademicYearAndClassNameAndSchoolId(session, c, securityUtil.getSchoolId()));
-            Double totalDue = (fs != null)
-                    ? fees.stream().mapToDouble(sf -> amountDueForMonth(fs, sf, session)).sum()
-                    : null;
+            List<FeeStructureRule> dynamicRules = dynamicRulesByClass.computeIfAbsent(cls,
+                    c -> feeCalculationService.loadActiveRules(schoolId, session, c));
+
+            Double totalDue;
+            if (!dynamicRules.isEmpty()) {
+                totalDue = fees.stream()
+                        .mapToDouble(sf -> feeCalculationService.calculateMonthFeeRupees(sf.getMonth(), dynamicRules) + busFeeForMonth(sf, session))
+                        .sum();
+            } else {
+                FeeStructure fs = feeStructureByClass.computeIfAbsent(cls,
+                        c -> feeStructureRepository.findByAcademicYearAndClassNameAndSchoolId(session, c, securityUtil.getSchoolId()));
+                totalDue = (fs != null)
+                        ? fees.stream().mapToDouble(sf -> amountDueForMonth(fs, sf, session)).sum()  // already includes bus fee internally
+                        : null;
+            }
 
             // Last payment date
             String lastPaymentDate = paymentRepository
@@ -265,13 +282,17 @@ public class FeeReminderService {
      * to report partial failures clearly rather than a single opaque number. Does not do
      * its own audit logging — the caller (which also owns the ai_fee_reminder_batch
      * idempotency row) logs one summary entry for the whole batch.
+     *
+     * Uses {@link #sendReminderEmailSync}, NOT {@link #sendReminderEmail} — the async
+     * version can only report "we handed it to the mail system," never a real outcome (see
+     * that method's Javadoc). A caller promising per-student outcomes needs the real thing.
      */
     public Map<String, String> sendReminderEmailsWithOutcomes(List<String> studentIds, String session) {
         Map<String, String> outcomes = new LinkedHashMap<>();
         for (String studentId : studentIds) {
             try {
-                String monthList = sendReminderEmail(studentId, session);
-                outcomes.put(studentId, monthList != null ? "sent" : "failed");
+                boolean sent = sendReminderEmailSync(studentId, session);
+                outcomes.put(studentId, sent ? "sent" : "failed");
             } catch (Exception e) {
                 log.error("Failed to send workflow reminder for student {}: {}", studentId, e.getMessage());
                 outcomes.put(studentId, "failed");
@@ -280,17 +301,16 @@ public class FeeReminderService {
         return outcomes;
     }
 
-    /**
-     * Sends the reminder email for one student. Returns the month list string on success,
-     * or null if the student has no email (caller skips audit logging in that case).
-     */
-    private String sendReminderEmail(String studentId, String session) {
+    private record ReminderEmailContent(String email, String subject, String htmlBody, String monthList) {}
+
+    /** Shared by sendReminderEmail and sendReminderEmailSync — builds the email content,
+     * doesn't send it. Returns null if the student has no email on file. */
+    private ReminderEmailContent buildReminderEmailContent(String studentId, String session) {
         Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
         String email = student.getEmail();
         if (email == null || email.isBlank()) {
-            log.warn("Cannot send reminder: student {} has no email.", studentId);
             return null;
         }
 
@@ -316,9 +336,48 @@ public class FeeReminderService {
                 .map(School::getName).orElse("School");
         String htmlBody = buildFeeReminderHtml(studentName, monthList, session, schoolName);
 
-        emailService.sendHtmlEmail(email, subject, htmlBody);
-        log.info("Fee reminder sent to student {} ({})", studentId, email);
-        return monthList;
+        return new ReminderEmailContent(email, subject, htmlBody, monthList);
+    }
+
+    /**
+     * Sends the reminder email for one student via the existing fire-and-forget
+     * {@link EmailService#sendHtmlEmail}. Returns the month list string as soon as the
+     * student is confirmed to have an email on file — NOT proof of actual delivery.
+     * {@code @Async void sendHtmlEmail} returns before the SMTP call even happens and
+     * catches every exception internally, so nothing here can ever detect a real send
+     * failure. Fine for the interactive single/bulk-send endpoints, where the tradeoff is
+     * a fast HTTP response and a human already watching the result. NOT used by the
+     * AI-workflow dispatch path — see sendReminderEmailSync for why.
+     */
+    private String sendReminderEmail(String studentId, String session) {
+        ReminderEmailContent content = buildReminderEmailContent(studentId, session);
+        if (content == null) {
+            log.warn("Cannot send reminder: student {} has no email.", studentId);
+            return null;
+        }
+        emailService.sendHtmlEmail(content.email(), content.subject(), content.htmlBody());
+        log.info("Fee reminder sent to student {} ({})", studentId, content.email());
+        return content.monthList();
+    }
+
+    /**
+     * Synchronous variant used only by {@link #sendReminderEmailsWithOutcomes} (the
+     * AI-workflow dispatch path). Blocks on the real SMTP round-trip so it can report a
+     * genuine per-student true/false outcome — the async path structurally cannot do this
+     * (see sendReminderEmail's Javadoc). Deliberately not used by the interactive
+     * single/bulk-send endpoints, which keep their existing fast, fire-and-forget behavior.
+     */
+    private boolean sendReminderEmailSync(String studentId, String session) {
+        ReminderEmailContent content = buildReminderEmailContent(studentId, session);
+        if (content == null) {
+            log.warn("Cannot send reminder (sync): student {} has no email.", studentId);
+            return false;
+        }
+        boolean sent = emailService.sendHtmlEmailSync(content.email(), content.subject(), content.htmlBody());
+        if (sent) {
+            log.info("Fee reminder sent (sync) to student {} ({})", studentId, content.email());
+        }
+        return sent;
     }
 
     // ─── Email template ───────────────────────────────────────────────────────
@@ -462,6 +521,18 @@ public class FeeReminderService {
         }
 
         return amount;
+    }
+
+    /** Bus fee for one month's record, if the student takes the bus — used alongside
+     * FeeCalculationService for the dynamic branch, since FeeCalculationService only knows
+     * about FeeHead-configured fees, not the separate distance-based bus fee table.
+     * amountDueForMonth (legacy branch) already includes this inline — don't double-add. */
+    private double busFeeForMonth(StudentFees sf, String session) {
+        if (!Boolean.TRUE.equals(sf.getTakesBus()) || sf.getDistance() == null || sf.getDistance() <= 0) {
+            return 0.0;
+        }
+        java.math.BigDecimal busFee = busFeesRepository.findFeesByDistanceAndAcademicYearAndSchoolId(sf.getDistance(), session, securityUtil.getSchoolId());
+        return busFee != null ? busFee.doubleValue() : 0.0;
     }
 
     /**

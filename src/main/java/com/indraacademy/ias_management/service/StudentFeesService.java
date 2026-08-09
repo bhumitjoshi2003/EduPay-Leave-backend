@@ -1,14 +1,9 @@
 package com.indraacademy.ias_management.service;
 
-import com.indraacademy.ias_management.entity.AcademicSession;
-import com.indraacademy.ias_management.entity.FeeFrequency;
-import com.indraacademy.ias_management.entity.FeeHead;
 import com.indraacademy.ias_management.entity.FeeStructure;
 import com.indraacademy.ias_management.entity.FeeStructureRule;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.StudentFees;
-import com.indraacademy.ias_management.repository.AcademicSessionRepository;
-import com.indraacademy.ias_management.repository.FeeStructureRuleRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -21,7 +16,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Collections;
@@ -37,8 +31,7 @@ public class StudentFeesService {
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private FeeStructureService feeStructureService;
-    @Autowired private FeeStructureRuleRepository feeStructureRuleRepository;
-    @Autowired private AcademicSessionRepository academicSessionRepository;
+    @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private BusFeesService busFeesService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
@@ -142,13 +135,8 @@ public class StudentFeesService {
         List<FeeStructureRule> feeRules = Collections.emptyList();
         if (feeStructure == null) {
             try {
-                Optional<AcademicSession> sessionOpt = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session);
-                if (sessionOpt.isPresent()) {
-                    feeRules = feeStructureRuleRepository.findActiveRules(schoolId, sessionOpt.get().getId(), className, LocalDate.now());
-                    log.info("Loaded {} dynamic fee rules for session {} class {}", feeRules.size(), session, className);
-                } else {
-                    log.warn("Academic session '{}' not found for schoolId={}. amountPaid will be 0.", session, schoolId);
-                }
+                feeRules = feeCalculationService.loadActiveRules(schoolId, session, className);
+                log.info("Loaded {} dynamic fee rules for session {} class {}", feeRules.size(), session, className);
             } catch (Exception e) {
                 log.warn("Could not load dynamic fee rules for session {} class {}. amountPaid will be 0.", session, className, e);
             }
@@ -179,7 +167,7 @@ public class StudentFeesService {
                             }
                         } else {
                             // New dynamic system: sum applicable fee rules in rupees
-                            totalAmount += calculateDynamicMonthFeeRupees(monthNumber, feeRules);
+                            totalAmount += feeCalculationService.calculateMonthFeeRupees(monthNumber, feeRules);
                         }
 
                         if (firstMonth) {
@@ -231,47 +219,6 @@ public class StudentFeesService {
                 "Months: " + payment.getMonth() + ", PaymentId: " + payment.getPaymentId(),
                 "SYSTEM"
         );
-    }
-
-    /**
-     * Calculates the total fee (in rupees) for a given academic month using the dynamic
-     * FeeHead + FeeStructureRule system. Mirrors the frontend's calculateDynamicBreakdown logic.
-     *
-     * Rules with dueMonths containing all 12 months (the admin form default) are scheduled
-     * by frequency instead, matching the frontend's feeAppliesThisMonth() behaviour.
-     */
-    private double calculateDynamicMonthFeeRupees(int academicMonth, List<FeeStructureRule> rules) {
-        double total = 0;
-        for (FeeStructureRule rule : rules) {
-            FeeHead head = rule.getFeeHead();
-            if (head == null || !head.isActive()) continue;
-            if (feeAppliesThisAcademicMonth(academicMonth, head)) {
-                total += rule.getAmount() / 100.0; // paise → rupees
-            }
-        }
-        return total;
-    }
-
-    private boolean feeAppliesThisAcademicMonth(int academicMonth, FeeHead head) {
-        List<Integer> dueMonths;
-        try {
-            dueMonths = objectMapper.readValue(head.getDueMonths(), new TypeReference<List<Integer>>() {});
-        } catch (Exception e) {
-            log.warn("Could not parse dueMonths for fee head id={}: {}", head.getId(), head.getDueMonths());
-            return false;
-        }
-        if (dueMonths.size() == 12) {
-            // All months = admin left the default → derive schedule from frequency
-            FeeFrequency freq = head.getFrequency();
-            if (freq == null) return false;
-            return switch (freq) {
-                case MONTHLY    -> true;
-                case QUARTERLY  -> academicMonth % 3 == 1;   // months 1, 4, 7, 10
-                case SEMI_ANNUAL -> academicMonth == 1 || academicMonth == 7;
-                case ANNUAL, ONE_TIME -> academicMonth == 1;
-            };
-        }
-        return dueMonths.contains(academicMonth);
     }
 
     private int calculateLateFees(int academicFeeMonth) {

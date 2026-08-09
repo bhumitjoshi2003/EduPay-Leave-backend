@@ -61,6 +61,43 @@ public class EmailService {
         }
     }
 
+    /**
+     * Synchronous variant — NOT @Async, blocks until the SMTP send genuinely succeeds or
+     * fails and returns which. sendHtmlEmail() above can't report a real outcome to its
+     * caller by design (it returns before the SMTP call even starts, and swallows every
+     * exception internally) — that's fine for fire-and-forget callers, but wrong for a
+     * caller that needs to know per-recipient success/failure (see
+     * FeeReminderService.sendReminderEmailSync, used only by the AI-workflow dispatch
+     * path — the interactive single/bulk-send endpoints keep using the async version above
+     * so their HTTP response isn't slowed down by real SMTP round-trips).
+     */
+    public boolean sendHtmlEmailSync(String to, String subject, String htmlBody) {
+        if (to == null || to.trim().isEmpty() || subject == null || htmlBody == null) {
+            log.warn("Attempted to send HTML email (sync) with missing required field (To: {}, Subject: {}). Aborting.", to, subject);
+            return false;
+        }
+        try {
+            MimeMessage message = javaMailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(emailSender);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(htmlBody, true);
+            javaMailSender.send(message);
+            log.info("Successfully sent HTML email (sync) to: {}", to);
+            return true;
+        } catch (MessagingException e) {
+            log.error("MessagingException while sending HTML email (sync) to: {}: {}", to, e.getMessage());
+            return false;
+        } catch (MailException e) {
+            log.error("MailException while sending HTML email (sync) to: {}: {}", to, e.getMessage());
+            return false;
+        } catch (Exception e) {
+            log.error("Unexpected error while sending HTML email (sync) to: {}: {}", to, e.getMessage());
+            return false;
+        }
+    }
+
     @Async
     public void sendBulkEmail(List<String> toEmails, String subject, String body, String schoolName) {
         if (toEmails == null || toEmails.isEmpty() || subject == null || body == null) {
