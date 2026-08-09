@@ -1,0 +1,13 @@
+package com.indraacademy.ias_management.repository;
+
+import com.indraacademy.ias_management.entity.AiTraceEvent;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDateTime;
+
+@Repository
+public interface AiTraceEventRepository extends JpaRepository<AiTraceEvent, Long> {
+
+    long deleteByCreatedAtBefore(LocalDateTime cutoff);
+}

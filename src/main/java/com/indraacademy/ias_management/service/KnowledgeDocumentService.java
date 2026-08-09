@@ -40,7 +40,9 @@ public class KnowledgeDocumentService {
 
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("pdf", "docx", "txt", "md");
     private static final long MAX_FILE_SIZE = 20L * 1024 * 1024; // 20 MB
-    private static final int TOP_K_DEFAULT = 5;
+    // Matches tools/knowledge_base.py's _TOP_K, which always sends an explicit
+    // topK — this is just a consistent fallback if some future caller doesn't.
+    private static final int TOP_K_DEFAULT = 3;
     private static final int TOP_K_MAX = 20;
 
     @Value("${knowledge.upload.directory:./uploads/knowledge-base}")
