@@ -45,6 +45,11 @@ public class AiTraceEvent {
     @Column(name = "conversation_id")
     private String conversationId;
 
+    /** Nullable — only set for trace events shipped from the fee-reminder workflow's
+     * start/resume requests, correlating them across those separate HTTP calls. */
+    @Column(name = "workflow_id")
+    private String workflowId;
+
     @Column(name = "user_message", columnDefinition = "TEXT")
     private String userMessage;
 

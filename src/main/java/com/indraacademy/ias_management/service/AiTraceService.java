@@ -30,6 +30,7 @@ public class AiTraceService {
 
         event.setTraceId(request.getTraceId());
         event.setConversationId(request.getConversationId());
+        event.setWorkflowId(request.getWorkflowId());
         event.setUserMessage(request.getUserMessage());
         event.setFinalReply(request.getFinalReply());
         event.setToolsCalledJson(toJson(request.getToolsCalled()));

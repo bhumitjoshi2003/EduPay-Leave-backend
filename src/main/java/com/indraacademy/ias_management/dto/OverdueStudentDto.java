@@ -10,7 +10,9 @@ public class OverdueStudentDto {
     private String parentPhone;
     private String parentEmail;
     private List<String> unpaidMonths;
-    private double totalDue;
+    /** Null means "amount unknown" (no FeeStructure configured for this class/session) —
+     * NOT the same as a genuine ₹0 due. Callers must not treat null as zero. */
+    private Double totalDue;
     private String lastPaymentDate;
     private int daysOverdue;
 
@@ -34,8 +36,8 @@ public class OverdueStudentDto {
     public List<String> getUnpaidMonths() { return unpaidMonths; }
     public void setUnpaidMonths(List<String> unpaidMonths) { this.unpaidMonths = unpaidMonths; }
 
-    public double getTotalDue() { return totalDue; }
-    public void setTotalDue(double totalDue) { this.totalDue = totalDue; }
+    public Double getTotalDue() { return totalDue; }
+    public void setTotalDue(Double totalDue) { this.totalDue = totalDue; }
 
     public String getLastPaymentDate() { return lastPaymentDate; }
     public void setLastPaymentDate(String lastPaymentDate) { this.lastPaymentDate = lastPaymentDate; }

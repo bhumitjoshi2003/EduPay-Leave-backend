@@ -161,13 +161,16 @@ public class FeeReminderService {
                     .map(sf -> getMonthName(sf.getMonth(), startMonth))
                     .collect(Collectors.toList());
 
-            // totalDue: sum each month's exact amount due (mirrors what the student sees on their receipt)
+            // totalDue: sum each month's exact amount due (mirrors what the student sees on their receipt).
+            // fs == null means no FeeStructure is configured for this class/session — that's "amount
+            // unknown", NOT "₹0 due". Every month here shares the same fs (looked up once per class),
+            // so this is a clean per-student either-fully-known-or-fully-unknown split, never partial.
             String cls = student.getClassName();
             FeeStructure fs = feeStructureByClass.computeIfAbsent(cls,
                     c -> feeStructureRepository.findByAcademicYearAndClassNameAndSchoolId(session, c, securityUtil.getSchoolId()));
-            double totalDue = fees.stream()
-                    .mapToDouble(sf -> amountDueForMonth(fs, sf, session))
-                    .sum();
+            Double totalDue = (fs != null)
+                    ? fees.stream().mapToDouble(sf -> amountDueForMonth(fs, sf, session)).sum()
+                    : null;
 
             // Last payment date
             String lastPaymentDate = paymentRepository
@@ -253,6 +256,28 @@ public class FeeReminderService {
             );
         }
         return sent;
+    }
+
+    /**
+     * Sends reminders to all students in the list and returns a per-student outcome map
+     * ("sent" | "failed"), unlike {@link #sendBulkReminders} which only returns a count.
+     * Used by the AI-copilot workflow's dispatch step (AiWorkflowController), which needs
+     * to report partial failures clearly rather than a single opaque number. Does not do
+     * its own audit logging — the caller (which also owns the ai_fee_reminder_batch
+     * idempotency row) logs one summary entry for the whole batch.
+     */
+    public Map<String, String> sendReminderEmailsWithOutcomes(List<String> studentIds, String session) {
+        Map<String, String> outcomes = new LinkedHashMap<>();
+        for (String studentId : studentIds) {
+            try {
+                String monthList = sendReminderEmail(studentId, session);
+                outcomes.put(studentId, monthList != null ? "sent" : "failed");
+            } catch (Exception e) {
+                log.error("Failed to send workflow reminder for student {}: {}", studentId, e.getMessage());
+                outcomes.put(studentId, "failed");
+            }
+        }
+        return outcomes;
     }
 
     /**

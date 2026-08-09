@@ -18,6 +18,7 @@ public class AiTraceRequest {
     private String traceId;
 
     private String conversationId;
+    private String workflowId;
     private String userMessage;
     private String finalReply;
 
@@ -40,6 +41,9 @@ public class AiTraceRequest {
 
     public String getConversationId() { return conversationId; }
     public void setConversationId(String conversationId) { this.conversationId = conversationId; }
+
+    public String getWorkflowId() { return workflowId; }
+    public void setWorkflowId(String workflowId) { this.workflowId = workflowId; }
 
     public String getUserMessage() { return userMessage; }
     public void setUserMessage(String userMessage) { this.userMessage = userMessage; }
