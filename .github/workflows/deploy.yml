@@ -108,7 +108,7 @@ jobs:
                 --health-interval=5s \
                 --health-timeout=5s \
                 --health-retries=3 \
-                --health-start-period=45s \
+                --health-start-period=90s \
                 --name "$CONTAINER" \
                 --network edunexify-net \
                 -p 127.0.0.1:8080:8080 \
@@ -135,12 +135,12 @@ jobs:
             }
 
             # Polls the status docker itself maintains from --health-cmd above, until it
-            # reports healthy/unhealthy or this times out. 24 x 5s = 120s, comfortably
-            # past the 45s start-period + 3x5s retry window the container is configured with.
+            # reports healthy/unhealthy or this times out. 36 x 5s = 180s, comfortably
+            # past the 90s start-period + 3x5s retry window the container is configured with.
             wait_for_healthy() {
-              for i in $(seq 1 24); do
+              for i in $(seq 1 36); do
                 status=$(docker inspect --format='{{.State.Health.Status}}' "$CONTAINER" 2>/dev/null || echo "missing")
-                echo "[$CONTAINER] health check $i/24: $status"
+                echo "[$CONTAINER] health check $i/36: $status"
                 if [ "$status" = "healthy" ]; then
                   return 0
                 fi
