@@ -95,6 +95,9 @@ public class TeacherService {
             }
 
             teacher.setSchoolId(schoolId);
+            // teacher here is the request-body parameter, not existingTeacher fetched
+            // above — see Teacher.markAsExisting()'s Javadoc for why this is required.
+            teacher.markAsExisting();
             Teacher savedTeacher = teacherRepository.save(teacher);
 
             auditService.logUpdate(
@@ -134,6 +137,12 @@ public class TeacherService {
             if (existingTeacher.isPresent()) {
                 log.warn("Teacher with ID {} already exists.", teacher.getTeacherId());
                 throw new IllegalArgumentException("Teacher with ID " + teacher.getTeacherId() + " already exists.");
+            }
+            // Teacher IDs are unique across the entire platform, not just within a school —
+            // see StudentService.addStudent()'s identical check for the full rationale.
+            if (teacherRepository.existsById(teacher.getTeacherId())) {
+                log.warn("Teacher ID {} is already registered under a different school.", teacher.getTeacherId());
+                throw new IllegalArgumentException("Teacher ID " + teacher.getTeacherId() + " is already in use. Teacher IDs must be unique across the entire platform.");
             }
             teacher.setSchoolId(schoolId);
             Teacher savedTeacher = teacherRepository.save(teacher);

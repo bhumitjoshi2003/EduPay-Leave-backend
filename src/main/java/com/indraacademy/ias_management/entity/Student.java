@@ -2,18 +2,30 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.springframework.data.domain.Persistable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * Implements Persistable&lt;String&gt; so save() correctly INSERTs new students and
+ * UPDATEs existing ones. Without this, since studentId is an assigned (non-generated)
+ * @Id, Spring Data's default isNew() check ("is the id null?") is always false — save()
+ * would ALWAYS call entityManager.merge(), never persist(). merge() silently upserts:
+ * if a row with that studentId already exists under a DIFFERENT school, merge() just
+ * overwrites it in place (reassigning it to the new school) instead of failing — this
+ * was a real cross-tenant data-corruption bug, not merely a missing validation.
+ */
 @Entity
 @Table(name = "student", indexes = {
     @Index(name = "idx_student_class_status", columnList = "class_name, status")
 })
 @Data
-public class Student {
+public class Student implements Persistable<String> {
 
     @Column(name = "school_id")
     private Long schoolId;
@@ -90,6 +102,41 @@ public class Student {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    // Defaults true: a freshly-constructed instance (registration form, CSV row) is new
+    // until proven otherwise. @PostLoad flips it false for anything JPA actually loaded
+    // from the DB. Excluded from equals/hashCode/toString — it's lifecycle bookkeeping,
+    // not part of the entity's identity or data.
+    @Transient
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private boolean isNew = true;
+
+    @Override
+    public String getId() {
+        return studentId;
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
+    @PostLoad
+    @PostPersist
+    void markNotNew() {
+        this.isNew = false;
+    }
+
+    /**
+     * Call before save() when this instance was constructed fresh (e.g. deserialized
+     * from a request body) but is known to represent an update of a row that already
+     * exists — without this, save() would try to INSERT it and fail. See
+     * StudentService.updateStudent(), the one call site that needs this explicitly.
+     */
+    public void markAsExisting() {
+        this.isNew = false;
+    }
 
     public Student() {
         this.takesBus = false;

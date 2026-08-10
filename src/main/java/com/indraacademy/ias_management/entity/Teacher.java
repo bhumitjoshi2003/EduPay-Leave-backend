@@ -2,16 +2,22 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.springframework.data.domain.Persistable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/** See Student.java's class Javadoc — same Persistable<String> rationale applies here:
+ * teacherId is an assigned @Id, so save() would otherwise always merge()/upsert instead
+ * of correctly INSERTing new teachers or rejecting a cross-school teacherId collision. */
 @Entity
 @Table(name = "teacher")
 @Data
-public class Teacher {
+public class Teacher implements Persistable<String> {
 
     @Column(name = "school_id")
     private Long schoolId;
@@ -51,6 +57,33 @@ public class Teacher {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Transient
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private boolean isNew = true;
+
+    @Override
+    public String getId() {
+        return teacherId;
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
+    @PostLoad
+    @PostPersist
+    void markNotNew() {
+        this.isNew = false;
+    }
+
+    /** See Student.markAsExisting() — same purpose. Needed by TeacherService.updateTeacher(),
+     * which saves the request-body object directly rather than a JPA-loaded one. */
+    public void markAsExisting() {
+        this.isNew = false;
+    }
 
     public Teacher() {
     }

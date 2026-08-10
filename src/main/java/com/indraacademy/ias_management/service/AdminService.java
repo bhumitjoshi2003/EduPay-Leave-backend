@@ -92,9 +92,9 @@ public class AdminService {
     @Transactional
     public Admin createAdmin(Admin admin, HttpServletRequest request) {
 
-        if (admin == null) {
-            log.warn("Attempted to create a null admin object");
-            throw new IllegalArgumentException("Admin cannot be null");
+        if (admin == null || admin.getAdminId() == null || admin.getAdminId().trim().isEmpty()) {
+            log.warn("Attempted to create an admin with a null/empty Admin object or ID");
+            throw new IllegalArgumentException("Admin object and ID must be provided.");
         }
 
         log.info("Attempting to create a new admin with email: {}", admin.getEmail());
@@ -108,6 +108,14 @@ public class AdminService {
             schoolId = admin.getSchoolId();
         } else {
             schoolId = securityUtil.getSchoolId();
+        }
+
+        // Admin IDs are unique across the entire platform, not just within a school — see
+        // StudentService.addStudent()'s identical check for the full rationale. Unlike
+        // Student/Teacher, this method previously had NO duplicate pre-check at all.
+        if (adminRepository.existsById(admin.getAdminId())) {
+            log.warn("Admin with ID {} already exists.", admin.getAdminId());
+            throw new IllegalArgumentException("Admin with ID " + admin.getAdminId() + " already exists.");
         }
 
         try {

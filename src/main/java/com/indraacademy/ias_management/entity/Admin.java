@@ -2,16 +2,23 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.springframework.data.domain.Persistable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/** See Student.java's class Javadoc — same Persistable<String> rationale applies here:
+ * adminId is an assigned @Id, so save() would otherwise always merge()/upsert instead of
+ * correctly INSERTing new admins or rejecting an adminId collision. AdminService.createAdmin()
+ * previously had no duplicate pre-check at all, so this was this entity's only protection. */
 @Entity
 @Table(name = "admin") // Changed table name to "admin"
 @Data
-public class Admin {
+public class Admin implements Persistable<String> {
 
     @Column(name = "school_id")
     private Long schoolId;
@@ -45,6 +52,34 @@ public class Admin {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Transient
+    @EqualsAndHashCode.Exclude
+    @ToString.Exclude
+    private boolean isNew = true;
+
+    @Override
+    public String getId() {
+        return adminId;
+    }
+
+    @Override
+    public boolean isNew() {
+        return isNew;
+    }
+
+    @PostLoad
+    @PostPersist
+    void markNotNew() {
+        this.isNew = false;
+    }
+
+    /** See Student.markAsExisting() — same purpose, kept for consistency even though
+     * AdminService.updateAdmin() currently always mutates a JPA-loaded instance (so
+     * @PostLoad alone already covers it) rather than a fresh request-body object. */
+    public void markAsExisting() {
+        this.isNew = false;
+    }
 
     // Constructors, getters, and setters (using Lombok's @Data)
     public Admin() {

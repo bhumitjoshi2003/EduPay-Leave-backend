@@ -99,6 +99,15 @@ public class StudentService {
                 log.warn("Student with ID {} already exists in school {}.", student.getStudentId(), schoolId);
                 throw new IllegalArgumentException("Student with ID " + student.getStudentId() + " already exists.");
             }
+            // Student IDs are unique across the entire platform, not just within a school —
+            // studentId is the actual database primary key (see Student.java). This check
+            // catches a cross-school collision with a clear message before save() ever runs;
+            // Student now implementing Persistable also makes save() itself reject a genuine
+            // conflict (INSERT, not silent upsert) as a second layer if this check races.
+            if (studentRepository.existsById(student.getStudentId())) {
+                log.warn("Student ID {} is already registered under a different school.", student.getStudentId());
+                throw new IllegalArgumentException("Student ID " + student.getStudentId() + " is already in use. Student IDs must be unique across the entire platform.");
+            }
 
             LocalDate today = LocalDate.now();
             if (student.getJoiningDate() != null && student.getJoiningDate().isAfter(today)) {
@@ -373,6 +382,11 @@ public class StudentService {
             // Ensure the correct ID and school are set before saving
             updatedStudent.setStudentId(studentId);
             updatedStudent.setSchoolId(schoolId);
+            // updatedStudent is freshly deserialized from the request body, not the
+            // existingStudent loaded above — without this, Persistable.isNew() would
+            // default true and save() would wrongly attempt an INSERT of a row that
+            // already exists. We already confirmed existence at line ~336-339.
+            updatedStudent.markAsExisting();
 
             boolean joiningDateChanged = !Objects.equals(existingStudent.getJoiningDate(), updatedStudent.getJoiningDate());
             boolean leavingDateChanged = !Objects.equals(existingStudent.getLeavingDate(), updatedStudent.getLeavingDate());
