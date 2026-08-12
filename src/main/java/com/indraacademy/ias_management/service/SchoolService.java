@@ -69,6 +69,7 @@ public class SchoolService {
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private com.indraacademy.ias_management.repository.RefundRepository refundRepository;
     @Autowired private SchoolSubscriptionRepository subscriptionRepository;
     @Autowired private PlanRepository planRepository;
     @Autowired private GlobalSubscriptionConfigRepository globalConfigRepository;
@@ -696,8 +697,15 @@ public class SchoolService {
         long activeSchools  = schoolRepository.countByActiveTrue();
         long totalStudents  = studentRepository.count();
         long totalTeachers  = teacherRepository.count();
-        long revenueThisMonth = paymentRepository
+        // Net revenue = gross captured payments − refunds, both computed on their own period
+        // (a refund is a new event in its own period, not a rewrite of the payment's month) —
+        // same principle as the school-scoped dashboard (DashboardService.getStats()); this
+        // platform-wide figure had never been netted against refunds at all before this phase.
+        long grossRevenueThisMonth = paymentRepository
                 .sumAmountCollectedByMonthAndYear(today.getMonthValue(), today.getYear());
+        long refundedThisMonth = refundRepository
+                .sumAmountPaiseByMonthAndYear(today.getMonthValue(), today.getYear());
+        long revenueThisMonth = grossRevenueThisMonth - refundedThisMonth;
         return new SuperAdminDashboardDto(totalSchools, activeSchools, totalStudents, totalTeachers, revenueThisMonth);
     }
 

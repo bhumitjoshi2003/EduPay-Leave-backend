@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.CreditNoteDto;
 import com.indraacademy.ias_management.entity.*;
+import com.indraacademy.ias_management.exception.SystemBFrozenException;
 import com.indraacademy.ias_management.repository.CreditNoteRepository;
 import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -38,87 +39,27 @@ public class CreditNoteService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    /**
+     * FROZEN (architecture decision — StudentFees/Payment/Refund is now the sole canonical
+     * financial system). No new credit notes can be created. Existing ones remain fully
+     * readable via getCreditNotes. If a waiver/write-off capability is needed going forward,
+     * it belongs on the canonical ledger, not this system — see the architecture audit.
+     * See SystemBFrozenException.
+     */
     @Transactional
     public CreditNoteDto createCreditNote(CreditNoteDto dto, HttpServletRequest request) {
-        Long schoolId = securityUtil.getSchoolId();
-
-        // Validate student
-        studentRepository.findByStudentIdAndSchoolId(dto.getStudentId(), schoolId)
-                .orElseThrow(() -> new IllegalArgumentException("Student not found."));
-
-        CreditNote creditNote = new CreditNote();
-        creditNote.setSchoolId(schoolId);
-        creditNote.setStudentId(dto.getStudentId());
-        creditNote.setCreditType(CreditType.valueOf(dto.getCreditType()));
-        creditNote.setAmount(dto.getAmount());
-        creditNote.setReason(dto.getReason());
-        creditNote.setStatus(CreditNoteStatus.PENDING);
-        creditNote.setCreatedBy(securityUtil.getUsername());
-
-        if (dto.getInvoiceId() != null) {
-            Invoice invoice = invoiceRepository.findByIdAndSchoolId(dto.getInvoiceId(), schoolId)
-                    .orElseThrow(() -> new IllegalArgumentException("Invoice not found."));
-            creditNote.setInvoice(invoice);
-        }
-
-        CreditNote saved = creditNoteRepository.save(creditNote);
-
-        try {
-            auditService.log(
-                    securityUtil.getUsername(), securityUtil.getRole(),
-                    "CREATE_CREDIT_NOTE", "CreditNote", String.valueOf(saved.getId()),
-                    null, objectMapper.writeValueAsString(toDto(saved, schoolId)),
-                    request.getRemoteAddr());
-        } catch (JsonProcessingException ignored) {}
-
-        return toDto(saved, schoolId);
+        throw new SystemBFrozenException("creating a credit note");
     }
 
+    /**
+     * FROZEN — same architecture decision as createCreditNote above. No PENDING credit note
+     * can be newly approved (approval is itself a financial-state mutation: it changes
+     * Invoice.balanceDue/amountPaid). Existing APPROVED/APPLIED credit notes are untouched.
+     * See SystemBFrozenException.
+     */
     @Transactional
     public CreditNoteDto approveCreditNote(Long creditNoteId, HttpServletRequest request) {
-        Long schoolId = securityUtil.getSchoolId();
-
-        CreditNote creditNote = creditNoteRepository.findByIdAndSchoolId(creditNoteId, schoolId)
-                .orElseThrow(() -> new IllegalArgumentException("Credit note not found."));
-
-        if (creditNote.getStatus() != CreditNoteStatus.PENDING) {
-            throw new IllegalStateException("Credit note is not in PENDING status.");
-        }
-
-        creditNote.setStatus(CreditNoteStatus.APPROVED);
-        creditNote.setApprovedBy(securityUtil.getUsername());
-        creditNote.setApprovedAt(LocalDateTime.now());
-
-        // If linked to an invoice, apply the credit
-        if (creditNote.getInvoice() != null) {
-            Invoice invoice = creditNote.getInvoice();
-            long newBalance = Math.max(0, invoice.getBalanceDue() - creditNote.getAmount());
-            long creditApplied = invoice.getBalanceDue() - newBalance;
-
-            invoice.setAmountPaid(invoice.getAmountPaid() + creditApplied);
-            invoice.setBalanceDue(newBalance);
-
-            if (newBalance == 0) {
-                invoice.setStatus(InvoiceStatus.PAID);
-            } else if (invoice.getAmountPaid() > 0) {
-                invoice.setStatus(InvoiceStatus.PARTIALLY_PAID);
-            }
-
-            invoiceRepository.save(invoice);
-            creditNote.setStatus(CreditNoteStatus.APPLIED);
-        }
-
-        CreditNote saved = creditNoteRepository.save(creditNote);
-
-        try {
-            auditService.log(
-                    securityUtil.getUsername(), securityUtil.getRole(),
-                    "APPROVE_CREDIT_NOTE", "CreditNote", String.valueOf(saved.getId()),
-                    null, objectMapper.writeValueAsString(toDto(saved, schoolId)),
-                    request.getRemoteAddr());
-        } catch (JsonProcessingException ignored) {}
-
-        return toDto(saved, schoolId);
+        throw new SystemBFrozenException("approving a credit note");
     }
 
     @Transactional(readOnly = true)

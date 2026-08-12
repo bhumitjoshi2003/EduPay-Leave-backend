@@ -39,22 +39,19 @@ public class StudentPromotionService {
     @Autowired private SecurityUtil securityUtil;
 
     /**
-     * Returns the school's active class names in display order (from DB).
-     * Falls back to a default Indian sequence if the school has no classes configured.
+     * Returns the school's active class names in display order (from DB). SchoolClass is
+     * authoritative — a school with no classes configured has no valid promotion sequence,
+     * full stop. A hardcoded fallback sequence here would let promotion silently save a
+     * student against a class name with no matching SchoolClass row, bypassing the same
+     * invariant enforced in addStudent/updateStudent.
      */
     private List<String> getSchoolClassSequence() {
         Long schoolId = securityUtil.getSchoolId();
-        List<String> classes = schoolClassRepository
+        return schoolClassRepository
                 .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
                 .stream()
                 .map(c -> c.getName())
                 .collect(Collectors.toList());
-        if (classes.isEmpty()) {
-            // Fallback for schools with no class management data
-            return List.of("Play Group", "Nursery", "LKG", "UKG",
-                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
-        }
-        return classes;
     }
 
     // ─── Preview ─────────────────────────────────────────────────────────────
@@ -119,33 +116,40 @@ public class StudentPromotionService {
                     String nextClass = determineNextClass(oldClass, seq);
                     if (nextClass == null) {
                         errors.add(new PromotionResultDTO.PromotionError(studentId,
-                                "Cannot promote: '" + oldClass + "' is the final class in the sequence"));
+                                "Cannot promote: '" + oldClass + "' is the final class in the sequence, " +
+                                "or no classes are configured for this school."));
                         continue;
                     }
-                    student.setClassName(nextClass);
 
-                    // Dual-write: resolve className → classId, then handle section
+                    // SchoolClass is authoritative — nextClass is drawn from seq, which is
+                    // itself built from schoolClassRepository, so this should always resolve;
+                    // treated as a hard error rather than silently saved if it somehow doesn't
+                    // (e.g. the class was deleted by another request mid-batch).
                     SchoolClass targetClass = classByName.get(nextClass);
-                    if (targetClass != null) {
-                        Long newClassId = targetClass.getId();
-                        student.setClassId(newClassId);
+                    if (targetClass == null) {
+                        errors.add(new PromotionResultDTO.PromotionError(studentId,
+                                "Cannot promote: target class '" + nextClass + "' is not configured for this school."));
+                        continue;
+                    }
 
-                        // Resolve section for the target class using pre-loaded data
-                        List<Section> targetSections = sectionsByClassId.getOrDefault(newClassId, List.of());
-                        if (targetSections.isEmpty()) {
+                    student.setClassName(targetClass.getName());
+                    student.setClassId(targetClass.getId());
+
+                    // Resolve section for the target class using pre-loaded data
+                    List<Section> targetSections = sectionsByClassId.getOrDefault(targetClass.getId(), List.of());
+                    if (targetSections.isEmpty()) {
+                        student.setSectionId(null);
+                        student.setSectionName(null);
+                    } else if (student.getSectionName() != null) {
+                        Optional<Section> matched = targetSections.stream()
+                                .filter(s -> s.getName().equalsIgnoreCase(student.getSectionName()))
+                                .findFirst();
+                        if (matched.isPresent()) {
+                            student.setSectionId(matched.get().getId());
+                            student.setSectionName(matched.get().getName());
+                        } else {
                             student.setSectionId(null);
                             student.setSectionName(null);
-                        } else if (student.getSectionName() != null) {
-                            Optional<Section> matched = targetSections.stream()
-                                    .filter(s -> s.getName().equalsIgnoreCase(student.getSectionName()))
-                                    .findFirst();
-                            if (matched.isPresent()) {
-                                student.setSectionId(matched.get().getId());
-                                student.setSectionName(matched.get().getName());
-                            } else {
-                                student.setSectionId(null);
-                                student.setSectionName(null);
-                            }
                         }
                     }
 

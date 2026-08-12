@@ -45,6 +45,21 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- Flyway: schema migrations, run automatically by Spring Boot's auto-configuration
+		     on every application startup (before Hibernate's own ddl-auto=validate check) —
+		     see the Phase 5C re-baseline report for why this replaces ddl-auto=update as the
+		     schema-management mechanism. Versions are Spring Boot 3.4.3's managed versions,
+		     not pinned here. flyway-database-postgresql is required alongside flyway-core for
+		     Flyway 10+ to support PostgreSQL (its dialect support was split out of core). -->
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-core</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
@@ -196,6 +211,18 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!-- The project targets Java 21 (see java.version above), but Mockito's
+					     inline class mocking (used for concrete classes like AuditService)
+					     depends on Byte Buddy, which lags behind the newest JDKs. This flag
+					     lets Mockito run on a local/CI JDK newer than what Byte Buddy has
+					     officially certified, without changing what the project targets. -->
+					<argLine>-Dnet.bytebuddy.experimental=true</argLine>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>

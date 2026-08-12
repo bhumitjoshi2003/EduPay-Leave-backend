@@ -1,8 +1,11 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.entity.PaymentOrder;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentFees;
+import com.indraacademy.ias_management.repository.PaymentOrderRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
@@ -20,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -33,14 +37,15 @@ public class RazorpayService {
     private static final Logger log = LoggerFactory.getLogger(RazorpayService.class);
 
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private PaymentOrderRepository paymentOrderRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private AttendanceService attendanceService;
     @Autowired private EmailService emailService;
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private StudentFeesRepository studentFeesRepository;
-    @Autowired private FeeStructureService feeStructureService;
     @Autowired private NotificationService notificationService;
+    @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private SecurityUtil securityUtil;
 
     /** Global fallback keys from application.properties — used when a school has no own keys configured. */
@@ -135,13 +140,20 @@ public class RazorpayService {
 
     /**
      * Calculates the total outstanding balance (in paise) for a student in a given session.
-     * Counts the number of unpaid months and multiplies by an estimated per-month fee.
      * This is a ceiling-based validation: the actual payment can be less (partial payment)
      * but never more than the total outstanding.
+     *
+     * Sums each unpaid row's own stored StudentFees snapshot (baseAmountDue + busFeeDue −
+     * discountAmount) via FeeCalculationService.resolveSchoolFeeDue — the same stable figure
+     * checkout and reminders use — instead of a flat legacy-FeeStructure-based estimate
+     * applied uniformly to every row regardless of its actual class/month. A row with no
+     * trustworthy snapshot AND no dynamic rule to fall back on falls back to a generous flat
+     * estimate (this is a ceiling, not an exact figure — never rejects a legitimate payment
+     * just because one row's exact amount is unknown).
      */
     public long calculateOutstandingBalancePaise(String studentId, String session) {
         Long schoolId = securityUtil.getSchoolId();
-        List<com.indraacademy.ias_management.entity.StudentFees> unpaidFees =
+        List<StudentFees> unpaidFees =
                 studentFeesRepository.findByStudentIdAndSchoolIdAndPaidFalse(studentId, schoolId);
 
         if (unpaidFees.isEmpty()) {
@@ -149,7 +161,7 @@ public class RazorpayService {
         }
 
         // Filter to the requested session only
-        List<com.indraacademy.ias_management.entity.StudentFees> sessionUnpaid = unpaidFees.stream()
+        List<StudentFees> sessionUnpaid = unpaidFees.stream()
                 .filter(f -> session.equals(f.getYear()))
                 .toList();
 
@@ -157,37 +169,22 @@ public class RazorpayService {
             return 0;
         }
 
-        // Estimate a generous upper bound per unpaid month using fee structure + bus fees.
-        // We sum tuition + annual charges + lab + eca + exam + a bus fee estimate + late fee buffer.
-        // This gives a ceiling that the client amount must not exceed.
-        String className = sessionUnpaid.get(0).getClassName();
-        long perMonthEstimatePaise = 0;
-
-        try {
-            com.indraacademy.ias_management.entity.FeeStructure feeStructure =
-                    feeStructureService.getFeeStructuresByAcademicYearAndClassName(session, className);
-            if (feeStructure != null) {
-                // Fee structure amounts are in rupees (double), convert to paise
-                perMonthEstimatePaise = Math.round(feeStructure.getTuitionFee() * 100.0)
-                        + Math.round(feeStructure.getAnnualCharges() * 100.0)
-                        + Math.round(feeStructure.getLabCharges() * 100.0)
-                        + Math.round(feeStructure.getEcaProject() * 100.0)
-                        + Math.round(feeStructure.getExaminationFee() * 100.0);
-            }
-        } catch (Exception e) {
-            log.warn("Could not load fee structure for validation. studentId={} session={} class={}",
-                    studentId, session, className, e);
-        }
-
-        // Add a generous bus fee estimate (max reasonable bus fee per month)
-        long busFeeEstimatePaise = 5000_00L; // Rs 5000 max per month as safety ceiling
+        // Generous flat estimate used only for a row whose amount is genuinely unresolvable
+        // (no trustworthy snapshot, no dynamic rules either) — matches the old estimate's
+        // order of magnitude so an unresolvable row still contributes a real ceiling instead
+        // of silently shrinking the total (which could wrongly reject a legitimate payment).
+        long fallbackPerMonthEstimatePaise = 5000_00L; // Rs 5000
 
         // Add late fee buffer per month
         long lateFeeCeilingPaise = 30L * 21L * 100L; // 30 days * Rs 21/day max late fee tier
 
         long totalCeiling = 0;
-        for (int i = 0; i < sessionUnpaid.size(); i++) {
-            totalCeiling += perMonthEstimatePaise + busFeeEstimatePaise + lateFeeCeilingPaise;
+        for (StudentFees fee : sessionUnpaid) {
+            Optional<BigDecimal> resolved = feeCalculationService.resolveSchoolFeeDue(fee, schoolId, session);
+            long feePaise = resolved
+                    .map(amount -> Math.round(amount.doubleValue() * 100.0))
+                    .orElse(fallbackPerMonthEstimatePaise);
+            totalCeiling += feePaise + lateFeeCeilingPaise;
         }
 
         // Add a 20% safety margin for additional charges, platform fees, etc.
@@ -216,8 +213,35 @@ public class RazorpayService {
             options.put("payment_capture", 1);
 
             Order order = getRazorpayClient().Orders.create(options);
+            String orderId = (String) order.get("id");
 
-            String schoolName = schoolRepository.findById(securityUtil.getSchoolId() != null ? securityUtil.getSchoolId() : -1L)
+            // Persist the order server-side NOW, while every field here is still trusted
+            // (the caller — PaymentController — has already verified the student identity
+            // for this request). verifyPayment() below looks this row up by orderId instead
+            // of trusting whatever a client claims the order was for at verify time — a
+            // Razorpay signature only proves a payment was captured for this orderId, never
+            // which student/amount/months it was actually created for.
+            Long schoolId = securityUtil.getSchoolId();
+            PaymentOrder paymentOrder = new PaymentOrder();
+            paymentOrder.setOrderId(orderId);
+            paymentOrder.setSchoolId(schoolId);
+            paymentOrder.setStudentId(studentId);
+            paymentOrder.setClassName(className);
+            paymentOrder.setSession(session);
+            paymentOrder.setMonth(month);
+            paymentOrder.setAmount(amount);
+            paymentOrder.setBusFee(busFee != null ? busFee : 0);
+            paymentOrder.setTuitionFee(tuitionFee);
+            paymentOrder.setAnnualCharges(annualCharges);
+            paymentOrder.setLabCharges(labCharges);
+            paymentOrder.setEcaProject(ecaProject);
+            paymentOrder.setExaminationFee(examinationFee);
+            paymentOrder.setAdditionalCharges(additionalCharges);
+            paymentOrder.setLateFees(lateFees);
+            paymentOrder.setPlatformFee(platformFee);
+            paymentOrderRepository.save(paymentOrder);
+
+            String schoolName = schoolRepository.findById(schoolId != null ? schoolId : -1L)
                     .map(School::getName).orElse("School");
 
             Map<String, Object> response = new HashMap<>();
@@ -253,14 +277,33 @@ public class RazorpayService {
         }
     }
 
+    /**
+     * Verifies a Razorpay payment signature for the CURRENT caller's school (own keys if
+     * configured, else the global fallback) — the same check verifyPayment() below does,
+     * exposed for other services (e.g. FeePaymentService) that record a Razorpay-mode
+     * payment through a different path but must not skip this proof. A signature is the
+     * ONLY evidence that a payment was genuinely captured by Razorpay for this orderId —
+     * without it, a caller could claim any paymentId/orderId pair succeeded.
+     */
+    public boolean verifyPaymentSignatureForCurrentSchool(String orderId, String paymentId, String signature) {
+        if (orderId == null || paymentId == null || signature == null) {
+            return false;
+        }
+        try {
+            return Utils.verifySignature(orderId + "|" + paymentId, signature, resolveKeySecret());
+        } catch (RazorpayException e) {
+            log.error("Signature verification error for orderId={}", orderId, e);
+            return false;
+        }
+    }
+
     public Map<String, Object> verifyPayment(Map<String, String> paymentData, Map<String, Object> orderDetails) {
         Map<String, Object> response = new HashMap<>();
         String paymentId = paymentData != null ? paymentData.get("razorpay_payment_id") : null;
         String orderId = paymentData != null ? paymentData.get("razorpay_order_id") : null;
         String signature = paymentData != null ? paymentData.get("razorpay_signature") : null;
-        String studentId = orderDetails != null ? (String) orderDetails.get("studentId") : "N/A";
 
-        log.info("Starting payment verification for Order ID: {} and Student ID: {}", orderId, studentId);
+        log.info("Starting payment verification for Order ID: {}", orderId);
 
         if (paymentId == null || orderId == null || signature == null) {
             log.error("Payment verification data is incomplete. Order ID: {}", orderId);
@@ -271,7 +314,10 @@ public class RazorpayService {
 
         String payload = null;
         try {
-            // 1. Signature Verification
+            // 1. Signature Verification — proves a real payment was captured for this
+            //    orderId. It does NOT prove which student/amount/months that order was
+            //    for — that's what the lookup below establishes, from what WE persisted
+            //    when the order was created, never from client-supplied data.
             payload = orderId + "|" + paymentId;
             boolean isValid = Utils.verifySignature(payload, signature, resolveKeySecret());
 
@@ -283,8 +329,8 @@ public class RazorpayService {
             }
             log.info("Signature verified successfully for Payment ID: {}", paymentId);
 
-            // 2. Idempotency check — if this paymentId was already persisted, return success
-            //    without creating a duplicate record (handles client retries gracefully).
+            // 2. Idempotency check — if this exact paymentId was already persisted, return
+            //    success without creating a duplicate record (handles client retries).
             if (paymentRepository.existsByPaymentId(paymentId)) {
                 log.warn("Duplicate verify call for Payment ID: {} — already persisted, returning success.", paymentId);
                 response.put("success", true);
@@ -292,38 +338,89 @@ public class RazorpayService {
                 return response;
             }
 
-            // 3. Data Persistence and Post-Payment Logic (only if signature is valid)
+            // 3. Look up the server-persisted order — the actual source of truth for
+            //    studentId/amount/months/class/session. A forged or unknown orderId
+            //    (one this school never created via /create) is rejected here.
+            PaymentOrder paymentOrder = paymentOrderRepository.findByOrderId(orderId).orElse(null);
+            if (paymentOrder == null) {
+                log.error("No server-side order record found for Order ID: {} — rejecting.", orderId);
+                response.put("success", false);
+                response.put("message", "Payment Verification Failed: Unknown order.");
+                return response;
+            }
+            Long schoolId = securityUtil.getSchoolId();
+            if (!paymentOrder.getSchoolId().equals(schoolId)) {
+                log.error("Order {} belongs to schoolId={} but caller is schoolId={} — rejecting.",
+                        orderId, paymentOrder.getSchoolId(), schoolId);
+                response.put("success", false);
+                response.put("message", "Payment Verification Failed: Order does not belong to this school.");
+                return response;
+            }
+            if (paymentOrder.isConsumed()) {
+                // Already-consumed orders with a DIFFERENT paymentId than what consumed
+                // them (the identical-paymentId retry case was already handled by the
+                // existsByPaymentId check above) — a second, different payment being
+                // matched against an already-used order is exactly the replay this table
+                // exists to prevent.
+                log.error("Order {} was already consumed — rejecting reuse with Payment ID: {}.", orderId, paymentId);
+                response.put("success", false);
+                response.put("message", "Payment Verification Failed: Order already used.");
+                return response;
+            }
+
+            String studentId = paymentOrder.getStudentId();
+            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
+            String studentName = studentOptional.map(Student::getName).orElse(studentId);
+
+            // 4. Data Persistence and Post-Payment Logic — every business field below
+            //    comes from paymentOrder (server-trusted), never from the orderDetails
+            //    map the client sends alongside the verify request.
             Payment payment = new Payment();
             payment.setStudentId(studentId);
-            payment.setStudentName((String) orderDetails.get("studentName"));
-            payment.setClassName((String) orderDetails.get("className"));
-            payment.setSession((String) orderDetails.get("session"));
-            payment.setMonth((String) orderDetails.get("month"));
-            // Store amount in paise directly — never use floating-point for money.
-            // The Payment entity's int fields now hold paise values.
-            Integer amountInPaise = (Integer) orderDetails.get("amount");
+            payment.setStudentName(studentName);
+            payment.setClassName(paymentOrder.getClassName());
+            payment.setSession(paymentOrder.getSession());
+            payment.setMonth(paymentOrder.getMonth());
+            int amountInPaise = paymentOrder.getAmount();
             payment.setAmount(amountInPaise); // Stored in paise
             payment.setPaymentId(paymentId);
             payment.setOrderId(orderId);
-            payment.setBusFee((Integer) orderDetails.get("busFee"));
-            payment.setTuitionFee((Integer) orderDetails.get("tuitionFee"));
-            payment.setAnnualCharges((Integer) orderDetails.get("annualCharges"));
-            payment.setLabCharges((Integer) orderDetails.get("labCharges"));
-            payment.setEcaProject((Integer) orderDetails.get("ecaProject"));
-            payment.setExaminationFee((Integer) orderDetails.get("examinationFee"));
+            payment.setBusFee(paymentOrder.getBusFee());
+            payment.setTuitionFee(paymentOrder.getTuitionFee());
+            payment.setAnnualCharges(paymentOrder.getAnnualCharges());
+            payment.setLabCharges(paymentOrder.getLabCharges());
+            payment.setEcaProject(paymentOrder.getEcaProject());
+            payment.setExaminationFee(paymentOrder.getExaminationFee());
             payment.setPaidManually(false);
             payment.setAmountPaid(amountInPaise); // Stored in paise
             payment.setRazorpaySignature(signature);
-            payment.setAdditionalCharges((Integer) orderDetails.get("additionalCharges"));
-            payment.setLateFees((Integer) orderDetails.get("lateFees"));
-            payment.setPlatformFee((Integer) orderDetails.get("platformFee"));
-            payment.setSchoolId(securityUtil.getSchoolId());
+            payment.setAdditionalCharges(paymentOrder.getAdditionalCharges());
+            payment.setLateFees(paymentOrder.getLateFees());
+            payment.setPlatformFee(paymentOrder.getPlatformFee());
+            payment.setSchoolId(schoolId);
 
-            Payment savedPayment = paymentRepository.save(payment);
+            Payment savedPayment;
+            try {
+                savedPayment = paymentRepository.save(payment);
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                // A concurrent request (e.g. a duplicate webhook firing alongside this
+                // client-triggered verify) already saved a Payment with this exact
+                // payment_id between the existsByPaymentId check above and this save — the
+                // DB unique constraint on payment.payment_id (added this phase) is the real
+                // backstop for that race. Treat it the same as the early existsByPaymentId
+                // short-circuit: already processed, not a failure.
+                log.warn("Duplicate payment save race detected for paymentId={} — already recorded by a concurrent request.", paymentId, e);
+                response.put("success", true);
+                response.put("message", "Payment already verified.");
+                return response;
+            }
             log.info("Payment saved successfully to DB. Record ID: {}", savedPayment.getId());
 
+            paymentOrder.setConsumed(true);
+            paymentOrderRepository.save(paymentOrder);
+
             // 3. Update related services
-            attendanceService.updateChargePaidAfterPayment(studentId, (String) orderDetails.get("session"));
+            attendanceService.updateChargePaidAfterPayment(studentId, paymentOrder.getSession());
             studentFeesService.markFeesAsPaid(payment);
             log.debug("Attendance and StudentFees marked as paid.");
 
@@ -344,19 +441,16 @@ public class RazorpayService {
             log.info("Payment success notification initiated for student ID: {}", studentId);
 
             // 5. Asynchronous Email Sending
-            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
-
             if (studentOptional.isPresent()) {
                 Student student = studentOptional.get();
                 String studentEmail = student.getEmail();
-                String studentName = student.getName();
 
                 if (studentEmail != null && !studentEmail.trim().isEmpty()) {
                     String subject     = "Payment Confirmation – Fee Receipt";
-                    String session     = (String) orderDetails.get("session");
-                    String monthBitmask = (String) orderDetails.get("month");
-                    String monthNames  = convertMonthBitmask(monthBitmask);
-                    String schoolName = schoolRepository.findById(securityUtil.getSchoolId())
+                    String session     = paymentOrder.getSession();
+                    String monthBitmask = paymentOrder.getMonth();
+                    String monthNames  = convertMonthBitmask(monthBitmask, schoolId);
+                    String schoolName = schoolRepository.findById(schoolId)
                             .map(com.indraacademy.ias_management.entity.School::getName).orElse("School");
                     String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, displayAmountRupees, session, monthNames, schoolName);
 
@@ -391,17 +485,17 @@ public class RazorpayService {
         }
     }
 
-    private static final String[] ACADEMIC_MONTHS = {
-        "April", "May", "June", "July", "August", "September",
-        "October", "November", "December", "January", "February", "March"
-    };
-
-    /** Converts a 12-char bitmask like "010000000000" to "May", or "April, May" for multi-month. */
-    private String convertMonthBitmask(String bitmask) {
+    /** Converts a 12-char academic-month bitmask like "010000000000" to a real calendar
+     * month name ("May"), or "April, May" for multi-month — using the paying student's own
+     * school's configured academicYearStartMonth, not a hardcoded April-first array (bit
+     * position i = academic month i+1, per StudentFees.month's convention). */
+    private String convertMonthBitmask(String bitmask, Long schoolId) {
         if (bitmask == null || bitmask.isBlank()) return "—";
+        int startMonth = schoolRepository.findById(schoolId)
+                .map(School::getAcademicYearStartMonth).orElse(4);
         List<String> selected = new ArrayList<>();
         for (int i = 0; i < Math.min(bitmask.length(), 12); i++) {
-            if (bitmask.charAt(i) == '1') selected.add(ACADEMIC_MONTHS[i]);
+            if (bitmask.charAt(i) == '1') selected.add(feeCalculationService.getMonthName(i + 1, startMonth));
         }
         return selected.isEmpty() ? "—" : String.join(", ", selected);
     }

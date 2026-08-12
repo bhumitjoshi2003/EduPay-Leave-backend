@@ -1,7 +1,9 @@
 package com.indraacademy.ias_management.repository;
 
 import com.indraacademy.ias_management.entity.StudentFees;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -17,6 +19,19 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
     void deleteByStudentIdAndSchoolId(String studentId, Long schoolId);
 
     StudentFees findByStudentIdAndSchoolIdAndYearAndMonth(String studentId, Long schoolId, String year, Integer month);
+
+    /** Same lookup, but takes a row-level write lock for the duration of the caller's
+     * transaction — used wherever a payment or refund is about to mutate this row's
+     * paid/amountPaid state, so two concurrent operations against the same student-month
+     * (e.g. two simultaneous payments, or a payment racing a refund) serialize instead of
+     * one silently clobbering the other's update. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT sf FROM StudentFees sf WHERE sf.studentId = :studentId AND sf.schoolId = :schoolId AND sf.year = :year AND sf.month = :month")
+    StudentFees findByStudentIdAndSchoolIdAndYearAndMonthForUpdate(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("year") String year, @Param("month") Integer month);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT sf FROM StudentFees sf WHERE sf.id = :id")
+    StudentFees findByIdForUpdate(@Param("id") Long id);
 
     @Query("SELECT DISTINCT sf.year FROM StudentFees sf WHERE sf.studentId = :studentId AND sf.schoolId = :schoolId")
     List<String> findDistinctYearsByStudentIdAndSchoolId(@Param("studentId") String studentId, @Param("schoolId") Long schoolId);

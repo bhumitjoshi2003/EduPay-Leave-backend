@@ -3,14 +3,18 @@ package com.indraacademy.ias_management.exception;
 import com.indraacademy.ias_management.dto.ErrorResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.MessageSourceResolvable;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
 import java.util.NoSuchElementException;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -24,6 +28,30 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse(400, "Bad Request", ex.getMessage()));
+    }
+
+    /**
+     * 400 — method-parameter validation failure (e.g. {@code @Valid} on a {@code List<>}
+     * {@code @RequestBody}/{@code @RequestParam}, as opposed to a single {@code @Valid}
+     * object, which raises {@link org.springframework.web.bind.MethodArgumentNotValidException}
+     * instead). This exception subclasses {@code ResponseStatusException} and already carries
+     * its own 400 status — without this handler it was falling through to {@link #handleGeneric},
+     * turning a legitimate client validation error into a misleading 500.
+     */
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ErrorResponse> handleHandlerMethodValidation(HandlerMethodValidationException ex) {
+        String message = ex.getParameterValidationResults().stream()
+                .flatMap(result -> result.getResolvableErrors().stream())
+                .map(MessageSourceResolvable::getDefaultMessage)
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining("; "));
+        if (message.isBlank()) {
+            message = "Validation failed.";
+        }
+        log.warn("Bad request (method validation): {}", message);
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse(400, "Bad Request", message));
     }
 
     /** 404 — resource not found */

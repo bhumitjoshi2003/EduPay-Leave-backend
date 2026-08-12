@@ -1,6 +1,8 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.LimitType;
+import com.indraacademy.ias_management.entity.SchoolClass;
+import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.User;
@@ -71,6 +73,41 @@ public class StudentService {
                 : (year - 1) + "-" + year;
     }
 
+    /**
+     * Resolves {@code className} against the school's configured SchoolClass rows.
+     * SchoolClass is the single source of truth for which classes exist — a student
+     * can never be created/updated against a free-text class name that wasn't first
+     * created in Class Management.
+     */
+    private SchoolClass resolveAndValidateClass(Long schoolId, String className) {
+        if (className == null || className.isBlank()) {
+            throw new IllegalArgumentException("Class is required.");
+        }
+        return schoolClassRepository.findBySchoolIdAndName(schoolId, className.trim())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Class '" + className + "' is not configured for this school. " +
+                        "Please add it in Class Management before assigning students to it."));
+    }
+
+    /**
+     * If a sectionId is supplied, validates it belongs to this school AND to the
+     * already-resolved class, then sets the canonical sectionName. A cross-school or
+     * cross-class section is rejected rather than silently accepted or dropped.
+     */
+    private void resolveAndValidateSection(Long schoolId, SchoolClass schoolClass, Student student) {
+        if (student.getSectionId() == null) {
+            return;
+        }
+        Section section = sectionRepository.findByIdAndSchoolId(student.getSectionId(), schoolId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Section not found for this school."));
+        if (!section.getClassId().equals(schoolClass.getId())) {
+            throw new IllegalArgumentException(
+                    "Section '" + section.getName() + "' does not belong to class '" + schoolClass.getName() + "'.");
+        }
+        student.setSectionName(section.getName());
+    }
+
     @Transactional(readOnly = true)
     public List<Student> searchStudents(String query) {
         if (query == null || query.trim().length() < 2) return List.of();
@@ -117,16 +154,11 @@ public class StudentService {
                 student.setStatus(StudentStatus.ACTIVE);
             }
             student.setSchoolId(schoolId);
-            // Dual-write: resolve className → classId
-            if (student.getClassId() == null && student.getClassName() != null) {
-                schoolClassRepository.findBySchoolIdAndName(schoolId, student.getClassName())
-                        .ifPresent(sc -> student.setClassId(sc.getId()));
-            }
-            // Dual-write: resolve sectionId → sectionName
-            if (student.getSectionId() != null) {
-                sectionRepository.findByIdAndSchoolId(student.getSectionId(), schoolId)
-                        .ifPresent(sec -> student.setSectionName(sec.getName()));
-            }
+            // SchoolClass is authoritative — reject unconfigured classes and never leave classId null.
+            SchoolClass schoolClass = resolveAndValidateClass(schoolId, student.getClassName());
+            student.setClassName(schoolClass.getName());
+            student.setClassId(schoolClass.getId());
+            resolveAndValidateSection(schoolId, schoolClass, student);
             Student savedStudent = studentRepository.save(student);
 
             auditService.log(
@@ -350,6 +382,17 @@ public class StudentService {
 
             Student existingStudent = existingStudentOptional.get();
 
+            // SchoolClass is authoritative — validated early, before any class-change side
+            // effects (fee recalculation below) run for a class that may not even exist.
+            SchoolClass schoolClass = resolveAndValidateClass(schoolId, updatedStudent.getClassName());
+            updatedStudent.setClassName(schoolClass.getName());
+            updatedStudent.setClassId(schoolClass.getId());
+            if (updatedStudent.getSectionId() != null) {
+                resolveAndValidateSection(schoolId, schoolClass, updatedStudent);
+            } else {
+                updatedStudent.setSectionName(null);
+            }
+
             // Comparison logic: uses Objects.equals for safe comparison
             boolean emailChanged = !Objects.equals(existingStudent.getEmail(), updatedStudent.getEmail());
             boolean classChanged = !Objects.equals(existingStudent.getClassName(), updatedStudent.getClassName());
@@ -403,18 +446,6 @@ public class StudentService {
 
             String oldValue = objectMapper.writeValueAsString(existingStudentOptional.get());
 
-            // Dual-write: resolve className → classId
-            if (updatedStudent.getClassName() != null) {
-                schoolClassRepository.findBySchoolIdAndName(schoolId, updatedStudent.getClassName())
-                        .ifPresent(sc -> updatedStudent.setClassId(sc.getId()));
-            }
-            // Dual-write: resolve sectionId → sectionName
-            if (updatedStudent.getSectionId() != null) {
-                sectionRepository.findByIdAndSchoolId(updatedStudent.getSectionId(), schoolId)
-                        .ifPresent(sec -> updatedStudent.setSectionName(sec.getName()));
-            } else {
-                updatedStudent.setSectionName(null);
-            }
             Student savedStudent = studentRepository.save(updatedStudent);
 
             auditService.logUpdate(
@@ -444,8 +475,8 @@ public class StudentService {
         } catch (DataAccessException e) {
             log.error("Data access error while updating student with ID: {}", studentId, e);
             throw new RuntimeException("Failed to update student due to a database issue.", e);
-        } catch (NoSuchElementException e) {
-            // Re-throw specific business exceptions
+        } catch (NoSuchElementException | IllegalArgumentException e) {
+            // Re-throw specific business exceptions (e.g. class/section validation failures)
             throw e;
         } catch (Exception e) {
             log.error("Unexpected error while updating student with ID: {}", studentId, e);

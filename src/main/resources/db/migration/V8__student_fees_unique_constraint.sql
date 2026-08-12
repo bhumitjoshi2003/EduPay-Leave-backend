@@ -1,0 +1,38 @@
+-- Integrity-hardening phase: a student's fee row for a given (school, session, academic
+-- month) has never had a DB-level uniqueness guarantee — only a plain, non-unique index
+-- (idx_student_fees_student_year_month). Nothing has ever stopped a double-click on
+-- registration, a retried createDefaultStudentFees call, or a race between two concurrent
+-- generation requests from creating two rows for the same student-month. Since this session
+-- introduced payment_student_fees_allocation with a hard FK to student_fees.id, a "duplicate"
+-- row is no longer just untidy — it can now hold real, FK-referenced payment history,
+-- which is exactly why this migration does NOT attempt to silently delete or merge
+-- duplicates itself.
+--
+-- Before this migration is deployed against a real database, run the following read-only
+-- query to check for pre-existing duplicates:
+--
+--   SELECT school_id, student_id, year, month, COUNT(*), array_agg(id) AS row_ids
+--   FROM student_fees
+--   GROUP BY school_id, student_id, year, month
+--   HAVING COUNT(*) > 1;
+--
+-- If that query returns any rows, this migration WILL fail (Postgres refuses to build a
+-- unique index over duplicate keys) and deployment should be paused until each duplicate
+-- group is manually reviewed and reconciled — never auto-resolved by a migration script.
+-- Recommended per-group resolution, in priority order:
+--   1. If one row in the group has payment_student_fees_allocation rows pointing to it and
+--      the other(s) don't, the allocated row is almost certainly the real one — keep it,
+--      and after confirming the other has no allocations/refund history, remove it.
+--   2. If more than one row in a group has allocations, this is a genuine data problem
+--      (money was recorded against two different rows for the same student-month) and needs
+--      a manual accounting decision, not an automated merge — allocations must never be
+--      silently reassigned between StudentFees rows.
+--   3. If neither row has allocations, prefer keeping the one with a trustworthy snapshot
+--      (snapshot_status = 'COMPUTED') and the most recent amount_computed_at.
+--
+-- No duplicates are expected in a freshly-deployed or actively-maintained environment (the
+-- application-level guard added alongside this migration prevents new ones from this point
+-- forward), but this cannot be verified without access to the actual target database.
+ALTER TABLE student_fees
+    ADD CONSTRAINT uq_student_fees_school_student_year_month
+    UNIQUE (school_id, student_id, year, month);

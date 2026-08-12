@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.FeePaymentDto;
 import com.indraacademy.ias_management.dto.RecordPaymentRequest;
 import com.indraacademy.ias_management.entity.*;
+import com.indraacademy.ias_management.exception.SystemBFrozenException;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -48,104 +49,23 @@ public class FeePaymentService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private RazorpayService razorpayService;
+
     /**
      * Record a payment and allocate it against invoices.
      * This handles both online (Razorpay) and manual (cash/cheque) payments.
+     *
+     * FROZEN (architecture decision — StudentFees/Payment/PaymentStudentFeesAllocation/
+     * Refund is now the sole canonical financial system): the guard below rejects every
+     * call before any read or write happens. The rest of the method — unreachable but
+     * kept exactly as it was — is what existing FeePayment/PaymentAllocation rows were
+     * created by; nothing here was deleted, and un-freezing later (if ever) is a one-line
+     * revert of the guard. See SystemBFrozenException.
      */
     @Transactional
     public FeePaymentDto recordPayment(RecordPaymentRequest request, HttpServletRequest httpRequest) {
-        Long schoolId = securityUtil.getSchoolId();
-
-        // Validate student belongs to this school
-        Student student = studentRepository.findByStudentIdAndSchoolId(request.getStudentId(), schoolId)
-                .orElseThrow(() -> new IllegalArgumentException("Student not found."));
-
-        // Prevent duplicate Razorpay payments
-        if (request.getRazorpayPaymentId() != null
-                && paymentRepository.existsByRazorpayPaymentId(request.getRazorpayPaymentId())) {
-            throw new IllegalArgumentException("Payment already recorded.");
-        }
-
-        PaymentMode mode = PaymentMode.valueOf(request.getPaymentMode());
-
-        FeePayment payment = new FeePayment();
-        payment.setSchoolId(schoolId);
-        payment.setStudentId(student.getStudentId());
-        payment.setAmount(request.getAmount());
-        payment.setPaymentMode(mode);
-        payment.setStatus(PaymentStatus.SUCCESS);
-        payment.setPaymentDate(LocalDateTime.now());
-        payment.setRazorpayPaymentId(request.getRazorpayPaymentId());
-        payment.setRazorpayOrderId(request.getRazorpayOrderId());
-        payment.setRazorpaySignature(request.getRazorpaySignature());
-        payment.setReferenceNumber(request.getReferenceNumber());
-        payment.setNotes(request.getNotes());
-
-        if (mode != PaymentMode.RAZORPAY) {
-            payment.setReceivedBy(securityUtil.getUsername());
-        }
-
-        FeePayment savedPayment = paymentRepository.save(payment);
-
-        // Allocate payment against invoices
-        long totalAllocated = 0;
-        for (RecordPaymentRequest.InvoiceAllocation allocation : request.getInvoiceAllocations()) {
-            Invoice invoice = invoiceRepository.findByIdAndSchoolId(allocation.getInvoiceId(), schoolId)
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            "Invoice not found: " + allocation.getInvoiceId()));
-
-            // Validate invoice can receive payments
-            if (invoice.getStatus() == InvoiceStatus.DRAFT) {
-                throw new IllegalArgumentException(
-                        "Cannot pay draft invoice " + invoice.getInvoiceNumber() + ". Issue it first.");
-            }
-            if (invoice.getStatus() == InvoiceStatus.CANCELLED) {
-                throw new IllegalArgumentException(
-                        "Cannot pay cancelled invoice " + invoice.getInvoiceNumber());
-            }
-
-            long allocAmount = allocation.getAmount();
-            if (allocAmount > invoice.getBalanceDue()) {
-                throw new IllegalArgumentException(
-                        "Allocation amount " + allocAmount + " exceeds balance due "
-                                + invoice.getBalanceDue() + " on invoice " + invoice.getInvoiceNumber());
-            }
-
-            PaymentAllocation pa = new PaymentAllocation();
-            pa.setFeePayment(savedPayment);
-            pa.setInvoice(invoice);
-            pa.setAmountAllocated(allocAmount);
-            allocationRepository.save(pa);
-
-            // Update invoice
-            invoice.setAmountPaid(invoice.getAmountPaid() + allocAmount);
-            invoice.setBalanceDue(invoice.getBalanceDue() - allocAmount);
-
-            if (invoice.getBalanceDue() == 0) {
-                invoice.setStatus(InvoiceStatus.PAID);
-            } else if (invoice.getAmountPaid() > 0) {
-                invoice.setStatus(InvoiceStatus.PARTIALLY_PAID);
-            }
-
-            invoiceRepository.save(invoice);
-            totalAllocated += allocAmount;
-        }
-
-        if (totalAllocated != request.getAmount()) {
-            log.warn("Payment {} amount {} but only {} allocated to invoices",
-                    savedPayment.getId(), request.getAmount(), totalAllocated);
-        }
-
-        // Audit log
-        try {
-            auditService.log(
-                    securityUtil.getUsername(), securityUtil.getRole(),
-                    "RECORD_PAYMENT", "FeePayment", String.valueOf(savedPayment.getId()),
-                    null, objectMapper.writeValueAsString(toDto(savedPayment, student)),
-                    httpRequest.getRemoteAddr());
-        } catch (JsonProcessingException ignored) {}
-
-        return toDto(savedPayment, student);
+        throw new SystemBFrozenException("recording a fee payment");
     }
 
     @Transactional(readOnly = true)

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.entity.*;
+import com.indraacademy.ias_management.exception.SystemBFrozenException;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
@@ -62,79 +63,17 @@ public class InvoiceGenerationService {
      * @param studentId Optional: filter to single student. Null = all students.
      * @return Number of invoices generated
      */
+    /**
+     * FROZEN (architecture decision — StudentFees is now the sole canonical fee-generation
+     * system). New invoices are no longer generated through this system; StudentFees rows
+     * (via StudentFeesService/StudentFeesGenerationService, reading the same FeeHead/
+     * FeeStructureRule/StudentFeeConfig tables) are the canonical "amount owed" record going
+     * forward. Existing invoices remain fully readable via InvoiceService/InvoiceController's
+     * GET endpoints. See SystemBFrozenException.
+     */
     @Transactional
     public int generateInvoices(Long sessionId, int billingMonth, String className, String studentId) {
-        Long schoolId = securityUtil.getSchoolId();
-
-        AcademicSession session = sessionRepository.findById(sessionId)
-                .filter(s -> s.getSchoolId().equals(schoolId))
-                .orElseThrow(() -> new IllegalArgumentException("Session not found."));
-
-        // Determine the calendar date for this billing month (for rule effective date checks)
-        LocalDate billingDate = session.getStartDate().plusMonths(billingMonth - 1);
-        LocalDate dueDate = billingDate.withDayOfMonth(Math.min(10, billingDate.lengthOfMonth()));
-
-        // Get students who already have invoices for this month (idempotency)
-        Set<String> alreadyInvoiced = new HashSet<>(
-                invoiceRepository.findStudentsWithInvoice(schoolId, sessionId, billingMonth));
-
-        // Get active students
-        List<Student> students;
-        if (studentId != null) {
-            students = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
-                    .filter(s -> s.getStatus() == StudentStatus.ACTIVE)
-                    .stream().collect(Collectors.toList());
-        } else if (className != null) {
-            students = studentRepository.findByClassNameAndStatusAndSchoolId(
-                    className, StudentStatus.ACTIVE, schoolId);
-        } else {
-            students = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
-        }
-
-        // Group students by class for batch rule lookup
-        Map<String, List<Student>> studentsByClass = students.stream()
-                .filter(s -> !alreadyInvoiced.contains(s.getStudentId()))
-                .collect(Collectors.groupingBy(Student::getClassName));
-
-        int generatedCount = 0;
-
-        for (Map.Entry<String, List<Student>> entry : studentsByClass.entrySet()) {
-            String cls = entry.getKey();
-            List<Student> classStudents = entry.getValue();
-
-            // Get active rules for this class on the billing date
-            List<FeeStructureRule> activeRules = ruleRepository.findActiveRules(
-                    schoolId, sessionId, cls, billingDate);
-
-            if (activeRules.isEmpty()) {
-                log.warn("No active fee rules for class {} in session {}, skipping", cls, session.getLabel());
-                continue;
-            }
-
-            // Filter rules to only those whose fee_head has this billingMonth in due_months
-            List<FeeStructureRule> applicableRules = activeRules.stream()
-                    .filter(rule -> isDueInMonth(rule.getFeeHead(), billingMonth))
-                    .collect(Collectors.toList());
-
-            if (applicableRules.isEmpty()) {
-                continue; // No fees due this month for this class
-            }
-
-            for (Student student : classStudents) {
-                Invoice invoice = generateStudentInvoice(
-                        schoolId, session, student, applicableRules,
-                        billingMonth, billingDate, dueDate);
-
-                if (invoice != null) {
-                    generatedCount++;
-                }
-            }
-        }
-
-        log.info("Generated {} invoices for session {} month {}",
-                generatedCount, session.getLabel(), billingMonth);
-
-        return generatedCount;
+        throw new SystemBFrozenException("generating invoices");
     }
 
     /**
@@ -295,65 +234,28 @@ public class InvoiceGenerationService {
      * Issue (finalize) all DRAFT invoices for a session+month.
      * Once issued, invoices are immutable.
      */
+    /**
+     * FROZEN — same architecture decision as generateInvoices above. No DRAFT invoice can
+     * be newly issued (which is also what would have made it payable); existing ISSUED/PAID/
+     * etc. invoices are untouched and remain readable. See SystemBFrozenException.
+     */
     @Transactional
     public int issueInvoices(Long sessionId, Integer billingMonth) {
-        Long schoolId = securityUtil.getSchoolId();
-
-        List<Invoice> drafts = invoiceRepository
-                .findBySchoolIdAndAcademicSessionIdAndStatus(schoolId, sessionId, InvoiceStatus.DRAFT);
-
-        if (billingMonth != null) {
-            drafts = drafts.stream()
-                    .filter(i -> i.getBillingMonth() == billingMonth)
-                    .collect(Collectors.toList());
-        }
-
-        int count = 0;
-        for (Invoice invoice : drafts) {
-            invoice.setStatus(InvoiceStatus.ISSUED);
-            invoice.setIssuedAt(java.time.LocalDateTime.now());
-            invoiceRepository.save(invoice);
-            count++;
-        }
-
-        log.info("Issued {} invoices for session {} month {}", count, sessionId, billingMonth);
-        return count;
+        throw new SystemBFrozenException("issuing invoices");
     }
 
     /**
      * Mark overdue invoices. Should be called by a scheduler.
      */
+    /**
+     * FROZEN — same architecture decision as generateInvoices above. Note this method was
+     * already unreachable in production before this freeze (no controller endpoint, no
+     * scheduler ever called it) — guarded anyway for defense in depth, so it can't become a
+     * silent bypass if something is wired up to call it later without checking this file's
+     * history first. See SystemBFrozenException.
+     */
     @Transactional
     public int markOverdueInvoices(Long schoolId) {
-        AcademicSession session = sessionRepository.findBySchoolIdAndCurrentTrue(schoolId)
-                .orElse(null);
-        if (session == null) return 0;
-
-        List<Invoice> issued = invoiceRepository
-                .findBySchoolIdAndAcademicSessionIdAndStatus(schoolId, session.getId(), InvoiceStatus.ISSUED);
-
-        LocalDate today = LocalDate.now();
-        int count = 0;
-        for (Invoice invoice : issued) {
-            if (invoice.getDueDate().isBefore(today) && invoice.getBalanceDue() > 0) {
-                invoice.setStatus(InvoiceStatus.OVERDUE);
-                invoiceRepository.save(invoice);
-                count++;
-            }
-        }
-
-        // Also check PARTIALLY_PAID invoices
-        List<Invoice> partiallyPaid = invoiceRepository
-                .findBySchoolIdAndAcademicSessionIdAndStatus(
-                        schoolId, session.getId(), InvoiceStatus.PARTIALLY_PAID);
-        for (Invoice invoice : partiallyPaid) {
-            if (invoice.getDueDate().isBefore(today) && invoice.getBalanceDue() > 0) {
-                invoice.setStatus(InvoiceStatus.OVERDUE);
-                invoiceRepository.save(invoice);
-                count++;
-            }
-        }
-
-        return count;
+        throw new SystemBFrozenException("marking invoices overdue");
     }
 }

@@ -33,6 +33,7 @@ public class DashboardService {
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private RefundRepository refundRepository;
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private LeaveRepository leaveRepository;
@@ -51,9 +52,15 @@ public class DashboardService {
         long totalStudents = studentRepository.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
         long totalTeachers = teacherRepository.countBySchoolId(schoolId);
 
-        // Fees collected: sum of (amountPaid − platformFee) for current calendar month
-        long feesCollectedThisMonth = paymentRepository
+        // Net fees collected this month: gross captured payments (amountPaid − platformFee)
+        // minus refunds actually processed this month — each on its own period, matching how
+        // real accounting reports revenue (a refund is a new event in its own period, not a
+        // retroactive rewrite of the month the original payment landed in).
+        long grossCollectedThisMonth = paymentRepository
                 .sumAmountCollectedBySchoolIdAndMonthAndYear(schoolId, today.getMonthValue(), today.getYear());
+        long refundedThisMonth = refundRepository
+                .sumAmountPaiseBySchoolIdAndMonthAndYear(schoolId, today.getMonthValue(), today.getYear());
+        long feesCollectedThisMonth = grossCollectedThisMonth - refundedThisMonth;
 
         // Overdue: distinct active students with any unpaid fee up to the current academic month
         String currentSession = currentSession(today, academicStartMonth);
@@ -95,18 +102,31 @@ public class DashboardService {
 
     @Transactional(readOnly = true)
     public List<FeeTrendDto> getFeeTrend() {
-        // Fetch all payments in the last 6 calendar months
+        // Fetch all payments AND refunds in the last 6 calendar months — net revenue per
+        // month is gross captured payments minus refunds processed that same month.
         LocalDate today = LocalDate.now();
         LocalDateTime since = today.minusMonths(5).withDayOfMonth(1).atStartOfDay();
-        List<Payment> recent = paymentRepository.findBySchoolIdAndPaymentDateAfter(securityUtil.getSchoolId(), since);
+        Long schoolId = securityUtil.getSchoolId();
+        List<Payment> recent = paymentRepository.findBySchoolIdAndPaymentDateAfter(schoolId, since);
+        List<com.indraacademy.ias_management.entity.Refund> recentRefunds =
+                refundRepository.findBySchoolIdAndCreatedAtAfter(schoolId, since);
 
-        // Group by "YYYY-MM" key, sum (amountPaid − platformFee)
+        // Group by "YYYY-MM" key, sum (amountPaid − platformFee) — both already paise on
+        // every path that sets platformFee non-zero; see the matching fix/comment on
+        // PaymentRepository.sumAmountCollectedBySchoolIdAndMonthAndYear.
         Map<String, Long> sumByMonth = new TreeMap<>(); // TreeMap keeps insertion order after we populate
         for (Payment p : recent) {
             if (p.getPaymentDate() == null) continue;
             String key = p.getPaymentDate().getYear() + "-"
                     + String.format("%02d", p.getPaymentDate().getMonthValue());
-            sumByMonth.merge(key, (long) (p.getAmountPaid() - p.getPlatformFee()), Long::sum);
+            sumByMonth.merge(key, p.getAmountPaid() - (long) p.getPlatformFee(), Long::sum);
+        }
+        Map<String, Long> refundedByMonth = new TreeMap<>();
+        for (com.indraacademy.ias_management.entity.Refund r : recentRefunds) {
+            if (r.getCreatedAt() == null) continue;
+            String key = r.getCreatedAt().getYear() + "-"
+                    + String.format("%02d", r.getCreatedAt().getMonthValue());
+            refundedByMonth.merge(key, r.getAmountPaise(), Long::sum);
         }
 
         // Build ordered result covering all 6 months (fill 0 for months with no data)
@@ -115,7 +135,8 @@ public class DashboardService {
             LocalDate month = today.minusMonths(i).withDayOfMonth(1);
             String key   = month.getYear() + "-" + String.format("%02d", month.getMonthValue());
             String label = month.format(TREND_FMT);   // e.g. "Nov 2025"
-            result.add(new FeeTrendDto(label, sumByMonth.getOrDefault(key, 0L)));
+            long net = sumByMonth.getOrDefault(key, 0L) - refundedByMonth.getOrDefault(key, 0L);
+            result.add(new FeeTrendDto(label, net));
         }
         return result;
     }

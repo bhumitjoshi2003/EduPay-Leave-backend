@@ -1,8 +1,10 @@
 package com.indraacademy.ias_management.scheduler;
 
+import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
@@ -12,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,6 +36,9 @@ public class StudentClassProgressionScheduler {
     @Autowired
     private SchoolClassRepository schoolClassRepository;
 
+    @Autowired
+    private SchoolRepository schoolRepository;
+
     /**
      * Guards against concurrent execution within the same JVM instance.
      * For multi-instance deployments (horizontal scaling) use ShedLock or
@@ -41,31 +47,49 @@ public class StudentClassProgressionScheduler {
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
     /**
-     * Runs every year on 26th March at 00:00 to promote students to the next class.
+     * Runs on the 26th of every calendar month (a few days before each school's own academic
+     * year starts) and promotes students to the next class for whichever schools that day
+     * actually applies to — mirroring StudentFeesGenerationService.generateStudentFeesForNextYear's
+     * per-school gating on academicYearStartMonth, rather than a single fixed calendar date.
+     *
+     * Was previously hardcoded to run once a year, on 26th March only — correct for the
+     * April-default school (26th is a few days before April 1) but wrong for every other
+     * start month: a July-start school got promoted 4 months early, a January-start school
+     * ~2 months late, and so on for any other configured start month.
+     *
      * Uses each school's configured class sequence from the database.
      */
     @Transactional
-    @Scheduled(cron = "0 0 0 26 3 *", zone = "Asia/Kolkata")
+    @Scheduled(cron = "0 0 0 26 * *", zone = "Asia/Kolkata")
     public void incrementStudentClasses() {
         if (!isRunning.compareAndSet(false, true)) {
             log.warn("StudentClassProgressionScheduler is already running — skipping this trigger.");
             return;
         }
-        log.info("Starting scheduled student class progression for new academic year.");
+        log.info("Starting scheduled student class progression check.");
 
         try {
-            List<Student> students = studentRepository.findByStatus(StudentStatus.ACTIVE);
-            int promotedCount = 0;
+            LocalDate today = LocalDate.now();
 
-            // Group students by school so we load each school's class sequence only once
+            List<School> activeSchools = schoolRepository.findAll().stream()
+                    .filter(School::isActive)
+                    .collect(Collectors.toList());
+
+            List<Student> students = studentRepository.findByStatus(StudentStatus.ACTIVE);
             Map<Long, List<Student>> bySchool = students.stream()
                     .collect(Collectors.groupingBy(Student::getSchoolId));
 
-            for (Map.Entry<Long, List<Student>> entry : bySchool.entrySet()) {
-                Long schoolId = entry.getKey();
+            int promotedCount = 0;
+
+            for (School school : activeSchools) {
+                int startMonth = school.getAcademicYearStartMonth();
+                int promotionMonth = computePromotionMonth(startMonth);
+                if (today.getMonthValue() != promotionMonth) continue;
+
+                Long schoolId = school.getId();
                 List<String> classSequence = getSchoolClassSequence(schoolId);
 
-                for (Student student : entry.getValue()) {
+                for (Student student : bySchool.getOrDefault(schoolId, List.of())) {
                     String currentClass = student.getClassName();
                     String nextClass = determineNextClass(currentClass, classSequence);
 
@@ -93,6 +117,16 @@ public class StudentClassProgressionScheduler {
         } finally {
             isRunning.set(false);
         }
+    }
+
+    /**
+     * The calendar month immediately before a school's academic year starts — same formula
+     * StudentFeesGenerationService.generateStudentFeesForNextYear uses for its own generation-
+     * month gating, so both jobs fire in the same calendar month for a given school.
+     * Package-private so it's directly unit-testable.
+     */
+    int computePromotionMonth(int startMonth) {
+        return ((startMonth - 2 + 12) % 12) + 1;
     }
 
     private List<String> getSchoolClassSequence(Long schoolId) {

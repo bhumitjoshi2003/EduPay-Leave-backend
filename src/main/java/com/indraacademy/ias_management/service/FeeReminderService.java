@@ -1,15 +1,10 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.OverdueStudentDto;
-import com.indraacademy.ias_management.entity.BusFees;
-import com.indraacademy.ias_management.entity.FeeStructure;
-import com.indraacademy.ias_management.entity.FeeStructureRule;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.School;
-import com.indraacademy.ias_management.repository.BusFeesRepository;
-import com.indraacademy.ias_management.repository.FeeStructureRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
@@ -37,17 +32,10 @@ public class FeeReminderService {
 
     private static final Logger log = LoggerFactory.getLogger(FeeReminderService.class);
 
-    private static final String[] CALENDAR_MONTH_NAMES = {
-            "January", "February", "March", "April", "May", "June",
-            "July", "August", "September", "October", "November", "December"
-    };
-
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
-    @Autowired private FeeStructureRepository feeStructureRepository;
     @Autowired private FeeCalculationService feeCalculationService;
-    @Autowired private BusFeesRepository busFeesRepository;
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private EmailService emailService;
     @Autowired private AuditService auditService;
@@ -140,13 +128,6 @@ public class FeeReminderService {
         Map<String, List<StudentFees>> byStudent = overdue.stream()
                 .collect(Collectors.groupingBy(StudentFees::getStudentId));
 
-        // Cache per class to avoid repeated DB hits. Dynamic rules are the authoritative,
-        // actively-maintained fee configuration (the admin fee-structure UI writes only to
-        // FeeHead/FeeStructureRule now) — legacy FeeStructure is a fallback for a class/
-        // session that was never migrated, not the primary source. See FeeCalculationService.
-        Map<String, List<FeeStructureRule>> dynamicRulesByClass = new HashMap<>();
-        Map<String, FeeStructure> feeStructureByClass = new HashMap<>();
-
         List<OverdueStudentDto> result = new ArrayList<>();
 
         for (Map.Entry<String, List<StudentFees>> entry : byStudent.entrySet()) {
@@ -167,26 +148,22 @@ public class FeeReminderService {
                     .map(sf -> getMonthName(sf.getMonth(), startMonth))
                     .collect(Collectors.toList());
 
-            // totalDue: sum each month's exact amount due (mirrors what the student sees on their
-            // receipt). Dynamic FeeStructureRule is tried first — that's the class's real, current
-            // configuration; legacy FeeStructure is only a fallback for a class/session that was
-            // never migrated onto fee heads. If NEITHER has anything configured, the amount is
-            // genuinely unknown (null), not ₹0 — never fabricate a figure here.
+            // totalDue: sum each unpaid month's stored StudentFees snapshot (baseAmountDue +
+            // busFeeDue − discountAmount) — the same stable figure the student's receipt and
+            // checkout both use. Falls back to a live rule lookup only for a row with no
+            // trustworthy snapshot (see FeeCalculationService.resolveSchoolFeeDue); if EVEN ONE
+            // unpaid month can't be resolved either way, the whole total is genuinely unknown
+            // (null), not ₹0 — a partial sum that silently drops an unresolvable month would
+            // understate what's owed, which is the same anti-pattern as fabricating a zero.
             String cls = student.getClassName();
-            List<FeeStructureRule> dynamicRules = dynamicRulesByClass.computeIfAbsent(cls,
-                    c -> feeCalculationService.loadActiveRules(schoolId, session, c));
-
-            Double totalDue;
-            if (!dynamicRules.isEmpty()) {
-                totalDue = fees.stream()
-                        .mapToDouble(sf -> feeCalculationService.calculateMonthFeeRupees(sf.getMonth(), dynamicRules) + busFeeForMonth(sf, session))
-                        .sum();
-            } else {
-                FeeStructure fs = feeStructureByClass.computeIfAbsent(cls,
-                        c -> feeStructureRepository.findByAcademicYearAndClassNameAndSchoolId(session, c, securityUtil.getSchoolId()));
-                totalDue = (fs != null)
-                        ? fees.stream().mapToDouble(sf -> amountDueForMonth(fs, sf, session)).sum()  // already includes bus fee internally
-                        : null;
+            Double totalDue = 0.0;
+            for (StudentFees sf : fees) {
+                Optional<java.math.BigDecimal> resolved = feeCalculationService.resolveSchoolFeeDue(sf, schoolId, session);
+                if (resolved.isEmpty()) {
+                    totalDue = null;
+                    break;
+                }
+                totalDue += resolved.get().doubleValue();
             }
 
             // Last payment date
@@ -492,72 +469,25 @@ public class FeeReminderService {
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     /**
-     * Returns the exact school fee due for a single month, matching what appears on the student's receipt.
-     *
-     * Month 1 (April) = Tuition + Annual Charges + ECA/Project + Examination Fee + Lab Charges [+ Bus]
-     * All other months = Tuition [+ Bus]
-     *
-     * Platform fee is excluded — it is a payment-gateway charge, not a school fee.
-     */
-    private double amountDueForMonth(FeeStructure fs, StudentFees sf, String session) {
-        if (fs == null) return 0.0;
-
-        double amount = fs.getTuitionFee();
-
-        // April (month 1 of academic year) carries all one-time annual components
-        if (sf.getMonth() == 1) {
-            amount += fs.getAnnualCharges();
-            amount += fs.getEcaProject();
-            amount += fs.getExaminationFee();
-            amount += fs.getLabCharges();
-        }
-
-        // Add bus fee if the student uses the bus for this month's record
-        if (Boolean.TRUE.equals(sf.getTakesBus()) && sf.getDistance() != null && sf.getDistance() > 0) {
-            java.math.BigDecimal busFee = busFeesRepository.findFeesByDistanceAndAcademicYearAndSchoolId(sf.getDistance(), session, securityUtil.getSchoolId());
-            if (busFee != null) {
-                amount += busFee.doubleValue();
-            }
-        }
-
-        return amount;
-    }
-
-    /** Bus fee for one month's record, if the student takes the bus — used alongside
-     * FeeCalculationService for the dynamic branch, since FeeCalculationService only knows
-     * about FeeHead-configured fees, not the separate distance-based bus fee table.
-     * amountDueForMonth (legacy branch) already includes this inline — don't double-add. */
-    private double busFeeForMonth(StudentFees sf, String session) {
-        if (!Boolean.TRUE.equals(sf.getTakesBus()) || sf.getDistance() == null || sf.getDistance() <= 0) {
-            return 0.0;
-        }
-        java.math.BigDecimal busFee = busFeesRepository.findFeesByDistanceAndAcademicYearAndSchoolId(sf.getDistance(), session, securityUtil.getSchoolId());
-        return busFee != null ? busFee.doubleValue() : 0.0;
-    }
-
-    /**
      * Maps an academic month number (1 = startMonth … 12 = startMonth-1) to the 1st day
-     * of that calendar month, using the session's start and end years.
+     * of that calendar month, using the session's start and end years. Delegates to
+     * FeeCalculationService, which now owns this logic so generation/backfill/recalculation
+     * share the exact same academic-month-to-calendar-date math this reminder system already
+     * relied on — see FeeCalculationService.academicMonthStart.
      */
     private LocalDate academicMonthStart(int academicMonth, int startYear, int endYear, int startMonth) {
-        int calendarMonth = ((startMonth - 1 + academicMonth - 1) % 12) + 1;
-        int year = calendarMonth >= startMonth ? startYear : endYear;
-        return LocalDate.of(year, calendarMonth, 1);
+        return feeCalculationService.academicMonthStart(academicMonth, startYear, endYear, startMonth);
     }
 
-    /** Parses "2025-2026" → [2025, 2026]. */
+    /** Parses "2025-2026" → [2025, 2026]. Delegates to FeeCalculationService. */
     private int[] parseSession(String session) {
-        String[] parts = session.split("-");
-        if (parts.length != 2) throw new IllegalArgumentException("Invalid session format. Expected 'YYYY-YYYY'.");
-        return new int[]{ Integer.parseInt(parts[0]), Integer.parseInt(parts[1]) };
+        return feeCalculationService.parseSession(session);
     }
 
-    /** Returns the display name for an academic month (1 = first month of academic year). */
+    /** Returns the display name for an academic month (1 = the school's own start month).
+     * Delegates to FeeCalculationService, which now owns the calendar-month array. */
     private String getMonthName(int academicMonth, int startMonth) {
-        if (academicMonth < 1 || academicMonth > 12) return "Unknown";
-        // academicMonth 1 = startMonth, 2 = startMonth+1, etc. (wrapping around December)
-        int calendarMonthIndex = (startMonth - 1 + academicMonth - 1) % 12;
-        return CALENDAR_MONTH_NAMES[calendarMonthIndex];
+        return feeCalculationService.getMonthName(academicMonth, startMonth);
     }
 
     /** Returns the academic year label (e.g. "2026-2027") for a given date and school start month. */

@@ -51,21 +51,46 @@ public class Payment {
     @Column(name = "status", nullable = false)
     private String status;
 
+    /** Bus fee for this payment — unlike the five buckets below, this one is NOT an arbitrary
+     * mapping (bus fee is always a real, unambiguous concept, same as StudentFees.busFeeDue),
+     * so it is not deprecated by the StudentFeesLineItem phase. */
     @Column(name = "bus_fee")
     private int busFee;
 
+    /**
+     * @deprecated COMPATIBILITY-ONLY as of the StudentFeesLineItem phase. These five columns
+     * predate the dynamic FeeHead model and were always a best-effort attempt to force an
+     * arbitrary, school-configured set of fee heads into five fixed buckets (see
+     * PaymentController.createOrder's javadoc for the historical "unmatched dumps into
+     * tuitionFee" note). Now that {@link StudentFeesLineItem} gives every StudentFees row a
+     * real, per-fee-head breakdown, these fields are no longer the place to look for "what
+     * was this payment actually for" — read the line items on the StudentFees rows the
+     * payment's allocations point to instead. Kept, not removed: existing Payment rows and
+     * any code still reading these for legacy receipt display would otherwise break, and
+     * removing a populated column is a migration decision on its own, out of scope here.
+     * Still populated on write (best-effort, unchanged) purely for that legacy display path.
+     */
+    @Deprecated
     @Column(name = "tuition_fee")
     private int tuitionFee;
 
+    /** @deprecated see {@link #tuitionFee}. */
+    @Deprecated
     @Column(name = "annual_charges")
     private int annualCharges;
 
+    /** @deprecated see {@link #tuitionFee}. */
+    @Deprecated
     @Column(name = "lab_charges")
     private int labCharges;
 
+    /** @deprecated see {@link #tuitionFee}. */
+    @Deprecated
     @Column(name = "eca_project")
     private int ecaProject;
 
+    /** @deprecated see {@link #tuitionFee}. */
+    @Deprecated
     @Column(name = "examination_fee")
     private int examinationFee;
 
@@ -86,6 +111,16 @@ public class Payment {
 
     @Column(name = "platform_fee")
     private int platformFee;
+
+    /** Set only for manually-recorded payments (cash/cheque/UPI/bank transfer); NULL for
+     * Razorpay-path rows. */
+    @Column(name = "manual_payment_mode")
+    private String manualPaymentMode;
+
+    /** Admin-supplied reference (cheque number, UTR, transaction ref) for manually-recorded
+     * payments — the basis for duplicate-payment detection. NULL for Razorpay-path rows. */
+    @Column(name = "manual_reference_number")
+    private String manualReferenceNumber;
 
 
     // Constructors, getters, setters
@@ -298,4 +333,10 @@ public class Payment {
 
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
+
+    public String getManualPaymentMode() { return manualPaymentMode; }
+    public void setManualPaymentMode(String manualPaymentMode) { this.manualPaymentMode = manualPaymentMode; }
+
+    public String getManualReferenceNumber() { return manualReferenceNumber; }
+    public void setManualReferenceNumber(String manualReferenceNumber) { this.manualReferenceNumber = manualReferenceNumber; }
 }
