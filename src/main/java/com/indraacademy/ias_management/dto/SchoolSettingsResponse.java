@@ -56,6 +56,7 @@ public class SchoolSettingsResponse {
     private Integer lateThresholdMinutes;
     private String checkinWindowStart;
     private String checkinWindowEnd;
+    private String timezone;
 
     public static SchoolSettingsResponse from(School school) {
         SchoolSettingsResponse r = new SchoolSettingsResponse();
@@ -93,6 +94,7 @@ public class SchoolSettingsResponse {
         r.lateThresholdMinutes = school.getLateThresholdMinutes();
         r.checkinWindowStart = formatTime(school.getCheckinWindowStart());
         r.checkinWindowEnd = formatTime(school.getCheckinWindowEnd());
+        r.timezone = school.getTimezone();
         return r;
     }
 
@@ -134,6 +136,7 @@ public class SchoolSettingsResponse {
     public Integer getLateThresholdMinutes() { return lateThresholdMinutes; }
     public String getCheckinWindowStart() { return checkinWindowStart; }
     public String getCheckinWindowEnd() { return checkinWindowEnd; }
+    public String getTimezone() { return timezone; }
 
     private static String formatTime(LocalTime time) {
         return time != null ? time.format(DateTimeFormatter.ofPattern("HH:mm")) : null;

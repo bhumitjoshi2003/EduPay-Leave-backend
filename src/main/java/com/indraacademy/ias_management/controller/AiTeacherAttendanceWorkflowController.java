@@ -2,12 +2,16 @@ package com.indraacademy.ias_management.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.indraacademy.ias_management.entity.AiFeeReminderBatch;
-import com.indraacademy.ias_management.repository.AiFeeReminderBatchRepository;
+import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
+import com.indraacademy.ias_management.entity.AiTeacherAttendanceReminderBatch;
+import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.repository.AiTeacherAttendanceReminderBatchRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.service.AiReminderBatchService;
+import com.indraacademy.ias_management.service.AttendanceReminderService;
+import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
-import com.indraacademy.ias_management.service.FeeReminderService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,32 +35,29 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * AiWorkflowController — Spring's half of the Fee Defaulter Reminder LangGraph workflow.
+ * AiTeacherAttendanceWorkflowController — Spring's half of the TEACHER-scoped Low-Attendance
+ * Warning LangGraph workflow. Structural mirror of AiAttendanceWorkflowController (the admin,
+ * school-wide variant) — same trust-boundary pattern, same tenant-isolation-against-our-own-
+ * batch-row enforcement, same dispatch()-is-the-only-Postgres-write-Python-is-never-allowed-to-
+ * do-itself rule. See that class's Javadoc for the full rationale, not repeated here.
  *
- * Same trust-boundary pattern as AiProxyController: userId/role/schoolId always come from
- * the verified SecurityContext, never the request body; the accessToken cookie is read
- * fresh from *this* request on every call (including approve/reject, which may arrive
- * long after the token that started the workflow has expired) and forwarded to Python,
- * which forwards it again to whichever Spring endpoint it needs — so all existing
- * @PreAuthorize/schoolId scoping applies exactly as if Angular called those directly.
- *
- * Tenant isolation on approve/reject/status is enforced HERE, against the
- * ai_fee_reminder_batch row this controller itself wrote at start time — not by asking
- * Python, which would just be trusting Python's copy of the same claim one hop later for
- * no benefit. The dispatch() endpoint is the one write Python is never allowed to do
- * itself (see the class-level rule in CLAUDE.md: Python never touches Postgres) — it's
- * called by Python's send_reminders node, using the real forwarded admin JWT, and is the
- * ultimate idempotency backstop: even if Python's own resume-lock had a bug, this endpoint
- * still can't send the same batch twice, because it checks/updates one uniquely-keyed row
- * inside a single row-locked transaction before ever calling EmailService.
+ * The load-bearing difference is authorization: every endpoint here additionally enforces that
+ * the batch belongs to the SAME teacher who started it (not just "any admin in the school", as
+ * the admin variant allows), and className is NEVER accepted from the request body — it is
+ * always resolved server-side from the teacher's own classTeacher field (mirroring
+ * AiProxyController.resolveClassName), both at start AND re-verified on resume, so a teacher
+ * whose class assignment changes after starting a batch cannot still approve it for a class
+ * they no longer own.
  */
 @RestController
-@RequestMapping("/api/ai/workflows/fee-reminders")
+@RequestMapping("/api/ai/workflows/teacher-attendance-reminders")
 @PreAuthorize("isAuthenticated()")
-public class AiWorkflowController {
+public class AiTeacherAttendanceWorkflowController {
 
-    private static final Logger log = LoggerFactory.getLogger(AiWorkflowController.class);
+    private static final Logger log = LoggerFactory.getLogger(AiTeacherAttendanceWorkflowController.class);
     private static final int MAX_STORED_OUTCOMES = 50;
+    static final String CRITERION_BELOW_THRESHOLD = "BELOW_THRESHOLD";
+    static final String CRITERION_CONSECUTIVE_ABSENCE = "CONSECUTIVE_ABSENCE";
 
     @Value("${ai.service.url:http://localhost:8001}")
     private String aiServiceUrl;
@@ -66,8 +67,10 @@ public class AiWorkflowController {
 
     @Autowired private AuthService authService;
     @Autowired private SecurityUtil securityUtil;
-    @Autowired private AiFeeReminderBatchRepository batchRepository;
-    @Autowired private FeeReminderService feeReminderService;
+    @Autowired private TeacherRepository teacherRepository;
+    @Autowired private AiTeacherAttendanceReminderBatchRepository batchRepository;
+    @Autowired private AttendanceReminderService attendanceReminderService;
+    @Autowired private AttendanceService attendanceService;
     @Autowired private AiReminderBatchService batchService;
     @Autowired private AuditService auditService;
     @Autowired private ObjectMapper objectMapper;
@@ -77,17 +80,46 @@ public class AiWorkflowController {
     // ─── Start ─────────────────────────────────────────────────────────────────
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasRole('TEACHER')")
     public ResponseEntity<?> start(@RequestBody Map<String, Object> body, HttpServletRequest request) {
         String session = (String) body.get("session");
         if (session == null || session.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "session is required"));
         }
-        String className = (String) body.get("className");
+        Object thresholdRaw = body.get("threshold");
+        double threshold = thresholdRaw instanceof Number ? ((Number) thresholdRaw).doubleValue() : 75.0;
+
+        // Which attendance pattern to select on. Validated against a closed set here rather than
+        // trusted from the caller — this string reaches both the graph's loader and the audit row.
+        String criterion = body.get("criterion") instanceof String s ? s.toUpperCase() : "BELOW_THRESHOLD";
+        if (!CRITERION_BELOW_THRESHOLD.equals(criterion) && !CRITERION_CONSECUTIVE_ABSENCE.equals(criterion)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "criterion must be BELOW_THRESHOLD or CONSECUTIVE_ABSENCE"));
+        }
+        Object minDaysRaw = body.get("minConsecutiveDays");
+        Integer minConsecutiveDays = minDaysRaw instanceof Number ? ((Number) minDaysRaw).intValue() : null;
+        if (CRITERION_CONSECUTIVE_ABSENCE.equals(criterion)) {
+            if (minConsecutiveDays == null) minConsecutiveDays = 3;
+            if (minConsecutiveDays < 1 || minConsecutiveDays > 60) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", "minConsecutiveDays must be between 1 and 60"));
+            }
+        } else {
+            minConsecutiveDays = null;  // not applicable — never persist a misleading value
+        }
 
         String userId = authService.getUserId();
-        String role = authService.getRole();
         Long schoolId = securityUtil.getSchoolId();
+
+        // className is NEVER trusted from the request body — always resolved here, exactly
+        // like AiProxyController.resolveClassName does for /chat requests.
+        String className = teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
+                .map(Teacher::getClassTeacher)
+                .orElse(null);
+        if (className == null || className.isBlank()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "You are not assigned as a class teacher, so attendance reminders aren't available to you."));
+        }
 
         Cookie accessTokenCookie = WebUtils.getCookie(request, "accessToken");
         if (accessTokenCookie == null) {
@@ -96,46 +128,52 @@ public class AiWorkflowController {
 
         Map<String, Object> userCtx = new LinkedHashMap<>();
         userCtx.put("userId", userId);
-        userCtx.put("role", role);
+        userCtx.put("role", "TEACHER");
         userCtx.put("schoolId", schoolId);
         userCtx.put("name", null);
-        userCtx.put("className", null);
+        userCtx.put("className", className);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("session", session);
         payload.put("className", className);
+        payload.put("threshold", threshold);
+        payload.put("criterion", criterion);
+        payload.put("minConsecutiveDays", minConsecutiveDays);
         payload.put("user", userCtx);
         payload.put("accessToken", accessTokenCookie.getValue());
 
         Map<String, Object> pyResponse;
         try {
-            pyResponse = callPython(HttpMethod.POST, "/workflows/fee-reminders/start", payload);
+            pyResponse = callPython(HttpMethod.POST, "/workflows/teacher-attendance-reminders/start", payload);
         } catch (HttpStatusCodeException e) {
             return forwardPythonError(e);
         } catch (Exception e) {
-            log.error("AI workflow start failed for userId={}: {}", userId, e.getMessage());
+            log.error("AI teacher attendance workflow start failed for userId={}: {}", userId, e.getMessage());
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "AI workflow service is temporarily unavailable."));
         }
 
         String workflowId = (String) pyResponse.get("workflowId");
         if (workflowId == null || workflowId.isBlank()) {
-            log.error("AI workflow start: Python response missing workflowId for userId={}", userId);
+            log.error("AI teacher attendance workflow start: Python response missing workflowId for userId={}", userId);
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(Map.of("error", "AI service returned an unexpected response."));
         }
 
         // Persisted at START, not approval — the row this and every later call tenant-checks
         // against, with zero cross-service round trip, and the idempotency anchor for dispatch().
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> defaulters = (List<Map<String, Object>>) pyResponse.getOrDefault("defaulters", List.of());
-        List<String> studentIds = defaulters.stream().map(d -> (String) d.get("studentId")).collect(Collectors.toList());
+        List<Map<String, Object>> students = (List<Map<String, Object>>) pyResponse.getOrDefault("students", List.of());
+        List<String> studentIds = students.stream().map(s -> (String) s.get("studentId")).collect(Collectors.toList());
 
-        AiFeeReminderBatch batch = new AiFeeReminderBatch();
+        AiTeacherAttendanceReminderBatch batch = new AiTeacherAttendanceReminderBatch();
         batch.setWorkflowId(workflowId);
         batch.setSchoolId(schoolId);
-        batch.setAdminUserId(userId);
+        batch.setTeacherUserId(userId);
         batch.setSession(session);
         batch.setClassName(className);
+        batch.setThreshold(threshold);
+        batch.setCriterion(criterion);
+        batch.setMinConsecutiveDays(minConsecutiveDays);
         batch.setStatus(AiReminderBatchService.PENDING_APPROVAL);
         batch.setStudentIds(toJson(studentIds));
         batchRepository.save(batch);
@@ -146,13 +184,13 @@ public class AiWorkflowController {
     // ─── Approve / Reject ─────────────────────────────────────────────────────
 
     @PostMapping("/{workflowId}/approve")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasRole('TEACHER')")
     public ResponseEntity<?> approve(@PathVariable String workflowId, HttpServletRequest request) {
         return resume(workflowId, "approved", request);
     }
 
     @PostMapping("/{workflowId}/reject")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasRole('TEACHER')")
     public ResponseEntity<?> reject(@PathVariable String workflowId, HttpServletRequest request) {
         return resume(workflowId, "rejected", request);
     }
@@ -161,12 +199,13 @@ public class AiWorkflowController {
         Long schoolId = securityUtil.getSchoolId();
         String userId = authService.getUserId();
 
-        AiFeeReminderBatch batch = batchRepository.findByWorkflowId(workflowId).orElse(null);
+        AiTeacherAttendanceReminderBatch batch = batchRepository.findByWorkflowId(workflowId).orElse(null);
         if (batch == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Unknown workflow."));
         }
-        if (!Objects.equals(batch.getSchoolId(), schoolId)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This workflow does not belong to your school."));
+        ResponseEntity<?> authError = checkOwnership(batch, schoolId, userId);
+        if (authError != null) {
+            return authError;
         }
 
         // A rejected batch is closed for good. LangGraph already refuses to resume past a
@@ -188,11 +227,11 @@ public class AiWorkflowController {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("decision", decision);
         payload.put("schoolId", schoolId);
-        payload.put("adminUserId", userId);
+        payload.put("teacherUserId", userId);
         payload.put("accessToken", accessTokenCookie.getValue());
 
         try {
-            Map<String, Object> pyResponse = callPython(HttpMethod.POST, "/workflows/fee-reminders/" + workflowId + "/resume", payload);
+            Map<String, Object> pyResponse = callPython(HttpMethod.POST, "/workflows/teacher-attendance-reminders/" + workflowId + "/resume", payload);
             // Persist the rejection only once the graph confirms it actually took effect — the
             // graph stays authoritative for workflow state, Spring just records the outcome
             // durably, exactly as dispatch() already does for a send.
@@ -203,7 +242,7 @@ public class AiWorkflowController {
         } catch (HttpStatusCodeException e) {
             return forwardPythonError(e);
         } catch (Exception e) {
-            log.error("AI workflow resume failed for workflowId={}: {}", workflowId, e.getMessage());
+            log.error("AI teacher attendance workflow resume failed for workflowId={}: {}", workflowId, e.getMessage());
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "AI workflow service is temporarily unavailable."));
         }
@@ -212,25 +251,27 @@ public class AiWorkflowController {
     // ─── Status ────────────────────────────────────────────────────────────────
 
     @GetMapping("/{workflowId}")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasRole('TEACHER')")
     public ResponseEntity<?> status(@PathVariable String workflowId) {
         Long schoolId = securityUtil.getSchoolId();
+        String userId = authService.getUserId();
 
-        AiFeeReminderBatch batch = batchRepository.findByWorkflowId(workflowId).orElse(null);
+        AiTeacherAttendanceReminderBatch batch = batchRepository.findByWorkflowId(workflowId).orElse(null);
         if (batch == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Unknown workflow."));
         }
-        if (!Objects.equals(batch.getSchoolId(), schoolId)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This workflow does not belong to your school."));
+        ResponseEntity<?> authError = checkOwnership(batch, schoolId, userId);
+        if (authError != null) {
+            return authError;
         }
 
         try {
-            Map<String, Object> pyResponse = callPython(HttpMethod.GET, "/workflows/fee-reminders/" + workflowId, null);
+            Map<String, Object> pyResponse = callPython(HttpMethod.GET, "/workflows/teacher-attendance-reminders/" + workflowId, null);
             return ResponseEntity.ok(pyResponse);
         } catch (HttpStatusCodeException e) {
             return forwardPythonError(e);
         } catch (Exception e) {
-            log.error("AI workflow status fetch failed for workflowId={}: {}", workflowId, e.getMessage());
+            log.error("AI teacher attendance workflow status fetch failed for workflowId={}: {}", workflowId, e.getMessage());
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "AI workflow service is temporarily unavailable."));
         }
@@ -239,7 +280,7 @@ public class AiWorkflowController {
     // ─── Dispatch (called only by Python's send_reminders node, never Angular) ────
 
     @PostMapping("/{workflowId}/dispatch")
-    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PreAuthorize("hasRole('TEACHER')")
     @Transactional
     public ResponseEntity<?> dispatch(
             @PathVariable String workflowId,
@@ -247,18 +288,17 @@ public class AiWorkflowController {
             HttpServletRequest request) {
 
         Long schoolId = securityUtil.getSchoolId();
+        String userId = authService.getUserId();
 
-        AiFeeReminderBatch batch = batchRepository.findByWorkflowIdForUpdate(workflowId).orElse(null);
+        AiTeacherAttendanceReminderBatch batch = batchRepository.findByWorkflowIdForUpdate(workflowId).orElse(null);
         if (batch == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Unknown workflow."));
         }
-        if (!Objects.equals(batch.getSchoolId(), schoolId)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This workflow does not belong to your school."));
+        ResponseEntity<?> authError = checkOwnership(batch, schoolId, userId);
+        if (authError != null) {
+            return authError;
         }
 
-        // Idempotent short-circuit — the row-lock above serializes concurrent dispatch
-        // calls for the same workflowId, so this check is race-free: belt-and-suspenders
-        // alongside Python's own resume-lock, in case that ever has a bug or is bypassed.
         // A rejected batch must never send. Refused rather than replayed: unlike an
         // already-sent batch there is no stored outcome to return, and answering "0 sent, 0
         // failed" would read as a successful no-op send instead of a refusal.
@@ -267,6 +307,9 @@ public class AiWorkflowController {
                     .body(Map.of("error", "This batch was rejected and cannot be dispatched."));
         }
 
+        // Idempotent short-circuit — the row-lock above serializes concurrent dispatch
+        // calls for the same workflowId, so this check is race-free: belt-and-suspenders
+        // alongside Python's own resume-lock, in case that ever has a bug or is bypassed.
         if (AiReminderBatchService.SEND_ATTEMPTED_STATUSES.contains(batch.getStatus())) {
             return ResponseEntity.ok(dispatchResponseFrom(batch));
         }
@@ -278,7 +321,20 @@ public class AiWorkflowController {
             return ResponseEntity.badRequest().body(Map.of("error", "studentIds and session are required"));
         }
 
-        Map<String, String> outcomes = feeReminderService.sendReminderEmailsWithOutcomes(studentIds, session);
+        // For a consecutive-absence batch the email states the actual streak dates, so they are
+        // recomputed HERE from the batch's own stored className/minConsecutiveDays rather than
+        // accepted from the dispatch body — Spring stays the sole authority on what a parent is
+        // told, exactly as it already is for the attendance percentage.
+        Map<String, List<String>> recentAbsenceDates = Map.of();
+        if (CRITERION_CONSECUTIVE_ABSENCE.equals(batch.getCriterion()) && batch.getMinConsecutiveDays() != null) {
+            recentAbsenceDates = attendanceService
+                    .getConsecutiveAbsentees(batch.getClassName(), batch.getMinConsecutiveDays(), null, session)
+                    .stream()
+                    .collect(Collectors.toMap(ConsecutiveAbsenceDTO::getStudentId, ConsecutiveAbsenceDTO::getAbsentDates));
+        }
+
+        Map<String, String> outcomes = attendanceReminderService
+                .sendAttendanceReminderEmailsWithOutcomes(studentIds, session, recentAbsenceDates);
         int sent = 0, failed = 0;
         for (String outcome : outcomes.values()) {
             if ("sent".equals(outcome)) sent++; else failed++;
@@ -295,11 +351,13 @@ public class AiWorkflowController {
         auditService.log(
                 securityUtil.getUsername(),
                 securityUtil.getRole(),
-                "SEND_FEE_REMINDER_AI_WORKFLOW",
-                "StudentFees",
+                "SEND_ATTENDANCE_REMINDER_AI_WORKFLOW_TEACHER",
+                "Attendance",
                 null,
                 null,
-                "AI workflow " + workflowId + ": " + sent + " sent, " + failed + " failed, session " + session,
+                "AI workflow " + workflowId + ": " + sent + " sent, " + failed + " failed, class "
+                        + batch.getClassName() + ", session " + session + ", criterion " + batch.getCriterion()
+                        + (batch.getMinConsecutiveDays() != null ? " (>=" + batch.getMinConsecutiveDays() + " consecutive days)" : ""),
                 request.getRemoteAddr()
         );
 
@@ -307,6 +365,27 @@ public class AiWorkflowController {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    /** Returns a 403/404 ResponseEntity if the batch isn't this teacher's own, else null. */
+    private ResponseEntity<?> checkOwnership(AiTeacherAttendanceReminderBatch batch, Long schoolId, String userId) {
+        if (!Objects.equals(batch.getSchoolId(), schoolId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This workflow does not belong to your school."));
+        }
+        // Unlike the admin variant (any admin in the school may approve), a teacher-scoped
+        // batch belongs to exactly one teacher.
+        if (!Objects.equals(batch.getTeacherUserId(), userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This workflow does not belong to you."));
+        }
+        // Re-verify current class ownership, not just at start — a teacher's class
+        // reassignment after the batch started must not leave a stale approval capability.
+        String currentClassName = teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
+                .map(Teacher::getClassTeacher)
+                .orElse(null);
+        if (!Objects.equals(batch.getClassName(), currentClassName)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "You are no longer assigned to this class."));
+        }
+        return null;
+    }
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> callPython(HttpMethod method, String path, Map<String, Object> body) {
@@ -338,7 +417,7 @@ public class AiWorkflowController {
                 .collect(Collectors.toList());
     }
 
-    private Map<String, Object> dispatchResponseFrom(AiFeeReminderBatch batch) {
+    private Map<String, Object> dispatchResponseFrom(AiTeacherAttendanceReminderBatch batch) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("sentCount", batch.getSentCount());
         result.put("failedCount", batch.getFailedCount());
@@ -350,7 +429,7 @@ public class AiWorkflowController {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (Exception e) {
-            log.warn("Failed to serialize AI workflow field: {}", e.getMessage());
+            log.warn("Failed to serialize AI teacher attendance workflow field: {}", e.getMessage());
             return "[]";
         }
     }
@@ -360,7 +439,7 @@ public class AiWorkflowController {
         try {
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
-            log.warn("Failed to deserialize AI workflow field: {}", e.getMessage());
+            log.warn("Failed to deserialize AI teacher attendance workflow field: {}", e.getMessage());
             return List.of();
         }
     }

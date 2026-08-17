@@ -10,7 +10,9 @@ import com.indraacademy.ias_management.dto.StudentExitRequest;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentBulkImportService;
@@ -51,6 +53,7 @@ public class StudentController {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private StudentRepository studentRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private TeacherRepository teacherRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private AuthService authService;
 
@@ -141,16 +144,26 @@ public class StudentController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping("/active/class/{className}")
-    public List<StudentLeaveDTO> findActiveStudentsByClass(
+    public ResponseEntity<?> findActiveStudentsByClass(
             @PathVariable String className,
             @RequestParam(required = false) Long sectionId) {
+        // TEACHER: only their assigned class — mirrors the same check already used in
+        // AttendanceController for the identical isolation concern.
+        if (Role.TEACHER.equals(authService.getRole())) {
+            String teacherClass = teacherRepository.findById(authService.getUserId())
+                    .map(Teacher::getClassTeacher).orElse(null);
+            if (!className.equals(teacherClass)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only view students in their assigned class.");
+            }
+        }
         log.info("Request to get ACTIVE students for class: {}, section: {}", className, sectionId);
         List<Student> students = sectionId != null
                 ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
                 : studentService.getActiveStudentsByClass(className);
-        return students.stream()
+        return ResponseEntity.ok(students.stream()
                 .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
@@ -268,16 +281,25 @@ public class StudentController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping("/alumni/class/{className}")
-    public List<StudentLeaveDTO> getAlumniByClass(
+    public ResponseEntity<?> getAlumniByClass(
             @PathVariable String className,
             @RequestParam(required = false) Long sectionId) {
+        // TEACHER: only their assigned class — same check as findActiveStudentsByClass above.
+        if (Role.TEACHER.equals(authService.getRole())) {
+            String teacherClass = teacherRepository.findById(authService.getUserId())
+                    .map(Teacher::getClassTeacher).orElse(null);
+            if (!className.equals(teacherClass)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only view students in their assigned class.");
+            }
+        }
         log.info("Request to get GRADUATED students for class: {}, section: {}", className, sectionId);
         List<Student> students = sectionId != null
                 ? studentService.getGraduatedStudentsByClassAndSection(className, sectionId)
                 : studentService.getGraduatedStudentsByClass(className);
-        return students.stream()
+        return ResponseEntity.ok(students.stream()
                 .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")

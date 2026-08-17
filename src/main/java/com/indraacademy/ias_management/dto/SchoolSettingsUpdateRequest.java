@@ -35,6 +35,7 @@ public class SchoolSettingsUpdateRequest {
     private Integer lateThresholdMinutes;
     private String checkinWindowStart;    // "HH:mm" format
     private String checkinWindowEnd;      // "HH:mm" format
+    private String timezone;              // IANA zone id, e.g. "Asia/Kolkata"
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
@@ -107,4 +108,7 @@ public class SchoolSettingsUpdateRequest {
 
     public String getCheckinWindowEnd() { return checkinWindowEnd; }
     public void setCheckinWindowEnd(String checkinWindowEnd) { this.checkinWindowEnd = checkinWindowEnd; }
+
+    public String getTimezone() { return timezone; }
+    public void setTimezone(String timezone) { this.timezone = timezone; }
 }

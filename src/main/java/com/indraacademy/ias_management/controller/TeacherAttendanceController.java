@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.dto.AdminMarkTeacherAttendanceRequest;
 import com.indraacademy.ias_management.dto.TeacherAttendanceResponse;
 import com.indraacademy.ias_management.dto.TeacherAttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.TeacherCheckinRequest;
+import com.indraacademy.ias_management.dto.TeacherAttendanceTodaySummaryDTO;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -73,7 +74,13 @@ public class TeacherAttendanceController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
+    // ADMIN-only: this returns EVERY teacher's attendance for the date, school-wide, with no
+    // per-caller narrowing (TeacherAttendanceService.getAttendanceByDate is school-scoped only).
+    // No TEACHER-facing screen calls this — teacher-checkin.component.ts uses getMyAttendance
+    // for self-service; only the admin-only staff-attendance page uses this endpoint. It was
+    // previously also open to TEACHER, which let any teacher enumerate every colleague's daily
+    // attendance status and check-in/out times.
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/date/{date}")
     public ResponseEntity<List<TeacherAttendanceResponse>> getByDate(@PathVariable LocalDate date) {
         log.info("Fetching teacher attendance for date: {}", date);
@@ -96,6 +103,12 @@ public class TeacherAttendanceController {
             return ResponseEntity.badRequest().body("Invalid month or year");
         }
         return ResponseEntity.ok(teacherAttendanceService.getSummary(month, year));
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/today-summary")
+    public ResponseEntity<TeacherAttendanceTodaySummaryDTO> getTodaySummary() {
+        return ResponseEntity.ok(teacherAttendanceService.getTodaySummary());
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")

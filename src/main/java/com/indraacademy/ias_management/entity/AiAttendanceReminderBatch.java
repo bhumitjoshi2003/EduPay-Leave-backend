@@ -6,22 +6,23 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * Durable, Spring-owned record of one AI-copilot-triggered fee reminder batch.
- * Inserted at workflow START (PENDING_APPROVAL) so an abandoned batch is still
- * auditable; updated once at dispatch time. The unique workflowId is what makes
- * the dispatch step idempotent — see AiWorkflowController.dispatch().
+ * Durable, Spring-owned record of one AI-copilot-triggered attendance reminder batch.
+ * Direct structural mirror of AiFeeReminderBatch — inserted at workflow START
+ * (PENDING_APPROVAL) so an abandoned batch is still auditable; updated once at dispatch
+ * time. The unique workflowId is what makes the dispatch step idempotent — see
+ * AiAttendanceWorkflowController.dispatch().
  *
- * studentIds/outcomes are compact JSON (see AiWorkflowController) — same plain-TEXT-column,
- * manual-ObjectMapper-serialization pattern as AiTraceEvent.toolsCalledJson, not a join
- * table: this list is written once, read once, and capped to a small admin-driven batch.
+ * studentIds/outcomes are compact JSON, same plain-TEXT-column, manual-ObjectMapper-
+ * serialization pattern as AiFeeReminderBatch — not a join table: this list is written
+ * once, read once, and capped to a small admin-driven batch.
  */
 @Entity
 @Data
-@Table(name = "ai_fee_reminder_batch",
+@Table(name = "ai_attendance_reminder_batch",
     indexes = {
-        @Index(name = "idx_ai_fee_reminder_batch_school", columnList = "school_id")
+        @Index(name = "idx_ai_attendance_reminder_batch_school", columnList = "school_id")
     })
-public class AiFeeReminderBatch implements AiReminderBatch {
+public class AiAttendanceReminderBatch implements AiReminderBatch {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -41,6 +42,9 @@ public class AiFeeReminderBatch implements AiReminderBatch {
 
     @Column(name = "class_name", length = 64)
     private String className;
+
+    @Column(name = "threshold", nullable = false)
+    private double threshold = 75.0;
 
     @Column(name = "status", nullable = false, length = 32)
     private String status = "PENDING_APPROVAL";

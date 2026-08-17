@@ -4,8 +4,10 @@ import com.indraacademy.ias_management.config.Role;
 import jakarta.validation.Valid;
 import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
 import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
@@ -41,6 +43,18 @@ public class AttendanceController {
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<String> saveAttendance(@Valid @RequestBody List<Attendance> attendanceList, HttpServletRequest request) {
+        // TEACHER: every row must be for their own assigned class — without this a teacher
+        // could write (or overwrite) attendance for a class they don't teach.
+        if (Role.TEACHER.equals(authService.getRole()) && attendanceList != null) {
+            String teacherClass = teacherRepository.findById(authService.getUserId())
+                    .map(Teacher::getClassTeacher).orElse(null);
+            boolean allOwnClass = attendanceList.stream()
+                    .allMatch(a -> teacherClass != null && teacherClass.equals(a.getClassName()));
+            if (!allOwnClass) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only save attendance for their assigned class.");
+            }
+        }
         log.info("Request to save attendance for {} records.", attendanceList != null ? attendanceList.size() : 0);
         attendanceService.saveAttendance(attendanceList, request);
         log.info("Attendance data saved successfully.");
@@ -49,9 +63,19 @@ public class AttendanceController {
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @GetMapping("/date/{absentDate}/class/{className}")
-    public ResponseEntity<List<Attendance>> getAttendanceByDateAndClass(
+    public ResponseEntity<?> getAttendanceByDateAndClass(
             @PathVariable LocalDate absentDate,
             @PathVariable String className) {
+        // TEACHER: only their assigned class — same check as getClassAttendanceSummary/
+        // getConsecutiveAbsentees below, applied here too since this endpoint was missing it.
+        if (Role.TEACHER.equals(authService.getRole())) {
+            String teacherClass = teacherRepository.findById(authService.getUserId())
+                    .map(Teacher::getClassTeacher).orElse(null);
+            if (!className.equals(teacherClass)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only view attendance for their assigned class.");
+            }
+        }
         log.info("Request to get attendance for Date: {} and Class: {}", absentDate, className);
         List<Attendance> attendanceList = attendanceService.getAttendanceByDateAndClass(absentDate, className);
         return ResponseEntity.ok(attendanceList);
@@ -59,6 +83,8 @@ public class AttendanceController {
 
     @GetMapping("/counts/{studentId}/{year}/{month}")
     public ResponseEntity<?> getAttendanceCounts(@PathVariable String studentId, @PathVariable int year, @PathVariable int month) {
+        ResponseEntity<?> deniedResponse = checkStudentDataAccess(studentId);
+        if (deniedResponse != null) return deniedResponse;
         ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
         if (rangeError != null) return rangeError;
         log.info("Request to get attendance counts for Student: {} in {}-{}", studentId, year, month);
@@ -67,9 +93,11 @@ public class AttendanceController {
     }
 
     @GetMapping("/unapplied-leave-count/{studentId}/session/{session}")
-    public ResponseEntity<Long> getTotalUnappliedLeaveCount(
+    public ResponseEntity<?> getTotalUnappliedLeaveCount(
             @PathVariable String studentId,
             @PathVariable String session) {
+        ResponseEntity<?> deniedResponse = checkStudentDataAccess(studentId);
+        if (deniedResponse != null) return deniedResponse;
         log.info("Request to get unapplied leave count for Student: {} in Session: {}", studentId, session);
         long count = attendanceService.getTotalUnappliedLeaveCount(studentId, session);
         return ResponseEntity.ok(count);
@@ -81,6 +109,16 @@ public class AttendanceController {
             @PathVariable LocalDate date,
             @PathVariable String className,
             HttpServletRequest request) {
+        // TEACHER: only their assigned class — same check as getAttendanceByDateAndClass above;
+        // without this a teacher could delete another class's attendance for a day.
+        if (Role.TEACHER.equals(authService.getRole())) {
+            String teacherClass = teacherRepository.findById(authService.getUserId())
+                    .map(Teacher::getClassTeacher).orElse(null);
+            if (!className.equals(teacherClass)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only delete attendance for their assigned class.");
+            }
+        }
         log.warn("Request to delete attendance for Date: {} and Class: {}", date, className);
         attendanceService.deleteAttendanceByDateAndClass(date, className, request);
         log.info("Attendance records deleted successfully for Date: {} and Class: {}", date, className);
@@ -94,6 +132,8 @@ public class AttendanceController {
             @PathVariable int year,
             @RequestParam String className) {
 
+        ResponseEntity<?> deniedResponse = checkStudentDataAccess(studentId);
+        if (deniedResponse != null) return deniedResponse;
         ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
         if (rangeError != null) return rangeError;
         List<Attendance> list = attendanceService.getAttendanceByStudentClassMonthAndYear(studentId, className, year, month);
@@ -229,6 +269,52 @@ public class AttendanceController {
     }
 
     /**
+     * GET /api/attendance/consecutive-absentees/class/{className}
+     *   ?minDays=3&session=2025-2026&lookbackDays=60
+     *
+     * Students absent on every one of the last {minDays} *marked school days* for the class —
+     * the recent-absence-pattern counterpart to /summary/class/{className}'s cumulative
+     * percentage view. Same authorization rules as that endpoint, enforced identically below.
+     */
+    @GetMapping("/consecutive-absentees/class/{className}")
+    public ResponseEntity<?> getConsecutiveAbsentees(
+            @PathVariable String className,
+            @RequestParam(defaultValue = "3") int minDays,
+            @RequestParam(required = false) String session,
+            @RequestParam(required = false) Integer lookbackDays) {
+
+        String currentUserId = authService.getUserId();
+        String currentRole   = authService.getRole();
+
+        // STUDENT: no access to class-wide data — same rule as getClassAttendanceSummary.
+        if (Role.STUDENT.equals(currentRole)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Students cannot access class attendance summaries.");
+        }
+
+        // TEACHER: only their assigned class. Identical check to getClassAttendanceSummary —
+        // a teacher can never pull another class's absence patterns, whatever className is sent.
+        if (Role.TEACHER.equals(currentRole)) {
+            String teacherClass = teacherRepository.findById(currentUserId)
+                    .map(Teacher::getClassTeacher).orElse(null);
+            if (!className.equals(teacherClass)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only view attendance for their assigned class.");
+            }
+        }
+
+        if (minDays < 1 || minDays > 60) {
+            return ResponseEntity.badRequest().body("minDays must be between 1 and 60.");
+        }
+
+        log.info("Consecutive-absentee request — class: {}, minDays: {}, session: {}, lookbackDays: {}",
+                className, minDays, session, lookbackDays);
+        List<ConsecutiveAbsenceDTO> result =
+                attendanceService.getConsecutiveAbsentees(className, minDays, lookbackDays, session);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
      * GET /api/attendance/summary/school?type=year&session=2025-2026
      *   ?type=month&month=4&year=2026
      * Same shape as /summary/class/{className} but flattened across every class in
@@ -251,6 +337,36 @@ public class AttendanceController {
         log.info("School attendance summary request — type: {}, month: {}, year: {}, session: {}", type, month, year, session);
         List<ClassAttendanceSummaryDTO> summary = attendanceService.getSchoolSummary(type, month, year, session);
         return ResponseEntity.ok(summary);
+    }
+
+    /**
+     * For a per-student endpoint: a STUDENT may only access their own data, and a TEACHER only
+     * a student in their own assigned class — same rule already enforced by getDailyAttendance/
+     * getStudentAttendanceSummary above, extracted here for reuse by the counts/unapplied-leave/
+     * monthly endpoints, which were missing this check entirely (open to any authenticated role,
+     * any student).
+     * Returns a 403 ResponseEntity if access is denied, or null if access is allowed.
+     */
+    private ResponseEntity<?> checkStudentDataAccess(String studentId) {
+        String currentUserId = authService.getUserId();
+        String currentRole = authService.getRole();
+
+        if (Role.STUDENT.equals(currentRole) && !studentId.equals(currentUserId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Students can only view their own attendance.");
+        }
+        if (Role.TEACHER.equals(currentRole)) {
+            Long schoolId = securityUtil.getSchoolId();
+            String teacherClass = teacherRepository.findById(currentUserId)
+                    .map(Teacher::getClassTeacher).orElse(null);
+            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                    .map(Student::getClassName).orElse(null);
+            if (teacherClass == null || !teacherClass.equals(studentClass)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Teachers can only view attendance for students in their assigned class.");
+            }
+        }
+        return null;
     }
 
     /**

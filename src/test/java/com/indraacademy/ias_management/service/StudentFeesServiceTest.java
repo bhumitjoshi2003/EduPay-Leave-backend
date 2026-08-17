@@ -552,6 +552,39 @@ class StudentFeesServiceTest {
         assertThat(quote.getSchoolFeeDue()).isEqualByComparingTo("2000"); // only the resolvable month
     }
 
+    /**
+     * Real incident this covers: a month with a partial-then-refunded payment (paid stays
+     * false — see PaymentService.recomputeStudentFeesNetState — until amountPaid covers the
+     * full due) used to be quoted at its FULL original amount again by both the checkout
+     * screen and PaymentController.createOrder's Razorpay order amount — a genuine
+     * double-charge risk, not just a fee-reminder display bug. schoolFeeDue must reflect only
+     * the REMAINING balance: grossDue − netAmountPaid.
+     */
+    @Test
+    void computeCheckoutQuote_subtractsNetAmountPaid_fromSchoolFeeDue_forAPartiallyPaidUnpaidMonth() {
+        StudentFees m1 = existingRow(1, BigDecimal.valueOf(17000), BigDecimal.valueOf(800), BigDecimal.ZERO);
+        m1.setAmountPaid(BigDecimal.valueOf(16433)); // gross 18433 paid, then a 2000 refund netted to 16433
+        when(feeCalculationService.resolveSchoolFeeDue(m1, SCHOOL_ID, "2025-2026")).thenReturn(Optional.of(BigDecimal.valueOf(17800)));
+
+        CheckoutQuoteDto quote = service.computeCheckoutQuote("S1", "2025-2026", List.of(1));
+
+        assertThat(quote.getSchoolFeeDue()).isEqualByComparingTo("1367"); // 17800 - 16433, never the full 17800 again
+    }
+
+    @Test
+    void computeCheckoutQuote_neverGoesNegative_whenNetAmountPaidExceedsSchoolFeeDueAlone() {
+        // amountPaid (e.g. it included the late fee/platform fee portion of an earlier
+        // payment) can legitimately exceed the bare schoolFeeDue for the row — schoolFeeDue's
+        // contribution must floor at zero, not go negative.
+        StudentFees m1 = existingRow(1, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
+        m1.setAmountPaid(BigDecimal.valueOf(2500));
+        when(feeCalculationService.resolveSchoolFeeDue(m1, SCHOOL_ID, "2025-2026")).thenReturn(Optional.of(BigDecimal.valueOf(2000)));
+
+        CheckoutQuoteDto quote = service.computeCheckoutQuote("S1", "2025-2026", List.of(1));
+
+        assertThat(quote.getSchoolFeeDue()).isEqualByComparingTo("0");
+    }
+
     // ─── getMonthFeeBreakdown — Phase 3 frontend/read-model line-item breakdown ─────────
 
     private StudentFeesLineItem lineItem(Long studentFeesId, LineItemType type, String feeHeadCode,

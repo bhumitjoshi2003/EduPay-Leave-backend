@@ -3,12 +3,18 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.AdminMarkTeacherAttendanceRequest;
 import com.indraacademy.ias_management.dto.TeacherAttendanceResponse;
 import com.indraacademy.ias_management.dto.TeacherAttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.TeacherAttendanceTodaySummaryDTO;
 import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.SchoolHoliday;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.TeacherAttendance;
+import com.indraacademy.ias_management.entity.TeacherLeave;
+import com.indraacademy.ias_management.repository.SchoolHolidayRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.TeacherAttendanceRepository;
+import com.indraacademy.ias_management.repository.TeacherLeaveRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.util.SchoolTimeUtil;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -17,43 +23,88 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.DayOfWeek;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Owns both halves of teacher/staff attendance: the self-service GPS check-in/check-out and
+ * admin-override write paths (unchanged in spirit from before this pass), and — the part this
+ * pass rewrote — turning the raw {@link TeacherAttendance} rows into an authoritative account of
+ * a period: which days actually counted, and what a teacher's status was on each one.
+ *
+ * <h2>What "authoritative" means here</h2>
+ * A recorded row (from a GPS check-in or an admin override) is always the truth for its own date
+ * — nothing here ever second-guesses or overwrites one. The reconciliation this class does is
+ * additive: for a day that both (a) the school calendar says was a genuine working day and (b)
+ * has fully elapsed with no row at all, it is resolved to ABSENT for the purpose of summaries and
+ * the daily view. That resolved entry is never persisted — see {@link TeacherAttendanceResponse#absent}
+ * for why a computed fact doesn't need an audit trail the way a human action does.
+ *
+ * <p>The school calendar itself is {@link School#getWorkingDays()} (a weekly day-of-week pattern)
+ * minus any {@link SchoolHoliday} covering that date — both already existed and were already
+ * admin-configurable before this pass; the bug was that daily/monthly views never consulted the
+ * holiday calendar at all, and derived "which days count" from whichever attendance rows happened
+ * to already exist rather than from the calendar itself (see {@code countDistinctWorkingDays}'s
+ * old {@code COUNT(DISTINCT date)} — that query is no longer used).
+ *
+ * <p><b>"Today" is never resolved to ABSENT</b>, no matter how late in the day it's queried — the
+ * day isn't over, so a teacher who hasn't checked in yet may still do so. A day only becomes
+ * eligible for the ABSENT fill once it is strictly in the past, in the school's own timezone
+ * (see {@link com.indraacademy.ias_management.util.SchoolTimeUtil#zoneId}). If a real row for
+ * today already exists (a check-in already happened, or
+ * an admin already marked it), it's included normally; if not, today is simply omitted from
+ * counts until it resolves the following day — the same behavior the UI already showed for
+ * "today" before this change, so viewing today live is unaffected.
+ */
 @Service
 public class TeacherAttendanceService {
 
     private static final Logger log = LoggerFactory.getLogger(TeacherAttendanceService.class);
     private static final double EARTH_RADIUS_METERS = 6_371_000.0;
+    
+    public static final String STATUS_ON_TIME = "ON_TIME";
+    public static final String STATUS_LATE = "LATE";
+    public static final String STATUS_ABSENT = "ABSENT";
+    public static final String STATUS_HALF_DAY = "HALF_DAY";
+    public static final String STATUS_ON_LEAVE = "ON_LEAVE";
+    private static final Set<String> VALID_STATUSES =
+            Set.of(STATUS_ON_TIME, STATUS_LATE, STATUS_ABSENT, STATUS_HALF_DAY, STATUS_ON_LEAVE);
 
     @Autowired private TeacherAttendanceRepository teacherAttendanceRepository;
     @Autowired private SchoolRepository schoolRepository;
+    @Autowired private SchoolHolidayRepository schoolHolidayRepository;
+    @Autowired private TeacherLeaveRepository teacherLeaveRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private AuditService auditService;
+    @Autowired private Clock clock;
 
     @Transactional
     public TeacherAttendanceResponse checkIn(Double latitude, Double longitude, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         String teacherId = securityUtil.getUsername();
-        LocalDate today = LocalDate.now();
-        LocalTime now = LocalTime.now();
 
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found"));
+        ZoneId zone = SchoolTimeUtil.zoneId(school);
+        LocalDate today = LocalDate.now(clock.withZone(zone));
+        LocalTime now = LocalTime.now(clock.withZone(zone));
 
         // Validate school location is configured
         if (school.getSchoolLatitude() == null || school.getSchoolLongitude() == null) {
             throw new IllegalStateException("School location is not configured. Please contact your admin.");
         }
 
-        // Validate working day
-        if (!isWorkingDay(today, school.getWorkingDays())) {
+        // Validate working day — weekly pattern AND the holiday calendar. Previously only the
+        // weekly pattern was checked, so a teacher could self-check-in on a declared holiday.
+        boolean isHolidayToday = schoolHolidayRepository.existsBySchoolIdAndDateInRange(schoolId, today);
+        if (isHolidayToday || !isWorkingDayOfWeek(today, school.getWorkingDays())) {
             throw new IllegalStateException("Today is not a working day.");
         }
 
@@ -85,12 +136,12 @@ public class TeacherAttendanceService {
         }
 
         // Determine status
-        String status = "ON_TIME";
+        String status = STATUS_ON_TIME;
         if (school.getSchoolStartTime() != null) {
             int threshold = school.getLateThresholdMinutes() != null ? school.getLateThresholdMinutes() : 5;
             LocalTime lateAfter = school.getSchoolStartTime().plusMinutes(threshold);
             if (now.isAfter(lateAfter)) {
-                status = "LATE";
+                status = STATUS_LATE;
             }
         }
 
@@ -99,7 +150,7 @@ public class TeacherAttendanceService {
         ta.setTeacherId(teacherId);
         ta.setSchoolId(schoolId);
         ta.setDate(today);
-        ta.setCheckInTime(LocalDateTime.now());
+        ta.setCheckInTime(LocalDateTime.now(clock.withZone(zone)));
         ta.setStatus(status);
         ta.setLatitude(latitude);
         ta.setLongitude(longitude);
@@ -130,10 +181,11 @@ public class TeacherAttendanceService {
     public TeacherAttendanceResponse checkOut(Double latitude, Double longitude, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         String teacherId = securityUtil.getUsername();
-        LocalDate today = LocalDate.now();
 
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found"));
+        ZoneId zone = SchoolTimeUtil.zoneId(school);
+        LocalDate today = LocalDate.now(clock.withZone(zone));
 
         TeacherAttendance ta = teacherAttendanceRepository
                 .findByTeacherIdAndDateAndSchoolId(teacherId, today, schoolId)
@@ -154,7 +206,7 @@ public class TeacherAttendanceService {
             }
         }
 
-        ta.setCheckOutTime(LocalDateTime.now());
+        ta.setCheckOutTime(LocalDateTime.now(clock.withZone(zone)));
         TeacherAttendance saved = teacherAttendanceRepository.save(ta);
         log.info("Teacher {} checked out at school {}", teacherId, schoolId);
 
@@ -184,12 +236,17 @@ public class TeacherAttendanceService {
                 .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + req.getTeacherId()));
 
         // Validate status
-        Set<String> validStatuses = Set.of("ON_TIME", "LATE", "ABSENT", "HALF_DAY", "ON_LEAVE");
-        if (!validStatuses.contains(req.getStatus().toUpperCase())) {
+        if (!VALID_STATUSES.contains(req.getStatus().toUpperCase())) {
             throw new IllegalArgumentException("Invalid status: " + req.getStatus());
         }
 
-        // Create or update
+        School school = schoolRepository.findById(schoolId).orElse(null);
+        ZoneId zone = SchoolTimeUtil.zoneId(school);
+
+        // Create or update. An admin override is deliberately allowed on ANY date regardless of
+        // the working-day calendar — e.g. correcting a mistake, or recording a teacher who came
+        // in on a declared holiday — see this class's Javadoc for why that's different from the
+        // self-service checkIn's working-day restriction.
         TeacherAttendance ta = teacherAttendanceRepository
                 .findByTeacherIdAndDateAndSchoolId(req.getTeacherId(), req.getDate(), schoolId)
                 .orElseGet(() -> {
@@ -210,7 +267,7 @@ public class TeacherAttendanceService {
             LocalTime parsedIn = LocalTime.parse(req.getCheckInTime());
             ta.setCheckInTime(LocalDateTime.of(req.getDate(), parsedIn));
         } else if (ta.getCheckInTime() == null) {
-            ta.setCheckInTime(LocalDateTime.now());
+            ta.setCheckInTime(LocalDateTime.now(clock.withZone(zone)));
         }
 
         // Set check-out time if provided
@@ -237,106 +294,252 @@ public class TeacherAttendanceService {
         return TeacherAttendanceResponse.from(saved, teacher.getName());
     }
 
+    /**
+     * All teachers' attendance for one day. For a settled (strictly past) working day, any active
+     * teacher with no row is resolved to ABSENT — unless an APPROVED TeacherLeave covers the date,
+     * in which case it resolves to ON_LEAVE instead — so the list reflects everyone, not just
+     * whoever happened to be recorded. A non-working day (weekend or holiday) is never filled,
+     * even in the past — nobody is "absent" (or "on leave") from a day the school wasn't open.
+     *
+     * <p>ABSENT is never synthesized for today — the day isn't over. ON_LEAVE is the one status
+     * that IS synthesized for today: an approved leave is already a settled, human-decided fact
+     * independent of what time it is, unlike "nobody has checked in yet," which is genuinely still
+     * open until the day ends.
+     */
+    @Transactional(readOnly = true)
     public List<TeacherAttendanceResponse> getAttendanceByDate(LocalDate date) {
         Long schoolId = securityUtil.getSchoolId();
-        List<TeacherAttendance> records = teacherAttendanceRepository.findBySchoolIdAndDate(schoolId, date);
+        School school = schoolRepository.findById(schoolId).orElse(null);
+        ZoneId zone = SchoolTimeUtil.zoneId(school);
+        LocalDate today = LocalDate.now(clock.withZone(zone));
 
-        // Build teacher name map
-        Map<String, String> nameMap = teacherRepository.findBySchoolId(schoolId).stream()
+        List<TeacherAttendance> records = teacherAttendanceRepository.findBySchoolIdAndDate(schoolId, date);
+        List<Teacher> teachers = teacherRepository.findBySchoolId(schoolId);
+        Map<String, String> nameMap = teachers.stream()
                 .collect(Collectors.toMap(Teacher::getTeacherId, Teacher::getName, (a, b) -> a));
 
-        return records.stream()
+        List<TeacherAttendanceResponse> result = records.stream()
                 .map(ta -> TeacherAttendanceResponse.from(ta, nameMap.getOrDefault(ta.getTeacherId(), ta.getTeacherId())))
-                .collect(Collectors.toList());
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        if (school != null) {
+            List<SchoolHoliday> holidaysOnDate = schoolHolidayRepository.findOverlapping(schoolId, date, date);
+            if (isWorkingDay(date, school.getWorkingDays(), holidaysOnDate)) {
+                boolean pastDay = date.isBefore(today);
+                List<TeacherLeave> approvedLeavesOnDate = teacherLeaveRepository.findApprovedOverlapping(schoolId, date, date);
+                Set<String> recorded = records.stream().map(TeacherAttendance::getTeacherId).collect(Collectors.toSet());
+                long syntheticSeq = -1;
+                for (Teacher teacher : teachers) {
+                    if (recorded.contains(teacher.getTeacherId())) continue;
+                    if (teacher.getJoiningDate() != null && date.isBefore(teacher.getJoiningDate())) continue;
+                    if (isCoveredByApprovedLeave(teacher.getTeacherId(), date, approvedLeavesOnDate)) {
+                        result.add(TeacherAttendanceResponse.onLeave(
+                                syntheticSeq--, teacher.getTeacherId(), teacher.getName(), schoolId, date));
+                    } else if (pastDay) {
+                        result.add(TeacherAttendanceResponse.absent(
+                                syntheticSeq--, teacher.getTeacherId(), teacher.getName(), schoolId, date));
+                    }
+                }
+            }
+        }
+        return result;
     }
 
+    @Transactional(readOnly = true)
     public TeacherAttendanceSummaryDTO getMyAttendance(int month, int year) {
         Long schoolId = securityUtil.getSchoolId();
         String teacherId = securityUtil.getUsername();
         return buildSummary(teacherId, schoolId, month, year);
     }
 
+    @Transactional(readOnly = true)
     public TeacherAttendanceSummaryDTO getSummary(int month, int year) {
         Long schoolId = securityUtil.getSchoolId();
-        YearMonth ym = YearMonth.of(year, month);
-        LocalDate start = ym.atDay(1);
-        LocalDate end = ym.atEndOfMonth();
+        return buildSummary(null, schoolId, month, year);
+    }
 
-        List<TeacherAttendance> records = teacherAttendanceRepository
-                .findBySchoolIdAndDateBetweenOrderByDateAsc(schoolId, start, end);
+    /**
+     * Whole-school status counts for today only, for the admin dashboard's compact staff
+     * attendance widget. Built on top of {@link #getAttendanceByDate}, the same authoritative,
+     * calendar/holiday/leave-aware call the full Staff Attendance page uses — no counts are
+     * re-derived independently here.
+     */
+    @Transactional(readOnly = true)
+    public TeacherAttendanceTodaySummaryDTO getTodaySummary() {
+        Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId).orElse(null);
+        ZoneId zone = SchoolTimeUtil.zoneId(school);
+        LocalDate today = LocalDate.now(clock.withZone(zone));
 
-        Map<String, String> nameMap = teacherRepository.findBySchoolId(schoolId).stream()
-                .collect(Collectors.toMap(Teacher::getTeacherId, Teacher::getName, (a, b) -> a));
+        List<TeacherAttendanceResponse> records = getAttendanceByDate(today);
 
-        LocalDate effectiveEnd = end.isAfter(LocalDate.now()) ? LocalDate.now() : end;
-        int workingDays = teacherAttendanceRepository.countDistinctWorkingDays(schoolId, start, effectiveEnd);
-
-        List<TeacherAttendanceResponse> responseList = records.stream()
-                .map(ta -> TeacherAttendanceResponse.from(ta, nameMap.getOrDefault(ta.getTeacherId(), ta.getTeacherId())))
-                .collect(Collectors.toList());
-
-        int present = (int) records.stream().filter(r -> "ON_TIME".equals(r.getStatus()) || "LATE".equals(r.getStatus())).count();
-        int late = (int) records.stream().filter(r -> "LATE".equals(r.getStatus())).count();
-        int absent = (int) records.stream().filter(r -> "ABSENT".equals(r.getStatus())).count();
-        int halfDay = (int) records.stream().filter(r -> "HALF_DAY".equals(r.getStatus())).count();
-        int onLeave = (int) records.stream().filter(r -> "ON_LEAVE".equals(r.getStatus())).count();
-
-        TeacherAttendanceSummaryDTO dto = new TeacherAttendanceSummaryDTO();
-        dto.setTotalWorkingDays(workingDays);
-        dto.setPresentDays(present);
-        dto.setLateDays(late);
-        dto.setAbsentDays(absent);
-        dto.setHalfDayDays(halfDay);
-        dto.setOnLeaveDays(onLeave);
-        dto.setOnTimePercentage(present > 0 ? Math.round(((present - late) * 100.0 / present) * 10.0) / 10.0 : 0);
-        dto.setRecords(responseList);
+        TeacherAttendanceTodaySummaryDTO dto = new TeacherAttendanceTodaySummaryDTO();
+        dto.setDate(today);
+        dto.setPresentCount((int) records.stream().filter(r -> STATUS_ON_TIME.equals(r.getStatus())).count());
+        dto.setLateCount((int) records.stream().filter(r -> STATUS_LATE.equals(r.getStatus())).count());
+        dto.setAbsentCount((int) records.stream().filter(r -> STATUS_ABSENT.equals(r.getStatus())).count());
+        dto.setHalfDayCount((int) records.stream().filter(r -> STATUS_HALF_DAY.equals(r.getStatus())).count());
+        dto.setOnLeaveCount((int) records.stream().filter(r -> STATUS_ON_LEAVE.equals(r.getStatus())).count());
         return dto;
     }
 
     // ── Private helpers ──
 
-    private TeacherAttendanceSummaryDTO buildSummary(String teacherId, Long schoolId, int month, int year) {
+    /**
+     * Shared by getMyAttendance (teacherId set) and getSummary (teacherId null, whole school).
+     *
+     * <p>{@code totalWorkingDays} keeps its pre-existing meaning for each caller: for a single
+     * teacher it is that teacher's own count of settled working days on or after their joining
+     * date, which by construction equals presentDays+absentDays+halfDayDays+onLeaveDays exactly
+     * (a useful invariant — see TeacherAttendanceServiceTest). For the whole-school summary it
+     * remains a single school-wide "days open" figure, same semantic as before this pass, just
+     * now sourced from the calendar instead of from whichever rows happened to exist.
+     */
+    private TeacherAttendanceSummaryDTO buildSummary(String teacherIdFilter, Long schoolId, int month, int year) {
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found"));
+        ZoneId zone = SchoolTimeUtil.zoneId(school);
+        LocalDate today = LocalDate.now(clock.withZone(zone));
+
         YearMonth ym = YearMonth.of(year, month);
-        LocalDate start = ym.atDay(1);
-        LocalDate end = ym.atEndOfMonth();
+        LocalDate monthStart = ym.atDay(1);
+        LocalDate monthEnd = ym.atEndOfMonth();
 
-        List<TeacherAttendance> records = teacherAttendanceRepository
-                .findByTeacherIdAndSchoolIdAndDateBetweenOrderByDateAsc(teacherId, schoolId, start, end);
+        // Settled = fully elapsed days only. Today is handled separately below: a real row
+        // included normally, an ABSENT never synthesized (the day isn't over) but an ON_LEAVE
+        // still synthesized when covered by approved leave (see getAttendanceByDate's Javadoc
+        // for why that one status is different).
+        LocalDate settledEnd = monthEnd.isBefore(today) ? monthEnd : today.minusDays(1);
+        boolean hasSettledDays = !settledEnd.isBefore(monthStart);
 
-        String teacherName = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
-                .map(Teacher::getName).orElse(teacherId);
+        // Fetched for the WHOLE month (not just the settled portion) in one shot each, since
+        // today's ON_LEAVE check needs them too — both are cheap, indexed, single queries either way.
+        List<SchoolHoliday> holidays = schoolHolidayRepository.findOverlapping(schoolId, monthStart, monthEnd);
+        List<TeacherLeave> approvedLeaves = teacherLeaveRepository.findApprovedOverlapping(schoolId, monthStart, monthEnd);
+        List<LocalDate> settledWorkingDays = hasSettledDays
+                ? computeWorkingDays(monthStart, settledEnd, school.getWorkingDays(), holidays)
+                : List.of();
 
-        LocalDate effectiveEnd = end.isAfter(LocalDate.now()) ? LocalDate.now() : end;
-        int workingDays = teacherAttendanceRepository.countDistinctWorkingDays(schoolId, start, effectiveEnd);
+        List<Teacher> teachers;
+        if (teacherIdFilter != null) {
+            Optional<Teacher> t = teacherRepository.findByTeacherIdAndSchoolId(teacherIdFilter, schoolId);
+            if (t.isEmpty()) {
+                TeacherAttendanceSummaryDTO empty = new TeacherAttendanceSummaryDTO();
+                empty.setRecords(List.of());
+                return empty;
+            }
+            teachers = List.of(t.get());
+        } else {
+            teachers = teacherRepository.findBySchoolId(schoolId);
+        }
 
-        List<TeacherAttendanceResponse> responseList = records.stream()
-                .map(ta -> TeacherAttendanceResponse.from(ta, teacherName))
-                .collect(Collectors.toList());
+        List<TeacherAttendance> allRows = teacherIdFilter != null
+                ? teacherAttendanceRepository.findByTeacherIdAndSchoolIdAndDateBetweenOrderByDateAsc(
+                        teacherIdFilter, schoolId, monthStart, monthEnd)
+                : teacherAttendanceRepository.findBySchoolIdAndDateBetweenOrderByDateAsc(schoolId, monthStart, monthEnd);
 
-        int present = (int) records.stream().filter(r -> "ON_TIME".equals(r.getStatus()) || "LATE".equals(r.getStatus())).count();
-        int late = (int) records.stream().filter(r -> "LATE".equals(r.getStatus())).count();
-        int absent = (int) records.stream().filter(r -> "ABSENT".equals(r.getStatus())).count();
-        int halfDay = (int) records.stream().filter(r -> "HALF_DAY".equals(r.getStatus())).count();
-        int onLeave = (int) records.stream().filter(r -> "ON_LEAVE".equals(r.getStatus())).count();
+        Map<String, Map<LocalDate, TeacherAttendance>> rowsByTeacherThenDate = allRows.stream()
+                .collect(Collectors.groupingBy(TeacherAttendance::getTeacherId,
+                        Collectors.toMap(TeacherAttendance::getDate, r -> r, (a, b) -> a)));
+
+        List<TeacherAttendanceResponse> merged = new ArrayList<>();
+        long syntheticSeq = -1;
+        boolean todayInRange = !today.isBefore(monthStart) && !today.isAfter(monthEnd);
+        int totalWorkingDaysForFilter = 0;
+
+        for (Teacher teacher : teachers) {
+            String tid = teacher.getTeacherId();
+            String tname = teacher.getName();
+            LocalDate joinDate = teacher.getJoiningDate();
+            Map<LocalDate, TeacherAttendance> rowsForTeacher = rowsByTeacherThenDate.getOrDefault(tid, Map.of());
+
+            for (LocalDate day : settledWorkingDays) {
+                if (joinDate != null && day.isBefore(joinDate)) continue;
+                if (teacherIdFilter != null) totalWorkingDaysForFilter++;
+                TeacherAttendance existing = rowsForTeacher.get(day);
+                if (existing != null) {
+                    merged.add(TeacherAttendanceResponse.from(existing, tname));
+                } else if (isCoveredByApprovedLeave(tid, day, approvedLeaves)) {
+                    merged.add(TeacherAttendanceResponse.onLeave(syntheticSeq--, tid, tname, schoolId, day));
+                } else {
+                    merged.add(TeacherAttendanceResponse.absent(syntheticSeq--, tid, tname, schoolId, day));
+                }
+            }
+
+            if (todayInRange && (joinDate == null || !today.isBefore(joinDate))
+                    && isWorkingDay(today, school.getWorkingDays(), holidays)) {
+                TeacherAttendance todayRow = rowsForTeacher.get(today);
+                if (todayRow != null) {
+                    merged.add(TeacherAttendanceResponse.from(todayRow, tname));
+                    if (teacherIdFilter != null) totalWorkingDaysForFilter++;
+                } else if (isCoveredByApprovedLeave(tid, today, approvedLeaves)) {
+                    merged.add(TeacherAttendanceResponse.onLeave(syntheticSeq--, tid, tname, schoolId, today));
+                    if (teacherIdFilter != null) totalWorkingDaysForFilter++;
+                }
+            }
+        }
+
+        merged.sort(Comparator.comparing(TeacherAttendanceResponse::getDate)
+                .thenComparing(TeacherAttendanceResponse::getTeacherId));
+
+        int present = (int) merged.stream().filter(r -> STATUS_ON_TIME.equals(r.getStatus()) || STATUS_LATE.equals(r.getStatus())).count();
+        int late = (int) merged.stream().filter(r -> STATUS_LATE.equals(r.getStatus())).count();
+        int absent = (int) merged.stream().filter(r -> STATUS_ABSENT.equals(r.getStatus())).count();
+        int halfDay = (int) merged.stream().filter(r -> STATUS_HALF_DAY.equals(r.getStatus())).count();
+        int onLeave = (int) merged.stream().filter(r -> STATUS_ON_LEAVE.equals(r.getStatus())).count();
 
         TeacherAttendanceSummaryDTO dto = new TeacherAttendanceSummaryDTO();
-        dto.setTotalWorkingDays(workingDays);
+        dto.setTotalWorkingDays(teacherIdFilter != null ? totalWorkingDaysForFilter : settledWorkingDays.size());
         dto.setPresentDays(present);
         dto.setLateDays(late);
         dto.setAbsentDays(absent);
         dto.setHalfDayDays(halfDay);
         dto.setOnLeaveDays(onLeave);
         dto.setOnTimePercentage(present > 0 ? Math.round(((present - late) * 100.0 / present) * 10.0) / 10.0 : 0);
-        dto.setRecords(responseList);
+        dto.setRecords(merged);
         return dto;
     }
 
-    private boolean isWorkingDay(LocalDate date, String workingDays) {
+    private List<LocalDate> computeWorkingDays(LocalDate start, LocalDate end, String workingDaysPattern, List<SchoolHoliday> holidays) {
+        List<LocalDate> result = new ArrayList<>();
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            if (isWorkingDay(d, workingDaysPattern, holidays)) result.add(d);
+        }
+        return result;
+    }
+
+    /** A working day is a configured weekday that is not covered by any holiday. */
+    private boolean isWorkingDay(LocalDate date, String workingDaysPattern, List<SchoolHoliday> holidays) {
+        return isWorkingDayOfWeek(date, workingDaysPattern) && !isHolidayDate(date, holidays);
+    }
+
+    private boolean isWorkingDayOfWeek(LocalDate date, String workingDays) {
         if (workingDays == null || workingDays.isBlank()) return true;
         String dayName = date.getDayOfWeek().name(); // e.g. MONDAY
         return workingDays.toUpperCase().contains(dayName);
     }
 
+    /**
+     * Whether an APPROVED leave for this specific teacher covers this date. PENDING and REJECTED
+     * leaves never reach this check — {@code findApprovedOverlapping} only ever returns APPROVED
+     * rows, so a request still awaiting a decision correctly continues to resolve as ABSENT (or,
+     * once the day arrives and nobody's checked in, simply omitted) until an admin actually
+     * approves it.
+     */
+    private boolean isCoveredByApprovedLeave(String teacherId, LocalDate date, List<TeacherLeave> approvedLeaves) {
+        for (TeacherLeave leave : approvedLeaves) {
+            if (!teacherId.equals(leave.getTeacherId())) continue;
+            if (!date.isBefore(leave.getStartDate()) && !date.isAfter(leave.getEndDate())) return true;
+        }
+        return false;
+    }
+
+    private boolean isHolidayDate(LocalDate date, List<SchoolHoliday> holidays) {
+        for (SchoolHoliday h : holidays) {
+            if (!date.isBefore(h.getStartDate()) && !date.isAfter(h.getEndDate())) return true;
+        }
+        return false;
+    }
 
     private String formatDistance(double meters) {
         if (meters >= 1000) {

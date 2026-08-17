@@ -146,6 +146,15 @@ public class School {
     @Column(name = "checkin_window_end")
     private LocalTime checkinWindowEnd;
 
+    /**
+     * IANA zone id (e.g. "Asia/Kolkata"), never a fixed UTC offset — so it stays correct across
+     * DST transitions. Every "what day is today / is this check-in late / has this working day
+     * elapsed" decision in TeacherAttendanceService is computed in this zone, not the
+     * application server's own timezone. See V16__school_timezone.sql.
+     */
+    @Column(name = "timezone", nullable = false, length = 64)
+    private String timezone = "Asia/Kolkata";
+
     public School() {}
 
     public Long getId() { return id; }
@@ -255,4 +264,7 @@ public class School {
 
     public LocalTime getCheckinWindowEnd() { return checkinWindowEnd; }
     public void setCheckinWindowEnd(LocalTime checkinWindowEnd) { this.checkinWindowEnd = checkinWindowEnd; }
+
+    public String getTimezone() { return timezone; }
+    public void setTimezone(String timezone) { this.timezone = timezone; }
 }

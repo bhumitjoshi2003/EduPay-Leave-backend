@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
 import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.School;
@@ -33,6 +34,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -549,6 +551,121 @@ public class AttendanceService {
         for (String className : classNames) {
             result.addAll(getClassSummary(className, type, month, year, session, null));
         }
+        return result;
+    }
+
+    /** Default lookback for consecutive-absence detection. Generous enough that any sane streak
+     *  length still resolves across weekends/holidays/exam breaks, bounded so the query can never
+     *  degrade into a full-session scan. */
+    public static final int DEFAULT_ABSENCE_LOOKBACK_DAYS = 60;
+
+    /**
+     * Students absent on EVERY one of the most recent {@code minConsecutiveDays} marked school
+     * days for this class — the "who's been absent the last 3 days" question.
+     *
+     * <p><b>Days are marked school days, never calendar days.</b> This is the whole subtlety of
+     * the method. The attendance table stores a row only when a student was <i>absent</i>, plus a
+     * sentinel {@code studentId = "X"} row written on every submission so that all-present days are
+     * still visible (see getClassSummary / getDailyAttendance, which depend on the same trick).
+     * So "school was open" == "a date appears in this table for the class", and a naive
+     * today-minus-3-calendar-days window would sweep in weekends, holidays, and any day the
+     * teacher simply hasn't marked yet — flagging students who were never absent at all and
+     * emailing their parents a warning. Counting back through marked dates instead makes those
+     * days structurally unrepresentable.
+     *
+     * <p>Reports the student's <i>true</i> streak, not merely that it met the minimum: a student
+     * absent five days running is more urgent than one absent three, and the caller shouldn't have
+     * to re-derive that. Cumulative session figures are folded in from getClassSummary rather than
+     * recomputed here, so both views of a student always agree.
+     *
+     * @param minConsecutiveDays streak length required to be included (must be >= 1)
+     * @param lookbackDays       calendar days back from today to consider; null uses the default
+     * @param session            academic session for the cumulative figures (YYYY-YYYY)
+     */
+    @Transactional(readOnly = true)
+    public List<ConsecutiveAbsenceDTO> getConsecutiveAbsentees(String className,
+                                                               int minConsecutiveDays,
+                                                               Integer lookbackDays,
+                                                               String session) {
+        if (minConsecutiveDays < 1) {
+            throw new IllegalArgumentException("minConsecutiveDays must be at least 1");
+        }
+        Long schoolId = securityUtil.getSchoolId();
+        int lookback = (lookbackDays != null && lookbackDays > 0) ? lookbackDays : DEFAULT_ABSENCE_LOOKBACK_DAYS;
+
+        LocalDate end = LocalDate.now();
+        LocalDate start = end.minusDays(lookback);
+
+        // Single fetch: this same row set yields both the marked-school-day calendar (all rows,
+        // 'X' sentinels included) and each student's absence dates ('X' excluded) — no second query.
+        List<Attendance> rows = attendanceRepository
+                .findByClassNameAndSchoolIdAndDateBetween(className, schoolId, start, end);
+
+        // Most recent marked school day first.
+        List<LocalDate> markedDaysDesc = rows.stream()
+                .map(Attendance::getDate)
+                .distinct()
+                .sorted(Comparator.reverseOrder())
+                .collect(Collectors.toList());
+
+        if (markedDaysDesc.size() < minConsecutiveDays) {
+            // Fewer marked days exist than the streak being asked about, so no streak of that
+            // length can be *evidenced* — reporting students here would assert an absence on days
+            // the school never recorded.
+            log.info("Consecutive-absence check for class {}: only {} marked school day(s) in the last {} days, need {} — returning empty.",
+                    className, markedDaysDesc.size(), lookback, minConsecutiveDays);
+            return List.of();
+        }
+
+        Map<String, Set<LocalDate>> absencesByStudent = rows.stream()
+                .filter(a -> !"X".equals(a.getStudentId()))
+                .collect(Collectors.groupingBy(Attendance::getStudentId,
+                        Collectors.mapping(Attendance::getDate, Collectors.toSet())));
+
+        // Cumulative figures come from the existing session computation so the two views agree.
+        Map<String, ClassAttendanceSummaryDTO> sessionByStudent = new HashMap<>();
+        if (session != null && !session.isBlank()) {
+            for (ClassAttendanceSummaryDTO row : getClassSummary(className, "year", null, null, session, null)) {
+                sessionByStudent.put(row.getStudentId(), row);
+            }
+        }
+
+        List<Student> students = studentRepository.findByClassNameAndSchoolId(className, schoolId);
+        List<ConsecutiveAbsenceDTO> result = new ArrayList<>();
+
+        for (Student student : students) {
+            Set<LocalDate> absentOn = absencesByStudent.get(student.getStudentId());
+            if (absentOn == null || absentOn.isEmpty()) continue;  // never absent — not a streak of 0
+
+            // Walk back from the most recent marked day until the first day they showed up.
+            List<LocalDate> streak = new ArrayList<>();
+            for (LocalDate day : markedDaysDesc) {
+                if (!absentOn.contains(day)) break;
+                streak.add(day);
+            }
+            if (streak.size() < minConsecutiveDays) continue;
+
+            Collections.reverse(streak);  // oldest first, the order a human reads dates in
+            ClassAttendanceSummaryDTO cumulative = sessionByStudent.get(student.getStudentId());
+
+            result.add(new ConsecutiveAbsenceDTO(
+                    student.getStudentId(),
+                    student.getName(),
+                    className,
+                    streak.size(),
+                    streak.stream().map(LocalDate::toString).collect(Collectors.toList()),
+                    cumulative != null ? cumulative.getTotalWorkingDays() : 0L,
+                    cumulative != null ? cumulative.getDaysPresent() : 0L,
+                    cumulative != null ? cumulative.getDaysAbsent() : 0L,
+                    cumulative != null ? cumulative.getAttendancePercentage() : 0.0
+            ));
+        }
+
+        // Longest streak first — the most urgent cases lead.
+        result.sort(Comparator.comparingInt(ConsecutiveAbsenceDTO::getConsecutiveAbsentDays).reversed());
+
+        log.info("Consecutive-absence check for class {}: {} student(s) absent {}+ consecutive marked school days (of {} marked days in last {} days).",
+                className, result.size(), minConsecutiveDays, markedDaysDesc.size(), lookback);
         return result;
     }
 

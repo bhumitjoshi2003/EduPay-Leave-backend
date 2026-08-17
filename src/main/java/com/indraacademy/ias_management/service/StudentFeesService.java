@@ -570,12 +570,26 @@ public class StudentFeesService {
     private static final BigDecimal PLATFORM_FEE_RATE = BigDecimal.valueOf(0.015);
 
     /**
-     * Backend-authoritative checkout quote: school fee due (summed from each requested
-     * month's StudentFees snapshot, via FeeCalculationService.resolveSchoolFeeDue — never
-     * recomputed dynamically when a valid snapshot exists) + late fee (calculateLateFees,
-     * the existing tiered business rule) + platform fee (PLATFORM_FEE_RATE, applied to
-     * school fee + late fee, not the other way around) = totalAmount.
-     *
+     * Backend-authoritative checkout quote: REMAINING school fee due (each requested month's
+     * StudentFees snapshot due, via FeeCalculationService.resolveSchoolFeeDue, minus that same
+     * row's ledger-derived net amountPaid — see below) + REMAINING late fee + platform fee
+     * (PLATFORM_FEE_RATE, applied to the two remaining figures) = totalAmount.
+     * <p>
+     * Fixed defect (found during a fee-reminder investigation, but this method — not just the
+     * reminder — was the actual bug): this used to sum each month's full original due amount
+     * with no regard for amountPaid, so a month with a partial/since-refunded payment (paid
+     * stays false until amountPaid covers the full due amount — see
+     * PaymentService.recomputeStudentFeesNetState) was quoted at its FULL original amount
+     * again, on both the checkout screen and the actual Razorpay order-creation path
+     * (PaymentController.createOrder) — a real double-charge risk, not just a display bug.
+     * amountPaid is a single undifferentiated pool (the ledger doesn't track which of school
+     * fee / late fee / platform fee a given rupee paid down), so it's applied here in that
+     * same order: first against schoolFeeDue, any excess then against the late fee, matching
+     * recomputeStudentFeesNetState's own "amountPaid vs resolveSchoolFeeDue" basis for the
+     * paid flag so the two never disagree about what's been credited to the school-fee portion.
+     * Platform fee, by contrast, is never reduced by a prior payment — it's a fresh
+     * payment-time charge on whatever principal is still genuinely outstanding.
+     * <p>
      * A requested month with no StudentFees row, or whose amount can't be confidently
      * resolved, is added to unresolvedMonths and excluded from every total — the caller
      * must treat a non-empty unresolvedMonths as "this quote is incomplete," never silently
@@ -586,7 +600,7 @@ public class StudentFeesService {
         Long schoolId = securityUtil.getSchoolId();
 
         BigDecimal schoolFeeDue = BigDecimal.ZERO;
-        int lateFeeTotal = 0;
+        BigDecimal lateFee = BigDecimal.ZERO;
         List<Integer> unresolvedMonths = new java.util.ArrayList<>();
 
         for (Integer month : months) {
@@ -606,11 +620,19 @@ public class StudentFeesService {
                 unresolvedMonths.add(month);
                 continue;
             }
-            schoolFeeDue = schoolFeeDue.add(resolved.get());
-            lateFeeTotal += calculateLateFees(month);
+            BigDecimal grossDue = resolved.get();
+            BigDecimal netPaid = fee.getAmountPaid() != null ? fee.getAmountPaid() : BigDecimal.ZERO;
+
+            BigDecimal remainingSchoolFee = grossDue.subtract(netPaid).max(BigDecimal.ZERO);
+            BigDecimal excessBeyondSchoolFee = netPaid.subtract(grossDue).max(BigDecimal.ZERO);
+
+            BigDecimal grossLateFee = BigDecimal.valueOf(calculateLateFees(month));
+            BigDecimal remainingLateFee = grossLateFee.subtract(excessBeyondSchoolFee).max(BigDecimal.ZERO);
+
+            schoolFeeDue = schoolFeeDue.add(remainingSchoolFee);
+            lateFee = lateFee.add(remainingLateFee);
         }
 
-        BigDecimal lateFee = BigDecimal.valueOf(lateFeeTotal);
         BigDecimal preFeeSubtotal = schoolFeeDue.add(lateFee);
         BigDecimal platformFee = preFeeSubtotal.multiply(PLATFORM_FEE_RATE)
                 .setScale(0, java.math.RoundingMode.CEILING); // ceiling, matching the frontend's prior Math.ceil

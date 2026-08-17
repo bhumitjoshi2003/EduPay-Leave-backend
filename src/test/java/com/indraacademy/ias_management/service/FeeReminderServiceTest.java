@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.dto.CheckoutQuoteDto;
 import com.indraacademy.ias_management.dto.OverdueStudentDto;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SnapshotStatus;
@@ -27,13 +28,17 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Consumer-migration coverage: FeeReminderService.getOverdueStudents used to recompute
- * totalDue live via FeeCalculationService/legacy FeeStructure; it now sums each unpaid
- * row's own StudentFees snapshot via FeeCalculationService.resolveSchoolFeeDue — the same
- * figure payment/checkout use, so reminders and the AI tools that consume this endpoint's
- * totalDue field see the identical number. If any one unpaid month can't be resolved, the
- * WHOLE student's totalDue becomes null (never a partial/understated sum) — the existing
- * "null means unknown, not ₹0" convention this method already documented.
+ * Consumer-migration coverage: FeeReminderService.getOverdueStudents' totalDue now delegates
+ * to StudentFeesService.computeCheckoutQuote — the exact same backend-authoritative calculation
+ * the Fees UI's checkout screen uses — instead of separately re-summing each month's snapshot
+ * via FeeCalculationService.resolveSchoolFeeDue. That prior approach silently omitted the late
+ * fee accrued on overdue months, understating what a parent actually owes vs. what the Fees page
+ * shows for the identical months (confirmed live: ₹17,800 reported vs. ₹18,160 actually owed
+ * once the accrued late fee is included). totalDue = schoolFeeDue + lateFee, deliberately
+ * EXCLUDING platformFee — per CheckoutQuoteDto's own contract that's a payment-time-only
+ * convenience charge, never part of the underlying school debt. If any month in the quote is
+ * unresolved, the WHOLE student's totalDue becomes null (never a partial/understated sum) — the
+ * existing "null means unknown, not ₹0" convention this method already documented.
  */
 @ExtendWith(MockitoExtension.class)
 class FeeReminderServiceTest {
@@ -42,6 +47,7 @@ class FeeReminderServiceTest {
     @Mock private StudentRepository studentRepository;
     @Mock private SchoolRepository schoolRepository;
     @Mock private FeeCalculationService feeCalculationService;
+    @Mock private StudentFeesService studentFeesService;
     @Mock private PaymentRepository paymentRepository;
     @Mock private SecurityUtil securityUtil;
 
@@ -57,6 +63,7 @@ class FeeReminderServiceTest {
         ReflectionTestUtils.setField(service, "studentRepository", studentRepository);
         ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
         ReflectionTestUtils.setField(service, "feeCalculationService", feeCalculationService);
+        ReflectionTestUtils.setField(service, "studentFeesService", studentFeesService);
         ReflectionTestUtils.setField(service, "paymentRepository", paymentRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
 
@@ -107,23 +114,67 @@ class FeeReminderServiceTest {
         return fee;
     }
 
+    /** Mirrors StudentFeesService.computeCheckoutQuote's own output shape. */
+    private CheckoutQuoteDto quote(String studentId, List<Integer> months, BigDecimal schoolFeeDue,
+                                    BigDecimal lateFee, BigDecimal platformFee, List<Integer> unresolvedMonths) {
+        CheckoutQuoteDto dto = new CheckoutQuoteDto();
+        dto.setStudentId(studentId);
+        dto.setSession(SESSION);
+        dto.setMonths(months);
+        dto.setSchoolFeeDue(schoolFeeDue);
+        dto.setLateFee(lateFee);
+        dto.setPlatformFee(platformFee);
+        dto.setTotalAmount(schoolFeeDue.add(lateFee).add(platformFee));
+        dto.setUnresolvedMonths(unresolvedMonths);
+        return dto;
+    }
+
     @Test
-    void totalDue_sumsEachRowsOwnResolvedSnapshot_notALiveRecompute() {
+    void totalDue_delegatesToCheckoutQuote_forTheStudentsFullUnpaidOverdueMonthList() {
         StudentFees month1 = unpaidRow("S1", 1, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO, SnapshotStatus.COMPUTED);
         StudentFees month2 = unpaidRow("S1", 2, BigDecimal.valueOf(2000), BigDecimal.valueOf(800), BigDecimal.valueOf(200), SnapshotStatus.COMPUTED);
         when(studentFeesRepository.findAllUnpaidBySchoolIdAndSession(SCHOOL_ID, SESSION)).thenReturn(List.of(month1, month2));
         when(studentRepository.findByStudentIdAndSchoolId("S1", SCHOOL_ID)).thenReturn(Optional.of(activeStudent("S1", "5A")));
-        when(feeCalculationService.resolveSchoolFeeDue(month1, SCHOOL_ID, SESSION)).thenReturn(Optional.of(BigDecimal.valueOf(2000)));
-        when(feeCalculationService.resolveSchoolFeeDue(month2, SCHOOL_ID, SESSION)).thenReturn(Optional.of(BigDecimal.valueOf(2600))); // 2000+800-200
+        when(studentFeesService.computeCheckoutQuote("S1", SESSION, List.of(1, 2)))
+                .thenReturn(quote("S1", List.of(1, 2), BigDecimal.valueOf(4600), BigDecimal.ZERO, BigDecimal.ZERO, List.of()));
 
         List<OverdueStudentDto> result = service.getOverdueStudents(SESSION, null);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getTotalDue()).isEqualTo(4600.0); // 2000 + 2600
-        // Never calls the old live-recompute methods directly on the calculation service —
-        // only the unified resolveSchoolFeeDue.
-        verify(feeCalculationService, never()).loadActiveRules(any(), any(), any());
-        verify(feeCalculationService, never()).calculateMonthFeeRupees(anyInt(), any());
+        assertThat(result.get(0).getTotalDue()).isEqualTo(4600.0);
+    }
+
+    @Test
+    void totalDue_includesAccruedLateFee_matchingWhatTheFeesUiCheckoutQuoteShows() {
+        // The actual bug this covers: totalDue used to sum only each row's resolved snapshot
+        // (schoolFeeDue), silently dropping the late fee that accrues on an overdue month —
+        // reported ₹17,800 here while the Fees UI's checkout quote for the identical month
+        // showed ₹18,160 (schoolFeeDue 17800 + lateFee 360). totalDue must include lateFee.
+        StudentFees overdueMonth = unpaidRow("S1", 1, BigDecimal.valueOf(17000), BigDecimal.valueOf(800), BigDecimal.ZERO, SnapshotStatus.COMPUTED);
+        when(studentFeesRepository.findAllUnpaidBySchoolIdAndSession(SCHOOL_ID, SESSION)).thenReturn(List.of(overdueMonth));
+        when(studentRepository.findByStudentIdAndSchoolId("S1", SCHOOL_ID)).thenReturn(Optional.of(activeStudent("S1", "5A")));
+        when(studentFeesService.computeCheckoutQuote("S1", SESSION, List.of(1)))
+                .thenReturn(quote("S1", List.of(1), BigDecimal.valueOf(17800), BigDecimal.valueOf(360), BigDecimal.valueOf(273), List.of()));
+
+        List<OverdueStudentDto> result = service.getOverdueStudents(SESSION, null);
+
+        assertThat(result.get(0).getTotalDue()).isEqualTo(18160.0); // 17800 schoolFeeDue + 360 lateFee
+    }
+
+    @Test
+    void totalDue_excludesPlatformFee_notPartOfTheUnderlyingSchoolDebt() {
+        StudentFees overdueMonth = unpaidRow("S1", 1, BigDecimal.valueOf(17000), BigDecimal.valueOf(800), BigDecimal.ZERO, SnapshotStatus.COMPUTED);
+        when(studentFeesRepository.findAllUnpaidBySchoolIdAndSession(SCHOOL_ID, SESSION)).thenReturn(List.of(overdueMonth));
+        when(studentRepository.findByStudentIdAndSchoolId("S1", SCHOOL_ID)).thenReturn(Optional.of(activeStudent("S1", "5A")));
+        when(studentFeesService.computeCheckoutQuote("S1", SESSION, List.of(1)))
+                .thenReturn(quote("S1", List.of(1), BigDecimal.valueOf(17800), BigDecimal.valueOf(360), BigDecimal.valueOf(273), List.of()));
+
+        List<OverdueStudentDto> result = service.getOverdueStudents(SESSION, null);
+
+        // 18433 would be totalAmount (schoolFeeDue+lateFee+platformFee) — the payment-time
+        // total, not the debt total. totalDue must stop at 18160, never reach 18433.
+        assertThat(result.get(0).getTotalDue()).isNotEqualTo(18433.0);
+        assertThat(result.get(0).getTotalDue()).isEqualTo(18160.0);
     }
 
     @Test
@@ -132,8 +183,8 @@ class FeeReminderServiceTest {
         StudentFees unresolvable = unpaidRow("S1", 2, null, null, null, null); // legacy row, no live rules either
         when(studentFeesRepository.findAllUnpaidBySchoolIdAndSession(SCHOOL_ID, SESSION)).thenReturn(List.of(resolvable, unresolvable));
         when(studentRepository.findByStudentIdAndSchoolId("S1", SCHOOL_ID)).thenReturn(Optional.of(activeStudent("S1", "5A")));
-        when(feeCalculationService.resolveSchoolFeeDue(resolvable, SCHOOL_ID, SESSION)).thenReturn(Optional.of(BigDecimal.valueOf(2000)));
-        when(feeCalculationService.resolveSchoolFeeDue(unresolvable, SCHOOL_ID, SESSION)).thenReturn(Optional.empty());
+        when(studentFeesService.computeCheckoutQuote("S1", SESSION, List.of(1, 2)))
+                .thenReturn(quote("S1", List.of(1, 2), BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO, List.of(2)));
 
         List<OverdueStudentDto> result = service.getOverdueStudents(SESSION, null);
 
@@ -148,7 +199,8 @@ class FeeReminderServiceTest {
         StudentFees waived = unpaidRow("S1", 1, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.valueOf(2000), SnapshotStatus.COMPUTED);
         when(studentFeesRepository.findAllUnpaidBySchoolIdAndSession(SCHOOL_ID, SESSION)).thenReturn(List.of(waived));
         when(studentRepository.findByStudentIdAndSchoolId("S1", SCHOOL_ID)).thenReturn(Optional.of(activeStudent("S1", "5A")));
-        when(feeCalculationService.resolveSchoolFeeDue(waived, SCHOOL_ID, SESSION)).thenReturn(Optional.of(BigDecimal.ZERO));
+        when(studentFeesService.computeCheckoutQuote("S1", SESSION, List.of(1)))
+                .thenReturn(quote("S1", List.of(1), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, List.of()));
 
         List<OverdueStudentDto> result = service.getOverdueStudents(SESSION, null);
 

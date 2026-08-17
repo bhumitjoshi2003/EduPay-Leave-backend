@@ -5,7 +5,9 @@ import com.indraacademy.ias_management.dto.*;
 import com.indraacademy.ias_management.dto.VerifyRcDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.service.ReportCardDataAssembler;
 import com.indraacademy.ias_management.service.ReportCardPdfGenerator;
 import com.indraacademy.ias_management.dto.ClassOverviewDTO;
@@ -41,6 +43,7 @@ public class ReportCardController {
     @Autowired private ReportCardPublicationService  publicationService;
     @Autowired private ClassOverviewService          classOverviewService;
     @Autowired private StudentRepository             studentRepository;
+    @Autowired private TeacherRepository             teacherRepository;
     @Autowired private SecurityUtil                  securityUtil;
 
     // ── Template CRUD ─────────────────────────────────────────────────────
@@ -122,6 +125,8 @@ public class ReportCardController {
             }
         }
 
+        checkTeacherOwnsStudents(List.of(studentId));
+
         return ResponseEntity.ok(assembler.assemble(studentId, templateId, session));
     }
 
@@ -137,6 +142,7 @@ public class ReportCardController {
             @RequestParam Long templateId,
             @RequestParam String session,
             @RequestParam String className) {
+        checkTeacherClassAccess(className);
         return ResponseEntity.ok(remarksService.getClassRemarks(templateId, session, className));
     }
 
@@ -147,6 +153,8 @@ public class ReportCardController {
     @PutMapping("/report-cards/remarks")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     public ResponseEntity<Void> saveRemarks(@Valid @RequestBody RemarksRequest req) {
+        checkTeacherOwnsStudents(req.getStudentRemarks().stream()
+                .map(RemarksRequest.StudentRemarkItem::getStudentId).toList());
         remarksService.saveRemarks(req);
         return ResponseEntity.noContent().build();
     }
@@ -158,6 +166,8 @@ public class ReportCardController {
     @PutMapping("/report-cards/co-scholastic")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     public ResponseEntity<Void> saveCoScholastic(@Valid @RequestBody CoScholasticRequest req) {
+        checkTeacherOwnsStudents(req.getStudentEntries().stream()
+                .map(CoScholasticRequest.StudentCoScholasticItem::getStudentId).toList());
         remarksService.saveCoScholastic(req);
         return ResponseEntity.noContent().build();
     }
@@ -183,6 +193,8 @@ public class ReportCardController {
             @RequestParam String studentId,
             @RequestParam Long templateId,
             @RequestParam String session) {
+
+        checkTeacherOwnsStudents(List.of(studentId));
 
         ReportCardDataDTO data = assembler.assemble(studentId, templateId, session);
 
@@ -210,6 +222,8 @@ public class ReportCardController {
             @RequestParam Long templateId,
             @RequestParam String session,
             @RequestParam String className) {
+
+        checkTeacherClassAccess(className);
 
         Long schoolId = securityUtil.getSchoolId();
         List<Student> students = studentRepository.findByClassNameAndStatusAndSchoolId(
@@ -258,6 +272,7 @@ public class ReportCardController {
             @RequestParam Long templateId,
             @RequestParam String session,
             @RequestParam String className) {
+        checkTeacherClassAccess(className);
         return ResponseEntity.ok(classOverviewService.getClassOverview(templateId, session, className));
     }
 
@@ -270,6 +285,7 @@ public class ReportCardController {
             @RequestParam Long templateId,
             @RequestParam String session,
             @RequestParam String className) {
+        checkTeacherClassAccess(className);
         return ResponseEntity.ok(publicationService.getStatus(templateId, session, className));
     }
 
@@ -307,6 +323,66 @@ public class ReportCardController {
             "initiated", initiated,
             "message", "Email blast started for " + initiated + " student(s). Emails will arrive shortly."
         ));
+    }
+
+    // ── Teacher class-ownership checks ──────────────────────────────────────
+    // None of the methods above originally cross-checked a TEACHER caller's own assigned class
+    // against the className/studentId they requested — every one of them scoped only by
+    // schoolId, letting any teacher read, download, or edit report-card data (including
+    // remarks and co-scholastic grades) for any class in the school. Mirrors the same pattern
+    // already used correctly by MarkController.checkTeacherClassAccess for the marks module.
+
+    /**
+     * For TEACHER callers: verifies their classTeacher field matches the given className.
+     * Throws a 403 ResponseStatusException if access is denied; no-ops otherwise. ADMIN (and,
+     * where applicable, STUDENT) callers are untouched here — their own separate authorization
+     * already happens at each call site.
+     */
+    private void checkTeacherClassAccess(String className) {
+        if (!Role.TEACHER.equals(securityUtil.getRole())) return;
+
+        String teacherId = securityUtil.getUsername();
+        Long schoolId = securityUtil.getSchoolId();
+        String teacherClass = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
+                .map(Teacher::getClassTeacher)
+                .orElse(null);
+
+        if (teacherClass == null || !teacherClass.equals(className)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Teachers can only access report card data for their own class.");
+        }
+    }
+
+    /**
+     * For TEACHER callers: verifies every one of the given studentIds belongs to their own
+     * assigned class. Used for single-student lookups (studentId) and bulk requests
+     * (RemarksRequest/CoScholasticRequest, which carry a list of studentIds but no className
+     * field directly) — resolves each student's class rather than trusting anything the
+     * request itself claims.
+     */
+    private void checkTeacherOwnsStudents(List<String> studentIds) {
+        if (!Role.TEACHER.equals(securityUtil.getRole())) return;
+        if (studentIds == null || studentIds.isEmpty()) return;
+
+        String teacherId = securityUtil.getUsername();
+        Long schoolId = securityUtil.getSchoolId();
+        String teacherClass = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
+                .map(Teacher::getClassTeacher)
+                .orElse(null);
+        if (teacherClass == null) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Teachers can only access report card data for their own class.");
+        }
+
+        for (String studentId : studentIds) {
+            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                    .map(Student::getClassName)
+                    .orElse(null);
+            if (!teacherClass.equals(studentClass)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                        "Teachers can only access report card data for students in their own class.");
+            }
+        }
     }
 
     private String sanitizeFilename(String name) {

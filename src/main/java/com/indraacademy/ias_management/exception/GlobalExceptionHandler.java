@@ -21,6 +21,46 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    /**
+     * 403 — authenticated, but not allowed to do this.
+     *
+     * <p>Without this handler the catch-all {@code Exception} handler below swallows Spring
+     * Security's AuthorizationDeniedException (a subclass of AccessDeniedException) and reports
+     * every {@code @PreAuthorize} denial in the application as a 500. That is wrong twice over:
+     * the caller cannot tell "you lack permission" from "the server is broken", so a UI shows a
+     * scary generic failure for what is a normal, expected outcome; and genuine faults become
+     * indistinguishable from routine permission checks in logs and monitoring.
+     *
+     * <p>Note this only ever sees the authenticated-but-unauthorized case — an unauthenticated
+     * request is rejected by ExceptionTranslationFilter (see SecurityConfig's
+     * unauthorizedEntryPoint) long before reaching a controller, and still returns 401.
+     */
+    @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(
+            org.springframework.security.access.AccessDeniedException ex) {
+        log.warn("Access denied: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.FORBIDDEN)
+                .body(new ErrorResponse(403, "Forbidden", "You do not have permission to perform this action."));
+    }
+
+    /**
+     * 409 — the request's target leave status already matches its current status.
+     *
+     * <p>Backstop only: LeaveController and LeaveDecisionService (the two current callers of
+     * {@code LeaveService.updateLeaveStatus}) already catch this locally, matching their own
+     * existing error-response shapes. This handler exists so a future caller that doesn't
+     * remember to add its own catch still gets a correct 409 instead of falling through to the
+     * generic 500 below — the same reasoning as the AccessDeniedException handler above.
+     */
+    @ExceptionHandler(InvalidLeaveStatusTransitionException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidLeaveStatusTransition(InvalidLeaveStatusTransitionException ex) {
+        log.warn("Rejected leave status transition: {}", ex.getMessage());
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse(409, "Conflict", ex.getMessage()));
+    }
+
     /** 400 — bad input from caller */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
@@ -89,6 +129,28 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponse(500, "Internal Server Error", "A database error occurred."));
+    }
+
+    /**
+     * Respects whatever status/reason the exception itself already carries (403, 404, 409, ...).
+     *
+     * <p>Without this handler, any {@code throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+     * "...")} anywhere in the codebase fell through to {@link #handleGeneric} below and came back
+     * as a misleading 500 — the same bug class {@link #handleHandlerMethodValidation} already
+     * documents for one specific subclass of this exception, just not fixed for the base type
+     * itself. Confirmed live: several TEACHER class-ownership checks in ReportCardController use
+     * exactly this exception and were returning 500 instead of 403 until this handler was added.
+     */
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public ResponseEntity<ErrorResponse> handleResponseStatusException(
+            org.springframework.web.server.ResponseStatusException ex) {
+        HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());
+        if (status == null) status = HttpStatus.INTERNAL_SERVER_ERROR;
+        log.warn("{}: {}", status, ex.getReason());
+        return ResponseEntity
+                .status(status)
+                .body(new ErrorResponse(status.value(), status.getReasonPhrase(),
+                        ex.getReason() != null ? ex.getReason() : status.getReasonPhrase()));
     }
 
     /** 500 — catch-all for anything unhandled */

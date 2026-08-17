@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Leave;
 import com.indraacademy.ias_management.entity.LeaveStatus;
+import com.indraacademy.ias_management.exception.InvalidLeaveStatusTransitionException;
 import com.indraacademy.ias_management.repository.LeaveRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,6 +11,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -223,11 +225,28 @@ public class LeaveService {
 
         try {
             Long schoolId = securityUtil.getSchoolId();
-            Leave leave = leaveRepository.findById(leaveId)
+            // Locked, not a plain findById: this is what makes the "already this status" check
+            // below race-free rather than merely likely-correct. Two callers deciding the same
+            // leave at nearly the same moment now serialize here — the second blocks until the
+            // first commits, then re-reads the row it just blocked on and sees the first
+            // caller's decision, instead of racing past it with a stale in-memory copy.
+            // See LeaveRepository.findByIdForUpdate's Javadoc.
+            Leave leave = leaveRepository.findByIdForUpdate(leaveId)
                     .orElseThrow(() -> new NoSuchElementException("Leave not found with ID " + leaveId));
 
             if (!schoolId.equals(leave.getSchoolId())) {
                 throw new SecurityException("Access denied: leave does not belong to your school.");
+            }
+
+            // Only a genuine change is applied. A request whose target already matches the
+            // leave's current status is a repeat — a double-click, a retried request, or a
+            // second caller who raced to the same decision as the first — and is rejected rather
+            // than silently re-applied, which would otherwise re-audit and re-notify the student
+            // for a decision already made. This is deliberately narrower than "must be PENDING":
+            // it does not block the product's existing APPROVED <-> REJECTED reversal action
+            // (ViewLeavesComponent.editLeaveStatus), only a transition that changes nothing.
+            if (status == leave.getStatus()) {
+                throw new InvalidLeaveStatusTransitionException(leaveId, leave.getStatus(), status);
             }
 
             String oldValue = objectMapper.writeValueAsString(leave);
@@ -325,5 +344,35 @@ public class LeaveService {
             log.error("Data access error fetching leaves by date {} and class {}", date, className, e);
             throw new RuntimeException("Could not retrieve leaves due to data access issue", e);
         }
+    }
+
+    /**
+     * Leave requests awaiting a decision, for the AI Copilot's read-only tools and its decision
+     * workflow. Oldest first, capped.
+     *
+     * <p>{@code className} is the caller-scoping hook: the workflow layer passes a TEACHER's own
+     * class here so the Copilot surface is class-confined, even though this module's existing
+     * endpoints are only school-scoped. Passing null yields the school-wide view used by admins.
+     */
+    @Transactional(readOnly = true)
+    public List<Leave> getLeavesForReview(String className, String studentId, int limit) {
+        Long schoolId = securityUtil.getSchoolId();
+        int capped = Math.max(1, Math.min(limit, 100));
+        return leaveRepository.findForReview(
+                LeaveStatus.PENDING, schoolId,
+                (className != null && !className.isBlank()) ? className : null,
+                (studentId != null && !studentId.isBlank()) ? studentId : null,
+                PageRequest.of(0, capped));
+    }
+
+    /**
+     * Resolves specific leave ids within the caller's school, whatever their current status —
+     * the workflow needs the real current status to report "already decided" honestly rather than
+     * silently dropping the request. Ids outside the school simply do not come back.
+     */
+    @Transactional(readOnly = true)
+    public List<Leave> getLeavesByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        return leaveRepository.findByIdInAndSchoolId(ids, securityUtil.getSchoolId());
     }
 }

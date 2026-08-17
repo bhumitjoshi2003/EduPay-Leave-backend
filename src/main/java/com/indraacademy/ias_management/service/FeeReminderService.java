@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.dto.CheckoutQuoteDto;
 import com.indraacademy.ias_management.dto.OverdueStudentDto;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
@@ -36,6 +37,7 @@ public class FeeReminderService {
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private FeeCalculationService feeCalculationService;
+    @Autowired private StudentFeesService studentFeesService;
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private EmailService emailService;
     @Autowired private AuditService auditService;
@@ -148,23 +150,25 @@ public class FeeReminderService {
                     .map(sf -> getMonthName(sf.getMonth(), startMonth))
                     .collect(Collectors.toList());
 
-            // totalDue: sum each unpaid month's stored StudentFees snapshot (baseAmountDue +
-            // busFeeDue − discountAmount) — the same stable figure the student's receipt and
-            // checkout both use. Falls back to a live rule lookup only for a row with no
-            // trustworthy snapshot (see FeeCalculationService.resolveSchoolFeeDue); if EVEN ONE
-            // unpaid month can't be resolved either way, the whole total is genuinely unknown
-            // (null), not ₹0 — a partial sum that silently drops an unresolvable month would
-            // understate what's owed, which is the same anti-pattern as fabricating a zero.
+            // totalDue: delegates to StudentFeesService.computeCheckoutQuote — the exact same
+            // backend-authoritative calculation the Fees UI's checkout screen uses — instead of
+            // separately re-summing each month's snapshot here. That prior approach summed only
+            // resolveSchoolFeeDue (baseAmountDue + busFeeDue − discountAmount) and silently
+            // omitted the late fee that accrues on every overdue month, so this tool understated
+            // what a parent actually owes vs. what the Fees page shows for the same months (e.g.
+            // ₹17,800 reported here vs. ₹18,160 owed once the accrued late fee is included —
+            // confirmed live against real StudentFees/checkout-quote data). platformFee is
+            // deliberately excluded from totalDue: per CheckoutQuoteDto's own contract it is a
+            // payment-time-only convenience charge, never part of the underlying school debt, so
+            // including it here would overstate what's owed the same way omitting the late fee
+            // understated it. unresolvedMonths again means the total is genuinely unknown, not
+            // partially summed — same "null, never a silently-short ₹ figure" rule as before.
             String cls = student.getClassName();
-            Double totalDue = 0.0;
-            for (StudentFees sf : fees) {
-                Optional<java.math.BigDecimal> resolved = feeCalculationService.resolveSchoolFeeDue(sf, schoolId, session);
-                if (resolved.isEmpty()) {
-                    totalDue = null;
-                    break;
-                }
-                totalDue += resolved.get().doubleValue();
-            }
+            List<Integer> monthNumbers = fees.stream().map(StudentFees::getMonth).collect(Collectors.toList());
+            CheckoutQuoteDto quote = studentFeesService.computeCheckoutQuote(studentId, session, monthNumbers);
+            Double totalDue = quote.getUnresolvedMonths().isEmpty()
+                    ? quote.getSchoolFeeDue().add(quote.getLateFee()).doubleValue()
+                    : null;
 
             // Last payment date
             String lastPaymentDate = paymentRepository

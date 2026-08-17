@@ -308,6 +308,15 @@ public class SchoolService {
         if (req.getCheckinWindowEnd() != null && !req.getCheckinWindowEnd().isBlank()) {
             school.setCheckinWindowEnd(LocalTime.parse(req.getCheckinWindowEnd()));
         }
+        if (req.getTimezone() != null && !req.getTimezone().isBlank()) {
+            try {
+                java.time.ZoneId.of(req.getTimezone());
+            } catch (java.time.DateTimeException e) {
+                throw new IllegalArgumentException("Invalid timezone: " + req.getTimezone()
+                        + ". Use an IANA zone id, e.g. Asia/Kolkata.");
+            }
+            school.setTimezone(req.getTimezone());
+        }
 
         School updated = schoolRepository.save(school);
         log.info("School settings updated for schoolId={}", schoolId);
