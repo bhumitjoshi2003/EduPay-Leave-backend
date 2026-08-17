@@ -124,6 +124,10 @@ public class TeacherService {
             log.error("Attempted to add teacher with null or empty Teacher object/ID.");
             throw new IllegalArgumentException("Teacher object and ID must be provided.");
         }
+        if (teacher.getDob() == null) {
+            log.warn("Attempted to add teacher {} without a date of birth.", teacher.getTeacherId());
+            throw new IllegalArgumentException("Date of birth is required because it is used as the initial password.");
+        }
         log.info("Attempting to add new teacher with ID: {}", teacher.getTeacherId());
 
         try {

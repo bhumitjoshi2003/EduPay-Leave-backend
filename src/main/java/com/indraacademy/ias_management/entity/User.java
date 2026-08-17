@@ -41,6 +41,15 @@ public class User {
     @Column(name = "refresh_token_id")
     private String refreshTokenId;
 
+    /**
+     * True when the user must change their password before accessing any
+     * business API. Set true for every newly-created STUDENT/TEACHER account
+     * (initial password is DOB-derived); false for existing accounts and
+     * once the user completes the initial password change.
+     */
+    @Column(name = "must_change_password", nullable = false)
+    private boolean mustChangePassword = false;
+
     public String getUserId() {
         return userId;
     }
@@ -94,4 +103,7 @@ public class User {
 
     public String getRefreshTokenId() { return refreshTokenId; }
     public void setRefreshTokenId(String refreshTokenId) { this.refreshTokenId = refreshTokenId; }
+
+    public boolean isMustChangePassword() { return mustChangePassword; }
+    public void setMustChangePassword(boolean mustChangePassword) { this.mustChangePassword = mustChangePassword; }
 }

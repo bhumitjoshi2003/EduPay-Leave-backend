@@ -121,6 +121,10 @@ public class StudentService {
             log.error("Attempted to add student with null or empty Student object/ID.");
             throw new IllegalArgumentException("Student object and ID must be provided.");
         }
+        if (student.getDob() == null) {
+            log.warn("Attempted to add student {} without a date of birth.", student.getStudentId());
+            throw new IllegalArgumentException("Date of birth is required because it is used as the initial password.");
+        }
         log.info("Attempting to add new student with ID: {}", student.getStudentId());
 
         Long schoolId = securityUtil.getSchoolId();

@@ -47,8 +47,15 @@ public class TeacherController {
             log.info("Teacher registered successfully with ID: {}", savedTeacher.getTeacherId());
             return new ResponseEntity<>(savedTeacher, HttpStatus.CREATED);
         } catch (IllegalArgumentException e) {
-            log.warn("Teacher registration failed (Conflict): {}", e.getMessage());
-            return new ResponseEntity<>(e.getMessage(), HttpStatus.CONFLICT); // 409 Conflict
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            if (msg.contains("already exists")) {
+                // Duplicate teacher ID within this school — 409 Conflict is correct
+                log.warn("Teacher registration failed (Conflict): {}", msg);
+                return new ResponseEntity<>(msg, HttpStatus.CONFLICT);
+            }
+            // Missing or invalid input data — 400 Bad Request
+            log.warn("Teacher registration failed (Bad Request): {}", msg);
+            return new ResponseEntity<>(msg, HttpStatus.BAD_REQUEST);
         } catch (Exception e) {
             log.error("Unexpected error during teacher registration.", e);
             return new ResponseEntity<>("Failed to register teacher.", HttpStatus.INTERNAL_SERVER_ERROR);

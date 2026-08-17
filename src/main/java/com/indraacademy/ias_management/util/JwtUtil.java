@@ -133,4 +133,14 @@ public class JwtUtil {
         return null;
     }
 
+    /**
+     * True when this access token was issued for a restricted first-login
+     * session (mustChangePassword was true at login time). Such tokens must
+     * only be accepted for the password-change allowlist — see JwtAuthFilter.
+     */
+    public boolean extractPasswordChangeRequired(String token) {
+        Object raw = extractClaim(token, claims -> claims.get("pwdChangeRequired"));
+        return Boolean.TRUE.equals(raw);
+    }
+
 }

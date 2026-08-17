@@ -37,7 +37,7 @@ import java.util.List;
  *  Teacher Name    | name           | yes      |
  *  Email           | email          | yes      |
  *  Phone Number    | phoneNumber    | no       |
- *  Date of Birth   | dob            | no       | yyyy-MM-dd
+ *  Date of Birth   | dob            | yes      | yyyy-MM-dd — used as the initial login password (yyyyMMdd)
  *  Gender          | gender         | no       |
  *  Class Teacher   | classTeacher   | no       | class this teacher is class teacher of (e.g. "5", "Play group")
  *  Joining Date    | joiningDate    | yes      | yyyy-MM-dd
@@ -133,21 +133,22 @@ public class TeacherBulkImportService {
 
     /**
      * Creates a User login account for the imported teacher.
-     * Default password: DOB formatted as yyyyMMdd (e.g. "19880715").
-     * Fallback (when DOB is absent): the teacherId itself.
-     * The teacher should change this password on first login.
+     * Initial password: DOB formatted as yyyyMMdd (e.g. "19880715") — DOB is a
+     * required field for this import, so it is always present here. The
+     * account is flagged mustChangePassword so the teacher is forced to set
+     * a real password on first login.
      */
     private void createUserAccount(String teacherId, String email, LocalDate dob, String role) {
-        String rawPassword = (dob != null) ? dob.format(DOB_FORMATTER) : teacherId;
+        String rawPassword = dob.format(DOB_FORMATTER);
         User user = new User();
         user.setUserId(teacherId);
         user.setEmail(email);
         user.setRole(role);
         user.setPassword(passwordEncoder.encode(rawPassword));
         user.setSchoolId(securityUtil.getSchoolId());
+        user.setMustChangePassword(true);
         userRepository.save(user);
-        log.info("Bulk import: created User account for teacherId={} (password=DOB? {})",
-                teacherId, dob != null);
+        log.info("Bulk import: created User account for teacherId={}", teacherId);
     }
 
     /**
@@ -227,17 +228,20 @@ public class TeacherBulkImportService {
             errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId, "Joining Date is required"));
             return null;
         }
+        if (dobStr.isEmpty()) {
+            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId,
+                    "Date of birth is required because it is used as the initial password."));
+            return null;
+        }
 
         // Date parsing
-        LocalDate dob = null;
-        if (!dobStr.isEmpty()) {
-            try {
-                dob = LocalDate.parse(dobStr);
-            } catch (DateTimeParseException e) {
-                errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId,
-                        "Invalid date format for 'Date of Birth', expected yyyy-MM-dd"));
-                return null;
-            }
+        LocalDate dob;
+        try {
+            dob = LocalDate.parse(dobStr);
+        } catch (DateTimeParseException e) {
+            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId,
+                    "Invalid date format for 'Date of Birth', expected yyyy-MM-dd"));
+            return null;
         }
 
         LocalDate joiningDate;

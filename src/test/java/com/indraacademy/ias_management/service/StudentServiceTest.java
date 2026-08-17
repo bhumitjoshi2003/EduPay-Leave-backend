@@ -118,6 +118,7 @@ class StudentServiceTest {
         s.setClassName(className);
         s.setSectionId(sectionId);
         s.setJoiningDate(LocalDate.now());
+        s.setDob(LocalDate.of(2010, 5, 15));
         return s;
     }
 
@@ -208,6 +209,19 @@ class StudentServiceTest {
         assertThatThrownBy(() -> service.addStudent(newStudent("S1", "10", 300L), request))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Section not found");
+        verify(studentRepository, never()).save(any());
+    }
+
+    @Test
+    void studentCreationWithoutDobIsRejected() {
+        // The DOB check fails before any repository lookup is reached — no stubs needed.
+        Student noDob = newStudent("S1", "10", null);
+        noDob.setDob(null);
+
+        assertThatThrownBy(() -> service.addStudent(noDob, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Date of birth is required");
+
         verify(studentRepository, never()).save(any());
     }
 

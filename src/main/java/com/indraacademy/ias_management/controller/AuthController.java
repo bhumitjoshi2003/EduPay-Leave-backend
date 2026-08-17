@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.RateLimiter;
 import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.dto.ChangeInitialPasswordRequest;
 import com.indraacademy.ias_management.dto.ChangePasswordRequest;
 import com.indraacademy.ias_management.dto.LoginRequest;
 import com.indraacademy.ias_management.entity.Admin;
@@ -14,6 +15,7 @@ import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
+import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PermissionService;
 import com.indraacademy.ias_management.service.EmailService;
@@ -35,6 +37,7 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.WebUtils;
 
@@ -42,6 +45,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.HexFormat;
 
@@ -67,6 +71,7 @@ public class AuthController {
     @Autowired private com.indraacademy.ias_management.repository.SchoolEffectiveEntitlementRepository entitlementRepo;
     @Autowired private RateLimiter rateLimiter;
     @Autowired private PermissionService permissionService;
+    @Autowired private AuditService auditService;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -113,6 +118,7 @@ public class AuthController {
         body.put("name", resolveName(user.getUserId(), user.getRole(), user.getSchoolId()));
         body.put("className", resolveClassName(user.getUserId(), user.getRole(), user.getSchoolId()));
         body.put("schoolSlug", resolveSchoolSlug(user.getSchoolId()));
+        body.put("mustChangePassword", user.isMustChangePassword());
 
         // Entitlement fields — only for school-scoped users (not SUPER_ADMIN)
         appendEntitlementFields(body, user.getSchoolId());
@@ -128,13 +134,24 @@ public class AuthController {
         return ResponseEntity.ok(body);
     }
 
+    /**
+     * Creates the login account for a Student/Teacher/Admin whose domain entity
+     * (Student/Teacher/Admin row) has already been created by its own controller.
+     *
+     * For STUDENT/TEACHER: the backend is the sole source of truth for the initial
+     * password — it is always the linked entity's date of birth, formatted yyyyMMdd,
+     * and any client-supplied password is ignored. The account is flagged
+     * mustChangePassword so the user is forced onto /change-initial-password on
+     * first login. ADMIN/SUB_ADMIN/SUPER_ADMIN creation is unchanged: the caller
+     * supplies the password and normal strength validation applies.
+     */
     @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
     @PostMapping("/register")
     public ResponseEntity<?> registerUser(@RequestBody User user) {
         log.info("Request to register new user: {}", user.getUserId());
 
-        if (user.getPassword() == null || user.getRole() == null || user.getUserId() == null) {
-            return ResponseEntity.badRequest().body("userId, password, and role are required.");
+        if (user.getUserId() == null || user.getRole() == null) {
+            return ResponseEntity.badRequest().body("userId and role are required.");
         }
         if (!VALID_ROLES.contains(user.getRole())) {
             return ResponseEntity.badRequest().body("Invalid role.");
@@ -151,12 +168,6 @@ public class AuthController {
                     .body("Only a SUPER_ADMIN can create a SUPER_ADMIN account.");
         }
 
-        try {
-            validatePasswordStrength(user.getPassword());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-
         if (userRepository.findByUserId(user.getUserId()).isPresent()) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body("User ID already exists.");
         }
@@ -170,7 +181,28 @@ public class AuthController {
             user.setSchoolId(callerSchoolId);
         }
 
-        user.setPassword(passwordEncoder.encode(user.getPassword()));
+        boolean isStudentOrTeacher = Role.STUDENT.equals(user.getRole()) || Role.TEACHER.equals(user.getRole());
+
+        if (isStudentOrTeacher) {
+            LocalDate dob = resolveDob(user.getUserId(), user.getRole(), user.getSchoolId());
+            if (dob == null) {
+                return ResponseEntity.badRequest()
+                        .body("Date of birth is required because it is used as the initial password.");
+            }
+            user.setPassword(passwordEncoder.encode(dob.format(DateTimeFormatter.BASIC_ISO_DATE)));
+            user.setMustChangePassword(true);
+        } else {
+            if (user.getPassword() == null) {
+                return ResponseEntity.badRequest().body("Password is required.");
+            }
+            try {
+                validatePasswordStrength(user.getPassword());
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(e.getMessage());
+            }
+            user.setPassword(passwordEncoder.encode(user.getPassword()));
+        }
+
         userRepository.save(user);
         return ResponseEntity.ok("User registered successfully");
     }
@@ -223,6 +255,49 @@ public class AuthController {
             }
         }
 
+        // Clear any stale cookies from previous sessions before issuing new ones.
+        // Two clearing passes: once with Domain (covers post-domain-fix cookies) and once
+        // without Domain (covers legacy host-only cookies set before the Domain fix).
+        clearCookies(response);
+
+        boolean passwordChangeRequired = loggedIn.isMustChangePassword();
+
+        if (passwordChangeRequired) {
+            // Restricted first-login session: issue only a short-lived access token carrying
+            // pwdChangeRequired=true (enforced by JwtAuthFilter's allowlist) and NO refresh
+            // token, so the session cannot be silently extended and cannot reach any business
+            // API. Any previously-issued refresh token is also revoked as a precaution.
+            String restrictedAccessToken = Jwts.builder()
+                    .setSubject(loggedIn.getUserId())
+                    .claim("role", loggedIn.getRole())
+                    .claim("userId", loggedIn.getUserId())
+                    .claim("schoolId", loggedIn.getSchoolId())
+                    .claim("pwdChangeRequired", true)
+                    .setIssuedAt(new Date())
+                    .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes)))
+                    .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
+                    .compact();
+
+            loggedIn.setRefreshTokenId(null);
+            userRepository.save(loggedIn);
+
+            response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", restrictedAccessToken, Duration.ofMinutes(accessTokenExpiryMinutes)).toString());
+
+            log.info("Login success (restricted — password change required): userId={}, role={}, schoolId={}",
+                    loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId());
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("userId", loggedIn.getUserId());
+            body.put("role", loggedIn.getRole());
+            body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
+            body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
+            body.put("schoolSlug", resolveSchoolSlug(loggedIn.getSchoolId()));
+            body.put("mustChangePassword", true);
+            appendEntitlementFields(body, loggedIn.getSchoolId());
+
+            return ResponseEntity.ok(body);
+        }
+
         String accessToken = Jwts.builder()
                 .setSubject(loggedIn.getUserId())
                 .claim("role", loggedIn.getRole())
@@ -246,11 +321,6 @@ public class AuthController {
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
-        // Clear any stale cookies from previous sessions before issuing new ones.
-        // Two clearing passes: once with Domain (covers post-domain-fix cookies) and once
-        // without Domain (covers legacy host-only cookies set before the Domain fix).
-        clearCookies(response);
-
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", accessToken, Duration.ofMinutes(accessTokenExpiryMinutes)).toString());
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", refreshToken, Duration.ofDays(refreshTokenExpiryDays)).toString());
 
@@ -262,6 +332,7 @@ public class AuthController {
         body.put("name", resolveName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
         body.put("className", resolveClassName(loggedIn.getUserId(), loggedIn.getRole(), loggedIn.getSchoolId()));
         body.put("schoolSlug", resolveSchoolSlug(loggedIn.getSchoolId()));
+        body.put("mustChangePassword", false);
         appendEntitlementFields(body, loggedIn.getSchoolId());
 
         return ResponseEntity.ok(body);
@@ -388,6 +459,21 @@ public class AuthController {
             }
         } catch (Exception e) {
             log.warn("Could not resolve className for userId={}: {}", userId, e.getMessage());
+        }
+        return null;
+    }
+
+    private LocalDate resolveDob(String userId, String role, Long schoolId) {
+        try {
+            if (Role.STUDENT.equals(role)) {
+                return studentRepository.findByStudentIdAndSchoolId(userId, schoolId)
+                        .map(Student::getDob).orElse(null);
+            } else if (Role.TEACHER.equals(role)) {
+                return teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
+                        .map(Teacher::getDob).orElse(null);
+            }
+        } catch (Exception e) {
+            log.warn("Could not resolve dob for userId={}: {}", userId, e.getMessage());
         }
         return null;
     }
@@ -585,6 +671,119 @@ public class AuthController {
             log.error("Database error during password update for {}: {}", targetUserId, e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Failed to update password.");
         }
+    }
+
+    /**
+     * Completes a mandatory first-login (or admin-reset) password change.
+     * Reachable only by a restricted session (see JwtAuthFilter's allowlist) —
+     * the target account is resolved from the SecurityContext, never from the
+     * request body. On success the account is fully unrestricted in the
+     * database, but the client must still sign in again: no new session is
+     * granted here, and the restricted access token cookie is cleared.
+     */
+    @Transactional
+    @PostMapping("/change-initial-password")
+    public ResponseEntity<?> changeInitialPassword(@Valid @RequestBody ChangeInitialPasswordRequest request,
+                                                     HttpServletResponse response) {
+        String userId = authService.getUserId();
+        Optional<User> userOptional = userRepository.findByUserId(userId);
+        if (userOptional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+
+        User user = userOptional.get();
+        if (!user.isMustChangePassword()) {
+            return ResponseEntity.badRequest().body("Password change is not required for this account.");
+        }
+
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            return ResponseEntity.badRequest().body("New password and confirmation do not match.");
+        }
+
+        try {
+            validatePasswordStrength(request.getNewPassword());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+
+        if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
+            return ResponseEntity.badRequest().body("New password must be different from your temporary password.");
+        }
+        if (request.getNewPassword().toLowerCase().contains(userId.toLowerCase())) {
+            return ResponseEntity.badRequest().body("New password must not contain your User ID.");
+        }
+        LocalDate dob = resolveDob(userId, user.getRole(), user.getSchoolId());
+        if (dob != null && request.getNewPassword().contains(dob.format(DateTimeFormatter.BASIC_ISO_DATE))) {
+            return ResponseEntity.badRequest().body("New password must not contain your date of birth.");
+        }
+
+        user.setPassword(passwordEncoder.encode(request.getNewPassword()));
+        user.setMustChangePassword(false);
+        user.setRefreshTokenId(null); // invalidate any lingering sessions/refresh tokens
+        userRepository.save(user);
+
+        // Invalidate the restricted access token cookie — the client must sign in again.
+        clearCookies(response);
+
+        log.info("Initial password change completed for userId={}", userId);
+        return ResponseEntity.ok("Password changed successfully. Please sign in with your new password.");
+    }
+
+    /**
+     * Admin-initiated reset of a Student/Teacher's password back to their DOB-derived
+     * default, aligned with the same first-login flow used for newly-created accounts:
+     * mustChangePassword is set true and any existing session/refresh token is revoked,
+     * so the user must sign in with the DOB password and then set a new one before
+     * reaching any business API. Out of scope for ADMIN/SUB_ADMIN/SUPER_ADMIN targets —
+     * use /change-password for those (unaffected by this endpoint).
+     */
+    @PreAuthorize("hasAnyRole('ADMIN','SUPER_ADMIN')")
+    @PostMapping("/reset-to-default-password")
+    @Transactional
+    public ResponseEntity<?> resetToDefaultPassword(@RequestBody Map<String, String> body, HttpServletRequest request) {
+        String targetUserId = body.get("userId");
+        if (targetUserId == null || targetUserId.isBlank()) {
+            return ResponseEntity.badRequest().body("userId is required.");
+        }
+
+        String callingUserId = authService.getUserId();
+        String callingRole = authService.getRole();
+
+        Optional<User> targetOpt = userRepository.findByUserId(targetUserId);
+        if (targetOpt.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found.");
+        }
+        User target = targetOpt.get();
+
+        // Tenant isolation: non-SUPER_ADMIN callers may only reset accounts in their own school
+        if (!Role.SUPER_ADMIN.equals(callingRole)) {
+            Long callerSchoolId = SchoolContext.get();
+            if (callerSchoolId == null || !callerSchoolId.equals(target.getSchoolId())) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access Denied.");
+            }
+        }
+
+        if (!Role.STUDENT.equals(target.getRole()) && !Role.TEACHER.equals(target.getRole())) {
+            return ResponseEntity.badRequest().body("This reset is only available for Student and Teacher accounts.");
+        }
+
+        LocalDate dob = resolveDob(target.getUserId(), target.getRole(), target.getSchoolId());
+        if (dob == null) {
+            return ResponseEntity.badRequest()
+                    .body("Date of birth is required because it is used as the initial password.");
+        }
+
+        target.setPassword(passwordEncoder.encode(dob.format(DateTimeFormatter.BASIC_ISO_DATE)));
+        target.setMustChangePassword(true);
+        target.setRefreshTokenId(null);
+        userRepository.save(target);
+
+        auditService.log(callingUserId, callingRole, "RESET_PASSWORD_TO_DEFAULT", "User", targetUserId,
+                null, "Password reset to DOB default; mustChangePassword=true", request.getRemoteAddr());
+
+        log.info("Password reset to DOB default for userId={} by {}", targetUserId, callingUserId);
+        return ResponseEntity.ok("Password reset. The user must sign in with their date of birth (YYYYMMDD) " +
+                "and will be required to set a new password.");
     }
 
     @PostMapping("/request-password-reset")

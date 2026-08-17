@@ -34,6 +34,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
 
+    /**
+     * Endpoints reachable by a restricted first-login session (mustChangePassword
+     * pending). Everything else is blocked with 403 until the password is changed.
+     */
+    private static final java.util.Set<String> RESTRICTED_SESSION_ALLOWLIST = java.util.Set.of(
+            "/api/auth/me",
+            "/api/auth/change-initial-password",
+            "/api/auth/logout"
+    );
+
     @Autowired
     private JwtUtil jwtUtil;
 
@@ -77,27 +87,30 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String token    = null;
-        String userId   = null;
-        String role     = null;
-        Long   schoolId = null;
-        long   bestIat  = Long.MIN_VALUE;
+        String  token             = null;
+        String  userId            = null;
+        String  role              = null;
+        Long    schoolId          = null;
+        boolean pwdChangeRequired = false;
+        long    bestIat           = Long.MIN_VALUE;
 
         for (Cookie c : allCookies) {
             if (!"accessToken".equals(c.getName())) continue;
             try {
-                String candidateToken    = c.getValue();
-                long   candidateIat      = jwtUtil.extractIssuedAt(candidateToken).getTime();
-                String candidateUserId   = jwtUtil.extractUserId(candidateToken);
-                String candidateRole     = jwtUtil.extractUserRole(candidateToken);
-                Long   candidateSchoolId = jwtUtil.extractSchoolId(candidateToken);
+                String  candidateToken             = c.getValue();
+                long    candidateIat                = jwtUtil.extractIssuedAt(candidateToken).getTime();
+                String  candidateUserId             = jwtUtil.extractUserId(candidateToken);
+                String  candidateRole               = jwtUtil.extractUserRole(candidateToken);
+                Long    candidateSchoolId           = jwtUtil.extractSchoolId(candidateToken);
+                boolean candidatePwdChangeRequired  = jwtUtil.extractPasswordChangeRequired(candidateToken);
 
                 if (candidateIat > bestIat) {
-                    bestIat  = candidateIat;
-                    token    = candidateToken;
-                    userId   = candidateUserId;
-                    role     = candidateRole;
-                    schoolId = candidateSchoolId;
+                    bestIat           = candidateIat;
+                    token             = candidateToken;
+                    userId            = candidateUserId;
+                    role              = candidateRole;
+                    schoolId          = candidateSchoolId;
+                    pwdChangeRequired = candidatePwdChangeRequired;
                 }
             } catch (ExpiredJwtException e) {
                 // Skip expired tokens — only consider valid candidates
@@ -151,6 +164,17 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             } catch (Exception e) {
                 log.error("Failed to load user details for userId={}: {}", userId, e.getMessage());
             }
+        }
+
+        // Restricted first-login session: only the password-change allowlist is reachable.
+        // This is enforced from the JWT claim itself (set at login time), independent of
+        // route guards on the frontend, so it cannot be bypassed by direct API calls.
+        if (pwdChangeRequired && !RESTRICTED_SESSION_ALLOWLIST.contains(path)) {
+            log.warn("Blocked request to {} for userId={}: password change is required", path, userId);
+            response.setStatus(HttpStatus.FORBIDDEN.value());
+            response.setContentType("application/json");
+            response.getWriter().write("{\"message\": \"Password change required\", \"passwordChangeRequired\": true}");
+            return;
         }
 
         SchoolContext.set(schoolId);
