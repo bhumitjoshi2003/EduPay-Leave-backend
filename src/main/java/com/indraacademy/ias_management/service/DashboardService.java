@@ -207,15 +207,6 @@ public class DashboardService {
     public List<AttendanceTrendDto> getAttendanceTrend(String className, String mode) {
         LocalDate today = LocalDate.now();
         Long schoolId = securityUtil.getSchoolId();
-        com.indraacademy.ias_management.entity.School school = schoolRepository.findById(schoolId).orElse(null);
-
-        // Count working days based on school's configured working days
-        int workingDayCount = 6; // default Mon-Sat
-        if (school != null && school.getWorkingDays() != null) {
-            workingDayCount = (int) java.util.Arrays.stream(school.getWorkingDays().split(","))
-                    .filter(d -> !d.isBlank()).count();
-            workingDayCount = Math.max(1, Math.min(workingDayCount, 7));
-        }
 
         long studentCount = studentRepository
                 .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
@@ -224,14 +215,13 @@ public class DashboardService {
         List<AttendanceTrendDto> result = new ArrayList<>();
 
         if ("weekly".equalsIgnoreCase(mode)) {
-            // Last 8 complete weeks (Mon → Mon+workingDays-1)
+            // Last 8 calendar weeks. Attendance rows already reflect the school's configured days.
             LocalDate weekStart = today.with(DayOfWeek.MONDAY).minusWeeks(7);
             DateTimeFormatter weekLabelFmt = DateTimeFormatter.ofPattern("d MMM");
-            final int wdCount = workingDayCount;
 
             for (int i = 0; i < 8; i++) {
                 LocalDate wStart = weekStart.plusWeeks(i);
-                LocalDate wEnd   = wStart.plusDays(wdCount - 1);
+                LocalDate wEnd   = wStart.plusDays(6);
 
                 long workingDays = attendanceRepository.countDistinctWorkingDays(className, schoolId, wStart, wEnd);
                 double rate = 0.0;

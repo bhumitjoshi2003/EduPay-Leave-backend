@@ -102,9 +102,15 @@ public class AttendanceController {
     public ResponseEntity<?> getAttendanceCalendarConfig() {
         Long schoolId = securityUtil.getSchoolId();
         return schoolRepository.findById(schoolId)
-                .<ResponseEntity<?>>map(s -> ResponseEntity.ok(Map.of(
-                        "workingDays", s.getWorkingDays() != null ? s.getWorkingDays() : "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY",
-                        "timezone", s.getTimezone() != null ? s.getTimezone() : "Asia/Kolkata")))
+                .<ResponseEntity<?>>map(s -> {
+                    if (s.getWorkingDays() == null || s.getWorkingDays().isBlank()) {
+                        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                                "message", "School working days are not configured. Please update School Settings."));
+                    }
+                    return ResponseEntity.ok(Map.of(
+                            "workingDays", s.getWorkingDays(),
+                            "timezone", s.getTimezone() != null ? s.getTimezone() : "Asia/Kolkata"));
+                })
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 

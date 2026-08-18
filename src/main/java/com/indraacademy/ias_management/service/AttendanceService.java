@@ -878,7 +878,7 @@ public class AttendanceService {
     }
 
     private boolean isConfiguredWorkingDay(LocalDate date, String workingDays) {
-        if (workingDays == null || workingDays.isBlank()) return true;
+        if (workingDays == null || workingDays.isBlank()) return false;
         return Arrays.stream(workingDays.split(","))
                 .map(String::trim)
                 .anyMatch(day -> date.getDayOfWeek().name().equalsIgnoreCase(day));

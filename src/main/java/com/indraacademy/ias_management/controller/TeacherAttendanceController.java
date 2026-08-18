@@ -24,6 +24,7 @@ import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/teacher-checkin")
@@ -98,11 +99,31 @@ public class TeacherAttendanceController {
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/summary")
-    public ResponseEntity<?> getSummary(@RequestParam int month, @RequestParam int year) {
+    public ResponseEntity<?> getSummary(@RequestParam int month, @RequestParam int year,
+                                        @RequestParam(required = false) String teacherId) {
         if (month < 1 || month > 12 || year < 2000) {
             return ResponseEntity.badRequest().body("Invalid month or year");
         }
-        return ResponseEntity.ok(teacherAttendanceService.getSummary(month, year));
+        try {
+            return ResponseEntity.ok(teacherId == null || teacherId.isBlank()
+                    ? teacherAttendanceService.getSummary(month, year)
+                    : teacherAttendanceService.getTeacherSummary(teacherId, month, year));
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        }
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/summary/session")
+    public ResponseEntity<?> getTeacherSessionSummary(@RequestParam String teacherId,
+                                                       @RequestParam String session) {
+        try {
+            return ResponseEntity.ok(teacherAttendanceService.getTeacherSessionSummary(teacherId, session));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        }
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")

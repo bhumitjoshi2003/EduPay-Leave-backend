@@ -46,6 +46,12 @@ public class TeacherLeaveController {
         return ResponseEntity.ok(teacherLeaveService.getMyLeaves(pageable));
     }
 
+    @PreAuthorize("hasRole('" + Role.TEACHER + "')")
+    @GetMapping("/calendar-config")
+    public ResponseEntity<Map<String, String>> getCalendarConfig() {
+        return ResponseEntity.ok(teacherLeaveService.getCalendarConfig());
+    }
+
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping
     public ResponseEntity<Page<TeacherLeaveResponse>> getLeaves(

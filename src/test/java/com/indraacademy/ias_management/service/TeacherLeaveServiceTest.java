@@ -5,9 +5,13 @@ import com.indraacademy.ias_management.dto.TeacherLeaveResponse;
 import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.TeacherLeave;
+import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.SchoolHoliday;
 import com.indraacademy.ias_management.exception.InvalidLeaveStatusTransitionException;
 import com.indraacademy.ias_management.repository.TeacherLeaveRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.SchoolHolidayRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +24,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.time.LocalDate;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,6 +41,8 @@ class TeacherLeaveServiceTest {
 
     @Mock private TeacherLeaveRepository teacherLeaveRepository;
     @Mock private TeacherRepository teacherRepository;
+    @Mock private SchoolRepository schoolRepository;
+    @Mock private SchoolHolidayRepository schoolHolidayRepository;
     @Mock private SecurityUtil securityUtil;
     @Mock private AuditService auditService;
     @Mock private NotificationService notificationService;
@@ -52,6 +59,8 @@ class TeacherLeaveServiceTest {
         service = new TeacherLeaveService();
         ReflectionTestUtils.setField(service, "teacherLeaveRepository", teacherLeaveRepository);
         ReflectionTestUtils.setField(service, "teacherRepository", teacherRepository);
+        ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
+        ReflectionTestUtils.setField(service, "schoolHolidayRepository", schoolHolidayRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "notificationService", notificationService);
@@ -59,6 +68,11 @@ class TeacherLeaveServiceTest {
         lenient().when(securityUtil.getUsername()).thenReturn(TEACHER_ID);
         lenient().when(securityUtil.getRole()).thenReturn("TEACHER");
         lenient().when(request.getRemoteAddr()).thenReturn("127.0.0.1");
+        School school = new School();
+        school.setId(SCHOOL_ID);
+        school.setWorkingDays("MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY");
+        lenient().when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+        lenient().when(schoolHolidayRepository.findOverlapping(eq(SCHOOL_ID), any(), any())).thenReturn(List.of());
     }
 
     private TeacherLeave leave(LeaveStatus status) {
@@ -128,6 +142,74 @@ class TeacherLeaveServiceTest {
 
         assertThatThrownBy(() -> service.applyLeave(req, request))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void applyLeave_rejectsARequestContainingOnlyAConfiguredClosedDay() {
+        TeacherLeaveApplyRequest req = new TeacherLeaveApplyRequest();
+        req.setStartDate(LocalDate.of(2026, 8, 23)); // Sunday
+        req.setEndDate(LocalDate.of(2026, 8, 23));
+        req.setReason("Sunday");
+
+        assertThatThrownBy(() -> service.applyLeave(req, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no working days");
+        verify(teacherLeaveRepository, never()).save(any());
+    }
+
+    @Test
+    void applyLeave_usesTheSchoolsConfiguredMondayToFridayCalendar() {
+        School school = new School();
+        school.setId(SCHOOL_ID);
+        school.setWorkingDays("MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY");
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+
+        TeacherLeaveApplyRequest req = new TeacherLeaveApplyRequest();
+        req.setStartDate(LocalDate.of(2026, 8, 22)); // Saturday
+        req.setEndDate(LocalDate.of(2026, 8, 22));
+        req.setReason("Saturday");
+
+        assertThatThrownBy(() -> service.applyLeave(req, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no working days");
+        verify(teacherLeaveRepository, never()).save(any());
+    }
+
+    @Test
+    void applyLeave_rejectsARequestContainingOnlyASchoolHoliday() {
+        LocalDate holidayDate = LocalDate.of(2026, 8, 20);
+        SchoolHoliday holiday = new SchoolHoliday();
+        holiday.setStartDate(holidayDate);
+        holiday.setEndDate(holidayDate);
+        when(schoolHolidayRepository.findOverlapping(SCHOOL_ID, holidayDate, holidayDate))
+                .thenReturn(List.of(holiday));
+        TeacherLeaveApplyRequest req = new TeacherLeaveApplyRequest();
+        req.setStartDate(holidayDate);
+        req.setEndDate(holidayDate);
+        req.setReason("Holiday");
+
+        assertThatThrownBy(() -> service.applyLeave(req, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("school holidays");
+        verify(teacherLeaveRepository, never()).save(any());
+    }
+
+    @Test
+    void applyLeave_rangeSpanningSunday_countsOnlyWorkingLeaveDays() {
+        TeacherLeaveApplyRequest req = new TeacherLeaveApplyRequest();
+        req.setStartDate(LocalDate.of(2026, 8, 20));
+        req.setEndDate(LocalDate.of(2026, 8, 23));
+        req.setReason("Long leave");
+        when(teacherRepository.findByTeacherIdAndSchoolId(TEACHER_ID, SCHOOL_ID)).thenReturn(Optional.of(teacher()));
+        when(teacherLeaveRepository.save(any(TeacherLeave.class))).thenAnswer(inv -> {
+            TeacherLeave saved = inv.getArgument(0);
+            saved.setId(LEAVE_ID);
+            return saved;
+        });
+
+        TeacherLeaveResponse response = service.applyLeave(req, request);
+
+        assertThat(response.getDays()).isEqualTo(3); // Thu, Fri, Sat; Sunday excluded
     }
 
     // ---- updateStatus ----

@@ -12,6 +12,7 @@ public class TeacherAttendanceSummaryDTO {
     private int halfDayDays;
     private int onLeaveDays;
     private double onTimePercentage;
+    private double attendancePercentage;
     private LocalDate trackingStartDate;
     private List<TeacherAttendanceResponse> records;
 
@@ -35,6 +36,9 @@ public class TeacherAttendanceSummaryDTO {
 
     public double getOnTimePercentage() { return onTimePercentage; }
     public void setOnTimePercentage(double onTimePercentage) { this.onTimePercentage = onTimePercentage; }
+
+    public double getAttendancePercentage() { return attendancePercentage; }
+    public void setAttendancePercentage(double attendancePercentage) { this.attendancePercentage = attendancePercentage; }
 
     public LocalDate getTrackingStartDate() { return trackingStartDate; }
     public void setTrackingStartDate(LocalDate trackingStartDate) { this.trackingStartDate = trackingStartDate; }

@@ -6,7 +6,6 @@ import com.indraacademy.ias_management.entity.TeacherLeave;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 
 public class TeacherLeaveResponse {
 
@@ -20,7 +19,7 @@ public class TeacherLeaveResponse {
     private String reason;
     private LeaveStatus status;
     private LocalDateTime appliedDate;
-    /** Inclusive day count (startDate..endDate) — convenience for the UI, not persisted. */
+    /** Working leave days only (configured weekdays minus school holidays). */
     private long days;
 
     public static TeacherLeaveResponse from(TeacherLeave l) {
@@ -33,8 +32,14 @@ public class TeacherLeaveResponse {
         r.reason = l.getReason();
         r.status = l.getStatus();
         r.appliedDate = l.getAppliedDate();
-        r.days = ChronoUnit.DAYS.between(l.getStartDate(), l.getEndDate()) + 1;
+        r.days = java.time.temporal.ChronoUnit.DAYS.between(l.getStartDate(), l.getEndDate()) + 1;
         return r;
+    }
+
+    public static TeacherLeaveResponse from(TeacherLeave leave, long workingLeaveDays) {
+        TeacherLeaveResponse response = from(leave);
+        response.days = workingLeaveDays;
+        return response;
     }
 
     public Long getId() { return id; }

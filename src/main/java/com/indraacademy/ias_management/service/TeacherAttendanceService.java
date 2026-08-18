@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.AdminMarkTeacherAttendanceRequest;
 import com.indraacademy.ias_management.dto.TeacherAttendanceResponse;
 import com.indraacademy.ias_management.dto.TeacherAttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.TeacherAttendanceSessionSummaryDTO;
 import com.indraacademy.ias_management.dto.TeacherAttendanceTodaySummaryDTO;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SchoolHoliday;
@@ -365,6 +366,71 @@ public class TeacherAttendanceService {
         return buildSummary(null, schoolId, month, year);
     }
 
+    @Transactional(readOnly = true)
+    public TeacherAttendanceSummaryDTO getTeacherSummary(String teacherId, int month, int year) {
+        Long schoolId = securityUtil.getSchoolId();
+        teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + teacherId));
+        return buildSummary(teacherId, schoolId, month, year);
+    }
+
+    @Transactional(readOnly = true)
+    public TeacherAttendanceSessionSummaryDTO getTeacherSessionSummary(String teacherId, String session) {
+        Long schoolId = securityUtil.getSchoolId();
+        Teacher teacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + teacherId));
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found"));
+
+        String[] years = session == null ? new String[0] : session.trim().split("-");
+        if (years.length != 2) throw new IllegalArgumentException("Session must use YYYY-YYYY format.");
+        int startYear;
+        int endYear;
+        try {
+            startYear = Integer.parseInt(years[0]);
+            endYear = Integer.parseInt(years[1]);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Session must use YYYY-YYYY format.");
+        }
+        if (endYear != startYear + 1) {
+            throw new IllegalArgumentException("Academic session must span consecutive years.");
+        }
+
+        int startMonth = school.getAcademicYearStartMonth();
+        YearMonth cursor = YearMonth.of(startYear, startMonth);
+        List<TeacherAttendanceSessionSummaryDTO.MonthlySummary> months = new ArrayList<>();
+        int working = 0, present = 0, late = 0, absent = 0, halfDay = 0, onLeave = 0;
+        for (int i = 0; i < 12; i++) {
+            TeacherAttendanceSummaryDTO summary = buildSummary(
+                    teacherId, schoolId, cursor.getMonthValue(), cursor.getYear());
+            months.add(new TeacherAttendanceSessionSummaryDTO.MonthlySummary(
+                    cursor.getMonthValue(), cursor.getYear(), summary));
+            working += summary.getTotalWorkingDays();
+            present += summary.getPresentDays();
+            late += summary.getLateDays();
+            absent += summary.getAbsentDays();
+            halfDay += summary.getHalfDayDays();
+            onLeave += summary.getOnLeaveDays();
+            cursor = cursor.plusMonths(1);
+        }
+
+        TeacherAttendanceSessionSummaryDTO result = new TeacherAttendanceSessionSummaryDTO();
+        result.setSession(session);
+        result.setTeacherId(teacherId);
+        result.setTeacherName(teacher.getName());
+        result.setTotalWorkingDays(working);
+        result.setPresentDays(present);
+        result.setLateDays(late);
+        result.setAbsentDays(absent);
+        result.setHalfDayDays(halfDay);
+        result.setOnLeaveDays(onLeave);
+        result.setAttendancePercentage(attendancePercentage(working, present, halfDay, onLeave));
+        result.setOnTimePercentage(present > 0
+                ? Math.round(((present - late) * 100.0 / present) * 10.0) / 10.0 : 0.0);
+        result.setMonths(months);
+        return result;
+    }
+
     /**
      * Whole-school status counts for today only, for the admin dashboard's compact staff
      * attendance widget. Built on top of {@link #getAttendanceByDate}, the same authoritative,
@@ -508,9 +574,18 @@ public class TeacherAttendanceService {
         dto.setHalfDayDays(halfDay);
         dto.setOnLeaveDays(onLeave);
         dto.setOnTimePercentage(present > 0 ? Math.round(((present - late) * 100.0 / present) * 10.0) / 10.0 : 0);
+        dto.setAttendancePercentage(teacherIdFilter != null
+                ? attendancePercentage(totalWorkingDaysForFilter, present, halfDay, onLeave) : 0.0);
         dto.setTrackingStartDate(trackingStart);
         dto.setRecords(merged);
         return dto;
+    }
+
+    private double attendancePercentage(int workingDays, int presentDays, int halfDayDays, int onLeaveDays) {
+        int eligibleDays = Math.max(0, workingDays - onLeaveDays);
+        if (eligibleDays == 0) return 0.0;
+        double attendedDays = presentDays + (halfDayDays * 0.5);
+        return Math.round(attendedDays * 1000.0 / eligibleDays) / 10.0;
     }
 
     private List<LocalDate> computeWorkingDays(LocalDate start, LocalDate end, String workingDaysPattern, List<SchoolHoliday> holidays) {
@@ -527,9 +602,11 @@ public class TeacherAttendanceService {
     }
 
     private boolean isWorkingDayOfWeek(LocalDate date, String workingDays) {
-        if (workingDays == null || workingDays.isBlank()) return true;
-        String dayName = date.getDayOfWeek().name(); // e.g. MONDAY
-        return workingDays.toUpperCase().contains(dayName);
+        if (workingDays == null || workingDays.isBlank()) return false;
+        String dayName = date.getDayOfWeek().name();
+        return Arrays.stream(workingDays.split(","))
+                .map(String::trim)
+                .anyMatch(dayName::equalsIgnoreCase);
     }
 
     /**

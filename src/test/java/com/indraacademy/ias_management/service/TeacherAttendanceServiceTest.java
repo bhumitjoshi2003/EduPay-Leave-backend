@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.AdminMarkTeacherAttendanceRequest;
 import com.indraacademy.ias_management.dto.TeacherAttendanceResponse;
 import com.indraacademy.ias_management.dto.TeacherAttendanceSummaryDTO;
+import com.indraacademy.ias_management.dto.TeacherAttendanceSessionSummaryDTO;
 import com.indraacademy.ias_management.dto.TeacherAttendanceTodaySummaryDTO;
 import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.entity.School;
@@ -725,6 +726,50 @@ class TeacherAttendanceServiceTest {
         boolean dayIsOnTime = dto.getRecords().stream()
                 .anyMatch(r -> day.equals(r.getDate()) && "ON_TIME".equals(r.getStatus()));
         assertThat(dayIsOnTime).isTrue();
+    }
+
+    @Test
+    void adminTeacherSummary_isScopedToTheSelectedTeacher() {
+        useClock(Instant.parse("2026-09-01T04:00:00Z"));
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school("Asia/Kolkata")));
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Alex", null)));
+        when(schoolHolidayRepository.findOverlapping(eq(SCHOOL_ID), any(), any())).thenReturn(List.of());
+        when(teacherAttendanceRepository.findByTeacherIdAndSchoolIdAndDateBetweenOrderByDateAsc(
+                eq("T1"), eq(SCHOOL_ID), any(), any())).thenReturn(List.of());
+
+        TeacherAttendanceSummaryDTO dto = service.getTeacherSummary("T1", 8, 2026);
+
+        assertThat(dto.getRecords()).isNotEmpty().allSatisfy(record ->
+                assertThat(record.getTeacherId()).isEqualTo("T1"));
+        assertThat(dto.getAttendancePercentage()).isZero();
+        verify(teacherAttendanceRepository, never())
+                .findBySchoolIdAndDateBetweenOrderByDateAsc(any(), any(), any());
+    }
+
+    @Test
+    void adminSessionSummary_containsTwelveAcademicMonths_inConfiguredOrder() {
+        useClock(Instant.parse("2027-04-02T04:00:00Z"));
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        School configuredSchool = school("Asia/Kolkata");
+        configuredSchool.setAcademicYearStartMonth(4);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(configuredSchool));
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Alex", null)));
+        when(schoolHolidayRepository.findOverlapping(eq(SCHOOL_ID), any(), any())).thenReturn(List.of());
+        when(teacherAttendanceRepository.findByTeacherIdAndSchoolIdAndDateBetweenOrderByDateAsc(
+                eq("T1"), eq(SCHOOL_ID), any(), any())).thenReturn(List.of());
+
+        TeacherAttendanceSessionSummaryDTO dto = service.getTeacherSessionSummary("T1", "2026-2027");
+
+        assertThat(dto.getTeacherName()).isEqualTo("Alex");
+        assertThat(dto.getMonths()).hasSize(12);
+        assertThat(dto.getMonths().getFirst().getMonth()).isEqualTo(4);
+        assertThat(dto.getMonths().getFirst().getYear()).isEqualTo(2026);
+        assertThat(dto.getMonths().getLast().getMonth()).isEqualTo(3);
+        assertThat(dto.getMonths().getLast().getYear()).isEqualTo(2027);
+        assertThat(dto.getTotalWorkingDays()).isEqualTo(dto.getAbsentDays());
     }
 
     // ─── workDurationMinutes ─────────────────────────────────────────────────

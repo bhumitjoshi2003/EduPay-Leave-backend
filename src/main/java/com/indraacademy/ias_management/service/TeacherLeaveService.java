@@ -6,10 +6,15 @@ import com.indraacademy.ias_management.dto.TeacherLeaveResponse;
 import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.TeacherLeave;
+import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.SchoolHoliday;
 import com.indraacademy.ias_management.exception.InvalidLeaveStatusTransitionException;
 import com.indraacademy.ias_management.repository.TeacherLeaveRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.SchoolHolidayRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.util.SchoolTimeUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +26,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.stream.Collectors;
 
 /**
  * A teacher's own leave application → admin approval, the missing counterpart to
@@ -47,6 +59,8 @@ public class TeacherLeaveService {
 
     @Autowired private TeacherLeaveRepository teacherLeaveRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private SchoolRepository schoolRepository;
+    @Autowired private SchoolHolidayRepository schoolHolidayRepository;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private AuditService auditService;
     @Autowired private NotificationService notificationService;
@@ -64,6 +78,20 @@ public class TeacherLeaveService {
         }
 
         Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+        LocalDate today = LocalDate.now(SchoolTimeUtil.zoneId(school));
+        if (req.getStartDate().isBefore(today)) {
+            throw new IllegalArgumentException("Leave cannot be applied for a past date.");
+        }
+        List<SchoolHoliday> holidays = schoolHolidayRepository.findOverlapping(
+                schoolId, req.getStartDate(), req.getEndDate());
+        long workingLeaveDays = countWorkingLeaveDays(
+                req.getStartDate(), req.getEndDate(), school.getWorkingDays(), holidays);
+        if (workingLeaveDays == 0) {
+            throw new IllegalArgumentException(
+                    "The selected dates contain no working days. Leave cannot be applied on closed days or school holidays.");
+        }
         // teacherId is NEVER taken from the request body — always the authenticated caller,
         // the same principle applyLeave (student) already enforces for studentId.
         String teacherId = securityUtil.getUsername();
@@ -103,7 +131,7 @@ public class TeacherLeaveService {
                 String.valueOf(saved.getId())
         );
 
-        return TeacherLeaveResponse.from(saved);
+        return TeacherLeaveResponse.from(saved, workingLeaveDays);
     }
 
     @Transactional
@@ -149,7 +177,9 @@ public class TeacherLeaveService {
                 String.valueOf(saved.getId())
         );
 
-        return TeacherLeaveResponse.from(saved);
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+        return toCalendarAwareResponse(saved, school);
     }
 
     /**
@@ -203,14 +233,58 @@ public class TeacherLeaveService {
     public Page<TeacherLeaveResponse> getMyLeaves(Pageable pageable) {
         Long schoolId = securityUtil.getSchoolId();
         String teacherId = securityUtil.getUsername();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
         return teacherLeaveRepository.findByTeacherIdAndSchoolIdOrderByStartDateDesc(teacherId, schoolId, pageable)
-                .map(TeacherLeaveResponse::from);
+                .map(leave -> toCalendarAwareResponse(leave, school));
     }
 
     @Transactional(readOnly = true)
     public Page<TeacherLeaveResponse> getLeavesFiltered(LeaveStatus status, String teacherId, Pageable pageable) {
         Long schoolId = securityUtil.getSchoolId();
+        School school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
         return teacherLeaveRepository.findFiltered(schoolId, status, teacherId, pageable)
-                .map(TeacherLeaveResponse::from);
+                .map(leave -> toCalendarAwareResponse(leave, school));
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, String> getCalendarConfig() {
+        School school = schoolRepository.findById(securityUtil.getSchoolId())
+                .orElseThrow(() -> new NoSuchElementException("School not found"));
+        Set<String> configuredDays = parseConfiguredWorkingDays(school.getWorkingDays());
+        return Map.of("workingDays", String.join(",", configuredDays),
+                "timezone", SchoolTimeUtil.zoneId(school).getId());
+    }
+
+    private TeacherLeaveResponse toCalendarAwareResponse(TeacherLeave leave, School school) {
+        List<SchoolHoliday> holidays = schoolHolidayRepository.findOverlapping(
+                leave.getSchoolId(), leave.getStartDate(), leave.getEndDate());
+        return TeacherLeaveResponse.from(leave, countWorkingLeaveDays(
+                leave.getStartDate(), leave.getEndDate(), school.getWorkingDays(), holidays));
+    }
+
+    private long countWorkingLeaveDays(LocalDate start, LocalDate end, String workingDays, List<SchoolHoliday> holidays) {
+        Set<String> configuredDays = parseConfiguredWorkingDays(workingDays);
+        return start.datesUntil(end.plusDays(1))
+                .filter(date -> configuredDays.contains(date.getDayOfWeek().name()))
+                .filter(date -> holidays.stream().noneMatch(holiday ->
+                        !date.isBefore(holiday.getStartDate()) && !date.isAfter(holiday.getEndDate())))
+                .count();
+    }
+
+    private Set<String> parseConfiguredWorkingDays(String workingDays) {
+        if (workingDays == null || workingDays.isBlank()) {
+            throw new IllegalStateException("School working days are not configured. Please update School Settings.");
+        }
+        Set<String> configuredDays = Arrays.stream(workingDays.split(","))
+                .map(String::trim)
+                .map(String::toUpperCase)
+                .filter(day -> !day.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (configuredDays.isEmpty()) {
+            throw new IllegalStateException("School working days are not configured. Please update School Settings.");
+        }
+        return configuredDays;
     }
 }
