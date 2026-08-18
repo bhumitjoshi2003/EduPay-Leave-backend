@@ -28,16 +28,19 @@ public interface TeacherLeaveRepository extends JpaRepository<TeacherLeave, Long
     Page<TeacherLeave> findByTeacherIdAndSchoolIdOrderByStartDateDesc(String teacherId, Long schoolId, Pageable pageable);
 
     /**
-     * Admin review queue, filterable by status and/or teacher. Null filters mean "no filter" —
+     * Admin review queue, filterable by status, teacher and/or a date covered by the leave.
+     * Null filters mean "no filter" —
      * mirrors LeaveRepository.findForReview's shape.
      */
     @Query("SELECT t FROM TeacherLeave t WHERE t.schoolId = :schoolId " +
            "AND (:status IS NULL OR t.status = :status) " +
            "AND (:teacherId IS NULL OR t.teacherId = :teacherId) " +
+           "AND (:date IS NULL OR (t.startDate <= :date AND t.endDate >= :date)) " +
            "ORDER BY t.appliedDate DESC")
     Page<TeacherLeave> findFiltered(@Param("schoolId") Long schoolId,
                                     @Param("status") LeaveStatus status,
                                     @Param("teacherId") String teacherId,
+                                    @Param("date") LocalDate date,
                                     Pageable pageable);
 
     /**

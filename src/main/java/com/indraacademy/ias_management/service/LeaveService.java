@@ -289,29 +289,13 @@ public class LeaveService {
     }
 
     @Transactional(readOnly = true)
-    public Page<Leave> getLeavesFiltered(String className, String studentId, String date, Pageable pageable) {
-        log.info("Filtering leaves. Class: {}, Student ID: {}, Date: {}", className, studentId, date);
+    public Page<Leave> getLeavesFiltered(String className, String studentId, String date, LeaveStatus status, Pageable pageable) {
+        log.info("Filtering leaves. Class: {}, Student ID: {}, Date: {}, Status: {}", className, studentId, date, status);
         Long schoolId = securityUtil.getSchoolId();
         try {
-            if (className != null && studentId != null && date != null) {
-                return leaveRepository.findByClassNameAndStudentIdContainingAndLeaveDateAndSchoolId(className, studentId, date, schoolId, pageable);
-            } else if (className != null && studentId != null) {
-                return leaveRepository.findByClassNameAndStudentIdContainingAndSchoolId(className, studentId, schoolId, pageable);
-            } else if (className != null && date != null) {
-                return leaveRepository.findByClassNameAndLeaveDateAndSchoolId(className, date, schoolId, pageable);
-            } else if (studentId != null && date != null) {
-                return leaveRepository.findByStudentIdContainingAndLeaveDateAndSchoolId(studentId, date, schoolId, pageable);
-            } else if (className != null) {
-                return leaveRepository.findByClassNameAndSchoolId(className, schoolId, pageable);
-            } else if (studentId != null) {
-                return leaveRepository.findByStudentIdContainingAndSchoolId(studentId, schoolId, pageable);
-            } else if (date != null) {
-                return leaveRepository.findByLeaveDateAndSchoolId(date, schoolId, pageable);
-            } else {
-                return leaveRepository.findByStudentIdContainingAndSchoolId("", schoolId, pageable);
-            }
+            return leaveRepository.findFilteredForManagement(schoolId, className, studentId, date, status, pageable);
         } catch (DataAccessException e) {
-            log.error("Data access error during getLeavesFiltered. Class: {}, Student ID: {}, Date: {}", className, studentId, date, e);
+            log.error("Data access error during getLeavesFiltered. Class: {}, Student ID: {}, Date: {}, Status: {}", className, studentId, date, status, e);
             throw new RuntimeException("Could not retrieve filtered leaves due to data access issue", e);
         }
     }

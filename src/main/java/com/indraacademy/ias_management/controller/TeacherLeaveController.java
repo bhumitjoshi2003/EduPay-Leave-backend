@@ -57,8 +57,9 @@ public class TeacherLeaveController {
     public ResponseEntity<Page<TeacherLeaveResponse>> getLeaves(
             @RequestParam(required = false) LeaveStatus status,
             @RequestParam(required = false) String teacherId,
+            @RequestParam(required = false) java.time.LocalDate date,
             Pageable pageable) {
-        return ResponseEntity.ok(teacherLeaveService.getLeavesFiltered(status, teacherId, pageable));
+        return ResponseEntity.ok(teacherLeaveService.getLeavesFiltered(status, teacherId, date, pageable));
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")

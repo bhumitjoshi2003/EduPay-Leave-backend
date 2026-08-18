@@ -69,6 +69,7 @@ public class LeaveController {
             @RequestParam(required = false)  String className,
             @RequestParam(required = false) String studentId,
             @RequestParam(required = false) String date,
+            @RequestParam(required = false) LeaveStatus status,
             Pageable pageable
     ) {
         // TEACHER: always their own assigned class — overridden, never merged with whatever
@@ -87,7 +88,7 @@ public class LeaveController {
         }
         log.info("Request to get filtered leaves. Class: {}, Student: {}, Date: {}", effectiveClassName, studentId, date);
         return ResponseEntity.ok(
-                leaveService.getLeavesFiltered(effectiveClassName, studentId, date, pageable)
+                leaveService.getLeavesFiltered(effectiveClassName, studentId, date, status, pageable)
         );
     }
 

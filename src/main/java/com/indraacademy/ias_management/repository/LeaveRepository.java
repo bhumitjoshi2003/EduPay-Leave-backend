@@ -38,6 +38,18 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
 
     Page<Leave> findByStudentIdAndSchoolId(String studentId, Long schoolId, Pageable pageable);
 
+    @Query("SELECT l FROM Leave l WHERE l.schoolId = :schoolId " +
+           "AND (:className IS NULL OR l.className = :className) " +
+           "AND (:studentId IS NULL OR LOWER(l.studentId) LIKE LOWER(CONCAT('%', :studentId, '%'))) " +
+           "AND (:date IS NULL OR l.leaveDate = :date) " +
+           "AND (:status IS NULL OR l.status = :status)")
+    Page<Leave> findFilteredForManagement(@Param("schoolId") Long schoolId,
+                                          @Param("className") String className,
+                                          @Param("studentId") String studentId,
+                                          @Param("date") String date,
+                                          @Param("status") LeaveStatus status,
+                                          Pageable pageable);
+
     @Query("SELECT l.studentId FROM Leave l WHERE l.leaveDate = :date AND l.className = :className AND l.schoolId = :schoolId")
     List<String> findByLeaveDateAndClassNameAndSchoolId(@Param("date") String date, @Param("className") String className, @Param("schoolId") Long schoolId);
 

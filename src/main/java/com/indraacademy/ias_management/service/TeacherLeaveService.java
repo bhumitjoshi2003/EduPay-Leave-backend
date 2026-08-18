@@ -240,11 +240,11 @@ public class TeacherLeaveService {
     }
 
     @Transactional(readOnly = true)
-    public Page<TeacherLeaveResponse> getLeavesFiltered(LeaveStatus status, String teacherId, Pageable pageable) {
+    public Page<TeacherLeaveResponse> getLeavesFiltered(LeaveStatus status, String teacherId, LocalDate date, Pageable pageable) {
         Long schoolId = securityUtil.getSchoolId();
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
-        return teacherLeaveRepository.findFiltered(schoolId, status, teacherId, pageable)
+        return teacherLeaveRepository.findFiltered(schoolId, status, teacherId, date, pageable)
                 .map(leave -> toCalendarAwareResponse(leave, school));
     }
 
