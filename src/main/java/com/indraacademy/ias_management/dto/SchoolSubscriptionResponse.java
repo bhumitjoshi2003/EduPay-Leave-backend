@@ -30,6 +30,8 @@ public class SchoolSubscriptionResponse {
     public Integer maxStudents;
     public Integer maxStaff;
     public Integer storageGbLimit;
+    public Integer maxAiMessagesMonthly;
+    public Integer maxKbDocuments;
     public String lastRebuiltAt;
     public String rebuiltBy;
 
@@ -74,6 +76,8 @@ public class SchoolSubscriptionResponse {
             r.maxStudents           = ent.getMaxStudents();
             r.maxStaff              = ent.getMaxStaff();
             r.storageGbLimit        = ent.getStorageGbLimit();
+            r.maxAiMessagesMonthly  = ent.getMaxAiMessagesMonthly();
+            r.maxKbDocuments        = ent.getMaxKbDocuments();
             r.studentSoftLimitPct   = ent.getStudentSoftLimitPct()  != null ? ent.getStudentSoftLimitPct()  : 90;
             r.studentHardLimitPct   = ent.getStudentHardLimitPct()  != null ? ent.getStudentHardLimitPct()  : 105;
             r.staffSoftLimitPct     = ent.getStaffSoftLimitPct()    != null ? ent.getStaffSoftLimitPct()    : 90;

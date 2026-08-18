@@ -3,7 +3,9 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.SchoolSettingsResponse;
 import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
 import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
+import com.indraacademy.ias_management.dto.SuperAdminSchoolUpdateRequest;
 import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.RefundRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
@@ -26,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,8 +45,10 @@ class SchoolServiceTest {
     @Mock private TeacherRepository teacherRepository;
     @Mock private PaymentRepository paymentRepository;
     @Mock private RefundRepository refundRepository;
+    @Mock private com.indraacademy.ias_management.repository.UserRepository userRepository;
     @Mock private AuditService auditService;
     @Mock private SecurityUtil securityUtil;
+    @Mock private EntitlementRefreshService entitlementRefreshService;
     @Mock private HttpServletRequest request;
 
     private SchoolService service;
@@ -58,13 +63,19 @@ class SchoolServiceTest {
         ReflectionTestUtils.setField(service, "teacherRepository", teacherRepository);
         ReflectionTestUtils.setField(service, "paymentRepository", paymentRepository);
         ReflectionTestUtils.setField(service, "refundRepository", refundRepository);
+        ReflectionTestUtils.setField(service, "userRepository", userRepository);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
+        ReflectionTestUtils.setField(service, "entitlementRefreshService", entitlementRefreshService);
 
         lenient().when(schoolRepository.count()).thenReturn(5L);
         lenient().when(schoolRepository.countByActiveTrue()).thenReturn(4L);
         lenient().when(studentRepository.count()).thenReturn(100L);
         lenient().when(teacherRepository.count()).thenReturn(10L);
+        lenient().when(securityUtil.getUsername()).thenReturn("super@edunexify.co.in");
+        lenient().when(securityUtil.getRole()).thenReturn("SUPER_ADMIN");
+        lenient().when(userRepository.findFirstBySchoolIdAndRole(any(), any())).thenReturn(Optional.empty());
+        lenient().when(request.getRemoteAddr()).thenReturn("127.0.0.1");
     }
 
     @Test
@@ -153,5 +164,48 @@ class SchoolServiceTest {
         SchoolSettingsResponse response = service.updateSettings(req, request);
 
         assertThat(response.getTimezone()).isEqualTo("Asia/Kolkata");
+    }
+
+    // ─── Legacy fields are display-only now (subscription reset) ───────────────
+    //
+    // SchoolService.updateSubscription() (the old PATCH endpoint) has been removed entirely — it
+    // had zero callers in web or Android and was fully superseded by SubscriptionController's
+    // POST/PUT .../schools/{id}/subscription. updateSchoolDetails() still accepts plan/
+    // maxStudents/expiryDate (the Super Admin "Edit School" form still has these fields) but they
+    // no longer drive the entitlement system — SubscriptionController is the sole write path for
+    // that now. These tests prove updateSchoolDetails() still persists the legacy display fields
+    // but never touches EntitlementRefreshService.
+
+    @Test
+    void updateSchoolDetails_planChange_persistsLegacyDisplayField_butNeverTouchesEntitlements() {
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existingSchool()));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SuperAdminSchoolUpdateRequest req = new SuperAdminSchoolUpdateRequest();
+        req.setPlan(SubscriptionPlan.ENTERPRISE);
+        LocalDate expiry = LocalDate.now().plusYears(1);
+        req.setExpiryDate(expiry);
+
+        SchoolSettingsResponse response = service.updateSchoolDetails(SCHOOL_ID, req, request);
+
+        assertThat(response.getPlan()).isEqualTo(SubscriptionPlan.ENTERPRISE);
+        assertThat(response.getExpiryDate()).isEqualTo(expiry);
+        verify(entitlementRefreshService, org.mockito.Mockito.never()).refresh(any(), any());
+        verify(entitlementRefreshService, org.mockito.Mockito.never()).refreshForSubscriptionChange(any());
+    }
+
+    @Test
+    void updateSchoolDetails_unrelatedFieldOnly_leavesLegacyPlanFieldUnchanged() {
+        School existing = existingSchool();
+        existing.setPlan(SubscriptionPlan.TRIAL);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existing));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SuperAdminSchoolUpdateRequest req = new SuperAdminSchoolUpdateRequest();
+        req.setCity("Pune"); // no plan/expiryDate touched
+
+        SchoolSettingsResponse response = service.updateSchoolDetails(SCHOOL_ID, req, request);
+
+        assertThat(response.getPlan()).isEqualTo(SubscriptionPlan.TRIAL);
     }
 }

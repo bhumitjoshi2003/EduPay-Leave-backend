@@ -96,6 +96,15 @@ public class SchoolEffectiveEntitlement {
     @Column(name = "storage_hard_limit_pct")
     private Integer storageHardLimitPct = 105;
 
+    // ── AI Copilot limits ─────────────────────────────────────────────────────
+
+    /** NULL means "not included" on this plan (e.g. Campus) — see Plan's javadoc for the same convention. */
+    @Column(name = "max_ai_messages_monthly")
+    private Integer maxAiMessagesMonthly;
+
+    @Column(name = "max_kb_documents")
+    private Integer maxKbDocuments;
+
     // ── Rebuild metadata ─────────────────────────────────────────────────────
 
     @Column(name = "last_rebuilt_at")
@@ -171,6 +180,12 @@ public class SchoolEffectiveEntitlement {
 
     public Integer getStorageHardLimitPct() { return storageHardLimitPct; }
     public void setStorageHardLimitPct(Integer storageHardLimitPct) { this.storageHardLimitPct = storageHardLimitPct; }
+
+    public Integer getMaxAiMessagesMonthly() { return maxAiMessagesMonthly; }
+    public void setMaxAiMessagesMonthly(Integer maxAiMessagesMonthly) { this.maxAiMessagesMonthly = maxAiMessagesMonthly; }
+
+    public Integer getMaxKbDocuments() { return maxKbDocuments; }
+    public void setMaxKbDocuments(Integer maxKbDocuments) { this.maxKbDocuments = maxKbDocuments; }
 
     public LocalDateTime getLastRebuiltAt() { return lastRebuiltAt; }
     public void setLastRebuiltAt(LocalDateTime lastRebuiltAt) { this.lastRebuiltAt = lastRebuiltAt; }

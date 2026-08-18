@@ -203,9 +203,18 @@ public class SchoolService {
         academicSessionService.getOrCreateCurrentSession(saved.getId());
         log.info("Initial academic session created for schoolId={}", saved.getId());
 
-        // 5. Auto-create a trial subscription if a plan was specified
-        if (req.getTrialPlanId() != null) {
-            Plan plan = planRepository.findById(req.getTrialPlanId()).orElse(null);
+        // 5. Auto-create a trial subscription — always, not only when trialPlanId is explicitly
+        // provided. Onboarding without one used to leave a school with no SchoolSubscription/
+        // SchoolEffectiveEntitlement row at all, which EntitlementService.checkLimit() then
+        // silently treats as unlimited (fails open on the missing-entitlement IllegalStateException
+        // — see StudentService.addStudent/TeacherService.addTeacher's catch blocks). Defaulting to
+        // the entry-tier plan here closes that gap for every school onboarded from now on.
+        Long trialPlanId = req.getTrialPlanId();
+        if (trialPlanId == null) {
+            trialPlanId = planRepository.findByTierIgnoreCase("CAMPUS").map(Plan::getId).orElse(null);
+        }
+        if (trialPlanId != null) {
+            Plan plan = planRepository.findById(trialPlanId).orElse(null);
             if (plan != null) {
                 GlobalSubscriptionConfig config = globalConfigRepository.findById(1)
                         .orElse(new GlobalSubscriptionConfig());
@@ -226,8 +235,10 @@ public class SchoolService {
                 log.info("Auto-created TRIAL subscription for school={} plan={} trialEnds={}",
                         saved.getId(), plan.getId(), sub.getTrialEndsAt());
             } else {
-                log.warn("trialPlanId={} not found — skipping auto-subscription for school={}", req.getTrialPlanId(), saved.getId());
+                log.warn("trialPlanId={} not found — skipping auto-subscription for school={}", trialPlanId, saved.getId());
             }
+        } else {
+            log.warn("No trialPlanId provided and no CAMPUS plan seeded — school={} onboarded with no subscription", saved.getId());
         }
 
         auditService.log(
@@ -526,41 +537,6 @@ public class SchoolService {
     }
 
     /**
-     * SUPER_ADMIN: updates subscription plan, maxStudents, expiryDate, and active flag for any school.
-     */
-    @Transactional
-    public SchoolSettingsResponse updateSubscription(Long schoolId, com.indraacademy.ias_management.entity.SubscriptionPlan plan,
-                                                     Integer maxStudents, java.time.LocalDate expiryDate,
-                                                     Boolean active, HttpServletRequest request) {
-        School school = schoolRepository.findById(schoolId)
-                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
-
-        String oldValue = "plan=" + school.getPlan() + ",active=" + school.isActive();
-
-        if (plan != null) school.setPlan(plan);
-        if (maxStudents != null) school.setMaxStudents(maxStudents);
-        if (expiryDate != null) school.setExpiryDate(expiryDate);
-        if (active != null) school.setActive(active);
-
-        School updated = schoolRepository.save(school);
-        entitlementRefreshService.refreshForSubscriptionChange(schoolId);
-        log.info("Subscription updated for schoolId={}: plan={}, active={}", schoolId, updated.getPlan(), updated.isActive());
-
-        auditService.log(
-                securityUtil.getUsername(),
-                securityUtil.getRole(),
-                "UPDATE_SCHOOL_SUBSCRIPTION",
-                "School",
-                String.valueOf(schoolId),
-                oldValue,
-                "plan=" + updated.getPlan() + ",active=" + updated.isActive(),
-                request.getRemoteAddr()
-        );
-
-        return SchoolSettingsResponse.from(updated);
-    }
-
-    /**
      * SUPER_ADMIN: list all schools, enriched with each school's admin userId.
      */
     public List<SchoolSettingsResponse> listAllSchools() {
@@ -612,6 +588,12 @@ public class SchoolService {
         if (req.getPhone() != null) school.setPhone(req.getPhone());
         if (req.getWebsite() != null) school.setWebsite(req.getWebsite());
         if (req.getContactPersonName() != null) school.setContactPersonName(req.getContactPersonName());
+        // plan/maxStudents/expiryDate are legacy, display-only fields from here on (e.g. the
+        // Super Admin Dashboard school-list badge) — they no longer feed the entitlement system.
+        // SubscriptionController's POST/PUT .../schools/{id}/subscription is the sole path that
+        // creates or changes a school's real SchoolSubscription/SchoolEffectiveEntitlement state,
+        // and it keeps this same School.plan column in sync in the other direction (see
+        // SubscriptionController.syncLegacyPlanField) whenever it changes a plan.
         if (req.getPlan() != null) school.setPlan(req.getPlan());
         if (req.getMaxStudents() != null) school.setMaxStudents(req.getMaxStudents());
         if (req.getExpiryDate() != null) school.setExpiryDate(req.getExpiryDate());

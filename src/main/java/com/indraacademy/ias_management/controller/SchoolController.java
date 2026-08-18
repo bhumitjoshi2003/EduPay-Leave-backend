@@ -8,7 +8,6 @@ import com.indraacademy.ias_management.dto.SchoolSettingsUpdateRequest;
 import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
 import com.indraacademy.ias_management.dto.SuperAdminSchoolUpdateRequest;
 import com.indraacademy.ias_management.entity.SchoolClass;
-import com.indraacademy.ias_management.entity.SubscriptionPlan;
 import com.indraacademy.ias_management.service.SchoolService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -21,8 +20,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.LocalDate;
-import java.util.List;
 import java.util.List;
 import java.util.Map;
 
@@ -61,28 +58,6 @@ public class SchoolController {
     public ResponseEntity<List<SchoolSettingsResponse>> listAllSchools() {
         log.info("GET /api/super-admin/schools");
         return ResponseEntity.ok(schoolService.listAllSchools());
-    }
-
-    /**
-     * PATCH /api/super-admin/schools/{schoolId}/subscription
-     * Update subscription plan, maxStudents, expiryDate, or active flag for a specific school.
-     */
-    @PatchMapping("/api/super-admin/schools/{schoolId}/subscription")
-    @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
-    public ResponseEntity<?> updateSubscription(@PathVariable Long schoolId,
-                                                @RequestParam(required = false) SubscriptionPlan plan,
-                                                @RequestParam(required = false) Integer maxStudents,
-                                                @RequestParam(required = false) String expiryDate,
-                                                @RequestParam(required = false) Boolean active,
-                                                HttpServletRequest request) {
-        log.info("PATCH /api/super-admin/schools/{}/subscription", schoolId);
-        try {
-            LocalDate parsedExpiry = expiryDate != null ? LocalDate.parse(expiryDate) : null;
-            SchoolSettingsResponse updated = schoolService.updateSubscription(schoolId, plan, maxStudents, parsedExpiry, active, request);
-            return ResponseEntity.ok(updated);
-        } catch (IllegalArgumentException | java.util.NoSuchElementException e) {
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
-        }
     }
 
     /**

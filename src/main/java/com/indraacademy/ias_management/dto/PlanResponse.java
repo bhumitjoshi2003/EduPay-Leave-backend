@@ -30,6 +30,9 @@ public class PlanResponse {
     private Integer storageSoftLimitPct;
     private Integer storageHardLimitPct;
 
+    private Integer maxAiMessagesMonthly;
+    private Integer maxKbDocuments;
+
     private Long monthlyPricePaise;
     private Long annualPricePaise;
     private String currency;
@@ -62,6 +65,8 @@ public class PlanResponse {
         r.storageGbLimit       = p.getStorageGbLimit();
         r.storageSoftLimitPct  = p.getStorageSoftLimitPct();
         r.storageHardLimitPct  = p.getStorageHardLimitPct();
+        r.maxAiMessagesMonthly = p.getMaxAiMessagesMonthly();
+        r.maxKbDocuments       = p.getMaxKbDocuments();
         r.monthlyPricePaise    = p.getMonthlyPricePaise();
         r.annualPricePaise     = p.getAnnualPricePaise();
         r.currency             = p.getCurrency();
@@ -91,6 +96,8 @@ public class PlanResponse {
         copy.storageGbLimit      = this.storageGbLimit;
         copy.storageSoftLimitPct = this.storageSoftLimitPct;
         copy.storageHardLimitPct = this.storageHardLimitPct;
+        copy.maxAiMessagesMonthly = this.maxAiMessagesMonthly;
+        copy.maxKbDocuments       = this.maxKbDocuments;
         copy.monthlyPricePaise   = this.monthlyPricePaise;
         copy.annualPricePaise    = this.annualPricePaise;
         copy.currency            = this.currency;
@@ -115,6 +122,8 @@ public class PlanResponse {
     public Integer getStorageGbLimit() { return storageGbLimit; }
     public Integer getStorageSoftLimitPct() { return storageSoftLimitPct; }
     public Integer getStorageHardLimitPct() { return storageHardLimitPct; }
+    public Integer getMaxAiMessagesMonthly() { return maxAiMessagesMonthly; }
+    public Integer getMaxKbDocuments() { return maxKbDocuments; }
     public Long getMonthlyPricePaise() { return monthlyPricePaise; }
     public Long getAnnualPricePaise() { return annualPricePaise; }
     public String getCurrency() { return currency; }

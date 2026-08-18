@@ -193,6 +193,8 @@ public class EntitlementRefreshService {
         ent.setStorageGbLimit(plan.getStorageGbLimit());
         ent.setStorageSoftLimitPct(plan.getStorageSoftLimitPct());
         ent.setStorageHardLimitPct(plan.getStorageHardLimitPct());
+        ent.setMaxAiMessagesMonthly(plan.getMaxAiMessagesMonthly());
+        ent.setMaxKbDocuments(plan.getMaxKbDocuments());
         ent.setLastRebuiltAt(LocalDateTime.now());
         ent.setRebuiltBy(triggeredBy);
         entitlementRepo.save(ent);

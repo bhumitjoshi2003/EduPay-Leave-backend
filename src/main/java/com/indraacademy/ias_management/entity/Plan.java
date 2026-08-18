@@ -71,6 +71,20 @@ public class Plan {
     @Column(name = "storage_hard_limit_pct")
     private Integer storageHardLimitPct = 105;
 
+    // ── AI / communication limits ─────────────────────────────────────────────
+    /**
+     * Monthly AI Copilot message allowance for schools on this plan. Unlike every other limit
+     * field on this entity, NULL here means "AI Copilot not included" rather than "unlimited" —
+     * matching how the AI_COPILOT feature key's plan membership already works. Not yet read by
+     * any enforcement code (see V19 migration comment) — a seeded number only at this stage.
+     */
+    @Column(name = "max_ai_messages_monthly")
+    private Integer maxAiMessagesMonthly;
+
+    /** Max knowledge-base documents a school on this plan may upload. Same NULL convention as above. */
+    @Column(name = "max_kb_documents")
+    private Integer maxKbDocuments;
+
     // ── Pricing (null = offline/custom negotiated) ────────────────────────────
     @Column(name = "monthly_price_paise")
     private Long monthlyPricePaise;
@@ -138,6 +152,12 @@ public class Plan {
 
     public Integer getStorageHardLimitPct() { return storageHardLimitPct; }
     public void setStorageHardLimitPct(Integer storageHardLimitPct) { this.storageHardLimitPct = storageHardLimitPct; }
+
+    public Integer getMaxAiMessagesMonthly() { return maxAiMessagesMonthly; }
+    public void setMaxAiMessagesMonthly(Integer maxAiMessagesMonthly) { this.maxAiMessagesMonthly = maxAiMessagesMonthly; }
+
+    public Integer getMaxKbDocuments() { return maxKbDocuments; }
+    public void setMaxKbDocuments(Integer maxKbDocuments) { this.maxKbDocuments = maxKbDocuments; }
 
     public Long getMonthlyPricePaise() { return monthlyPricePaise; }
     public void setMonthlyPricePaise(Long monthlyPricePaise) { this.monthlyPricePaise = monthlyPricePaise; }

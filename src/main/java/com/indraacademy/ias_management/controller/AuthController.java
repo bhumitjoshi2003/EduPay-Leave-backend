@@ -394,25 +394,13 @@ public class AuthController {
      */
     private void appendEntitlementFields(Map<String, Object> body, Long schoolId) {
         if (schoolId == null) {
-            body.put("featureKeys",         List.of());
-            body.put("planTier",            null);
-            body.put("planVersion",         null);
-            body.put("subscriptionStatus",  null);
-            body.put("trialEndsAt",         null);
-            body.put("expiresAt",           null);
-            body.put("graceEndsAt",         null);
+            putEmptyEntitlementFields(body);
             return;
         }
         try {
             var ent = entitlementRepo.findById(schoolId).orElse(null);
             if (ent == null) {
-                body.put("featureKeys",         List.of());
-                body.put("planTier",            null);
-                body.put("planVersion",         null);
-                body.put("subscriptionStatus",  null);
-                body.put("trialEndsAt",         null);
-                body.put("expiresAt",           null);
-                body.put("graceEndsAt",         null);
+                putEmptyEntitlementFields(body);
             } else {
                 body.put("featureKeys",         entitlementService.getEffectiveFeatureKeys(schoolId));
                 body.put("planTier",            ent.getPlanTier());
@@ -421,17 +409,25 @@ public class AuthController {
                 body.put("trialEndsAt",         ent.getTrialEndsAt() != null ? ent.getTrialEndsAt().toString() : null);
                 body.put("expiresAt",           ent.getExpiresAt() != null ? ent.getExpiresAt().toString() : null);
                 body.put("graceEndsAt",         ent.getGraceEndsAt() != null ? ent.getGraceEndsAt().toString() : null);
+                body.put("maxAiMessagesMonthly", ent.getMaxAiMessagesMonthly());
+                body.put("maxKbDocuments",       ent.getMaxKbDocuments());
             }
         } catch (Exception e) {
             log.warn("Could not load entitlement for schoolId={}: {}", schoolId, e.getMessage());
-            body.put("featureKeys",         List.of());
-            body.put("planTier",            null);
-            body.put("planVersion",         null);
-            body.put("subscriptionStatus",  null);
-            body.put("trialEndsAt",         null);
-            body.put("expiresAt",           null);
-            body.put("graceEndsAt",         null);
+            putEmptyEntitlementFields(body);
         }
+    }
+
+    private void putEmptyEntitlementFields(Map<String, Object> body) {
+        body.put("featureKeys",          List.of());
+        body.put("planTier",             null);
+        body.put("planVersion",          null);
+        body.put("subscriptionStatus",   null);
+        body.put("trialEndsAt",          null);
+        body.put("expiresAt",            null);
+        body.put("graceEndsAt",          null);
+        body.put("maxAiMessagesMonthly", null);
+        body.put("maxKbDocuments",       null);
     }
 
     private String resolveSchoolSlug(Long schoolId) {

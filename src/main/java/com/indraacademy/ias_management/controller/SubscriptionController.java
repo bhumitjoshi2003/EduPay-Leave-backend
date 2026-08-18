@@ -235,6 +235,8 @@ public class SubscriptionController {
             result.put("staffSoftLimitPct",   ent.getStaffSoftLimitPct());
             result.put("staffHardLimitPct",   ent.getStaffHardLimitPct());
             result.put("storageGbLimit",      ent.getStorageGbLimit());
+            result.put("maxAiMessagesMonthly", ent.getMaxAiMessagesMonthly());
+            result.put("maxKbDocuments",      ent.getMaxKbDocuments());
             result.put("featureCount",        featureKeys.size());
             result.put("features",            featureKeys);
         } else {
@@ -251,6 +253,8 @@ public class SubscriptionController {
             result.put("staffSoftLimitPct",   null);
             result.put("staffHardLimitPct",   null);
             result.put("storageGbLimit",      null);
+            result.put("maxAiMessagesMonthly", null);
+            result.put("maxKbDocuments",      null);
             result.put("featureCount",        featureKeys.size());
             result.put("features",            featureKeys);
         }
@@ -584,15 +588,31 @@ public class SubscriptionController {
         }
     }
 
+    /**
+     * Maps a modern {@link Plan} tier onto the closest legacy {@link SubscriptionPlan} enum value,
+     * purely for the School.plan display column (e.g. the Super Admin Dashboard school-list
+     * badge) — this is a one-directional, display-only sync; nothing reads School.plan back into
+     * the modern system anymore. Previously this always fell through to ENTERPRISE for
+     * CAMPUS/ACADEMY/INSTITUTE (every named tier failed both equalsIgnoreCase checks against the
+     * old 4-value enum), which is fixed here with an explicit tier mapping.
+     */
     private SubscriptionPlan mapToLegacyPlan(String tier, String planName) {
-        // Try tier first, then plan name — case-insensitive match against enum values
+        if (tier != null) {
+            SubscriptionPlan mapped = switch (tier.toUpperCase()) {
+                case "CAMPUS" -> SubscriptionPlan.BASIC;
+                case "ACADEMY" -> SubscriptionPlan.PROFESSIONAL;
+                case "INSTITUTE" -> SubscriptionPlan.ENTERPRISE;
+                default -> null;
+            };
+            if (mapped != null) return mapped;
+        }
+        // Fall back to a direct name match (covers any legacy-named plan row) before defaulting.
         for (SubscriptionPlan lp : SubscriptionPlan.values()) {
             if (lp.name().equalsIgnoreCase(tier)) return lp;
         }
         for (SubscriptionPlan lp : SubscriptionPlan.values()) {
             if (lp.name().equalsIgnoreCase(planName)) return lp;
         }
-        // Any named paid plan that doesn't match the old enum → ENTERPRISE
         return SubscriptionPlan.ENTERPRISE;
     }
 
