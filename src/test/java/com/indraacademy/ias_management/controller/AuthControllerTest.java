@@ -15,6 +15,7 @@ import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PermissionService;
+import com.indraacademy.ias_management.service.WelcomeEmailService;
 import com.indraacademy.ias_management.util.JwtUtil;
 import com.indraacademy.ias_management.util.SchoolContext;
 import com.indraacademy.ias_management.config.RateLimiter;
@@ -65,6 +66,7 @@ class AuthControllerTest {
     @Mock private RateLimiter rateLimiter;
     @Mock private PermissionService permissionService;
     @Mock private AuditService auditService;
+    @Mock private WelcomeEmailService welcomeEmailService;
 
     private AuthController controller;
     private static final Long SCHOOL_ID = 1L;
@@ -83,6 +85,7 @@ class AuthControllerTest {
         ReflectionTestUtils.setField(controller, "rateLimiter", rateLimiter);
         ReflectionTestUtils.setField(controller, "permissionService", permissionService);
         ReflectionTestUtils.setField(controller, "auditService", auditService);
+        ReflectionTestUtils.setField(controller, "welcomeEmailService", welcomeEmailService);
         ReflectionTestUtils.setField(controller, "frontendUrl", "http://localhost:4200");
         ReflectionTestUtils.setField(controller, "isSecure", false);
         ReflectionTestUtils.setField(controller, "sameSite", "Lax");
@@ -138,6 +141,27 @@ class AuthControllerTest {
     }
 
     @Test
+    void registerStudent_sendsWelcomeEmailAfterAccountIsCreated() {
+        when(authService.getRole()).thenReturn(Role.ADMIN);
+        when(userRepository.findByUserId("S1")).thenReturn(Optional.empty());
+        Student student = new Student();
+        student.setStudentId("S1");
+        student.setName("Asha Verma");
+        student.setDob(LocalDate.of(1990, 5, 23));
+        when(studentRepository.findByStudentIdAndSchoolId("S1", SCHOOL_ID)).thenReturn(Optional.of(student));
+        when(passwordEncoder.encode(anyString())).thenReturn("ENCODED");
+
+        User request = new User();
+        request.setUserId("S1");
+        request.setRole(Role.STUDENT);
+        request.setEmail("s1@test.com");
+
+        controller.registerUser(request);
+
+        verify(welcomeEmailService).sendWelcomeEmail("S1", "Asha Verma", Role.STUDENT, "s1@test.com", SCHOOL_ID);
+    }
+
+    @Test
     void registerStudent_withoutDob_isRejected() {
         when(authService.getRole()).thenReturn(Role.ADMIN);
         when(userRepository.findByUserId("S1")).thenReturn(Optional.empty());
@@ -155,6 +179,7 @@ class AuthControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().toString()).contains("Date of birth is required");
         verify(userRepository, never()).save(any());
+        verify(welcomeEmailService, never()).sendWelcomeEmail(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -177,6 +202,8 @@ class AuthControllerTest {
         ArgumentCaptor<User> savedCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(savedCaptor.capture());
         assertThat(savedCaptor.getValue().isMustChangePassword()).isFalse();
+        // Welcome email is only for STUDENT/TEACHER accounts, never ADMIN-family roles.
+        verify(welcomeEmailService, never()).sendWelcomeEmail(any(), any(), any(), any(), any());
     }
 
     @Test

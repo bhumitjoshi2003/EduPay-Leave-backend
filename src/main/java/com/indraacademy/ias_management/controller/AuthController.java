@@ -19,6 +19,7 @@ import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PermissionService;
 import com.indraacademy.ias_management.service.EmailService;
+import com.indraacademy.ias_management.service.WelcomeEmailService;
 import com.indraacademy.ias_management.util.JwtUtil;
 import com.indraacademy.ias_management.util.SchoolContext;
 import io.jsonwebtoken.Claims;
@@ -63,6 +64,7 @@ public class AuthController {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtUtil jwtUtil;
     @Autowired private EmailService emailService;
+    @Autowired private WelcomeEmailService welcomeEmailService;
     @Autowired private AuthService authService;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
@@ -204,6 +206,17 @@ public class AuthController {
         }
 
         userRepository.save(user);
+
+        // Welcome email — only for STUDENT/TEACHER (the roles with a DOB-derived temporary
+        // password); never for ADMIN/SUB_ADMIN/SUPER_ADMIN. Fired only after the save above
+        // succeeds, so a retried/duplicate registerUser call (rejected above by the
+        // findByUserId conflict check) can never trigger a second send for the same account.
+        if (isStudentOrTeacher) {
+            String name = resolveName(user.getUserId(), user.getRole(), user.getSchoolId());
+            welcomeEmailService.sendWelcomeEmail(
+                    user.getUserId(), name, user.getRole(), user.getEmail(), user.getSchoolId());
+        }
+
         return ResponseEntity.ok("User registered successfully");
     }
 

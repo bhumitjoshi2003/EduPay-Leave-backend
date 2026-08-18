@@ -67,6 +67,7 @@ public class TeacherBulkImportService {
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private WelcomeEmailService welcomeEmailService;
 
     /**
      * Parses the uploaded CSV, attempts to save each data row, and returns
@@ -100,7 +101,7 @@ public class TeacherBulkImportService {
                     // Each addTeacher call runs in its own @Transactional context —
                     // a failure here does not affect rows already committed.
                     teacherService.addTeacher(teacher, request);
-                    createUserAccount(teacher.getTeacherId(), teacher.getEmail(),
+                    createUserAccount(teacher.getTeacherId(), teacher.getName(), teacher.getEmail(),
                             teacher.getDob(), Role.TEACHER);
                     successful++;
                     log.info("Bulk import: row {} saved (teacherId={})", rowNum, teacherId);
@@ -137,8 +138,12 @@ public class TeacherBulkImportService {
      * required field for this import, so it is always present here. The
      * account is flagged mustChangePassword so the teacher is forced to set
      * a real password on first login.
+     *
+     * Sends the welcome email only after save() succeeds — a per-row failure never reaches
+     * this point (caught by the caller's try/catch), so a retried import of an already-created
+     * row cannot trigger a second send for the same teacher.
      */
-    private void createUserAccount(String teacherId, String email, LocalDate dob, String role) {
+    private void createUserAccount(String teacherId, String name, String email, LocalDate dob, String role) {
         String rawPassword = dob.format(DOB_FORMATTER);
         User user = new User();
         user.setUserId(teacherId);
@@ -149,6 +154,7 @@ public class TeacherBulkImportService {
         user.setMustChangePassword(true);
         userRepository.save(user);
         log.info("Bulk import: created User account for teacherId={}", teacherId);
+        welcomeEmailService.sendWelcomeEmail(teacherId, name, role, email, user.getSchoolId());
     }
 
     /**

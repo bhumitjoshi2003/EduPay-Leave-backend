@@ -47,6 +47,7 @@ class StudentBulkImportServiceTest {
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private SchoolClassRepository schoolClassRepository;
     @Mock private SectionRepository sectionRepository;
+    @Mock private WelcomeEmailService welcomeEmailService;
     @Mock private HttpServletRequest request;
 
     private StudentBulkImportService service;
@@ -64,6 +65,7 @@ class StudentBulkImportServiceTest {
         ReflectionTestUtils.setField(service, "passwordEncoder", passwordEncoder);
         ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
         ReflectionTestUtils.setField(service, "sectionRepository", sectionRepository);
+        ReflectionTestUtils.setField(service, "welcomeEmailService", welcomeEmailService);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         lenient().when(securityUtil.getUsername()).thenReturn("admin");
@@ -115,5 +117,24 @@ class StudentBulkImportServiceTest {
         assertThat(saved.getRole()).isEqualTo(Role.STUDENT);
         assertThat(saved.isMustChangePassword()).isTrue();
         assertThat(saved.getPassword()).isEqualTo("ENCODED");
+    }
+
+    @Test
+    void validRowTriggersWelcomeEmailAfterUserAccountIsCreated() {
+        MockMultipartFile file = csv("S1,Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,");
+
+        service.bulkImport(file, request);
+
+        verify(welcomeEmailService).sendWelcomeEmail("S1", "Valid Student", Role.STUDENT, "s1@test.com", SCHOOL_ID);
+    }
+
+    @Test
+    void rowMissingDobDoesNotTriggerWelcomeEmail() {
+        MockMultipartFile file = csv("S2,No Dob Student,s2@test.com,,,10,,,,,,,2024-01-01,");
+
+        service.bulkImport(file, request);
+
+        verify(welcomeEmailService, org.mockito.Mockito.never())
+                .sendWelcomeEmail(anyString(), anyString(), anyString(), anyString(), any());
     }
 }

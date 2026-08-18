@@ -78,6 +78,7 @@ public class StudentBulkImportService {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private SectionRepository sectionRepository;
+    @Autowired private WelcomeEmailService welcomeEmailService;
 
     /**
      * Parses the uploaded CSV, attempts to save each data row, and returns
@@ -111,7 +112,7 @@ public class StudentBulkImportService {
                     // Each addStudent call runs in its own @Transactional context —
                     // a failure here does not affect rows already committed.
                     studentService.addStudent(student, request);
-                    createUserAccount(student.getStudentId(), student.getEmail(),
+                    createUserAccount(student.getStudentId(), student.getName(), student.getEmail(),
                             student.getDob(), Role.STUDENT);
                     successful++;
                     log.info("Bulk import: row {} saved (studentId={})", rowNum, studentId);
@@ -145,8 +146,12 @@ public class StudentBulkImportService {
      * required field for this import, so it is always present here. The
      * account is flagged mustChangePassword so the student is forced to set
      * a real password on first login.
+     *
+     * Sends the welcome email only after save() succeeds — a per-row failure never reaches
+     * this point (caught by the caller's try/catch), so a retried import of an already-created
+     * row cannot trigger a second send for the same student.
      */
-    private void createUserAccount(String studentId, String email, LocalDate dob, String role) {
+    private void createUserAccount(String studentId, String name, String email, LocalDate dob, String role) {
         String rawPassword = dob.format(DOB_FORMATTER);
         User user = new User();
         user.setUserId(studentId);
@@ -157,6 +162,7 @@ public class StudentBulkImportService {
         user.setMustChangePassword(true);
         userRepository.save(user);
         log.info("Bulk import: created User account for studentId={}", studentId);
+        welcomeEmailService.sendWelcomeEmail(studentId, name, role, email, user.getSchoolId());
     }
 
     /**
