@@ -11,6 +11,7 @@ import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -38,11 +39,14 @@ public class AttendanceController {
     @Autowired private AuthService authService;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private com.indraacademy.ias_management.util.SecurityUtil securityUtil;
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
-    public ResponseEntity<String> saveAttendance(@Valid @RequestBody List<Attendance> attendanceList, HttpServletRequest request) {
+    public ResponseEntity<String> saveAttendance(@Valid @RequestBody List<Attendance> attendanceList,
+                                                 @RequestParam(required = false) Long sectionId,
+                                                 HttpServletRequest request) {
         // TEACHER: every row must be for their own assigned class — without this a teacher
         // could write (or overwrite) attendance for a class they don't teach.
         if (Role.TEACHER.equals(authService.getRole()) && attendanceList != null) {
@@ -56,7 +60,7 @@ public class AttendanceController {
             }
         }
         log.info("Request to save attendance for {} records.", attendanceList != null ? attendanceList.size() : 0);
-        attendanceService.saveAttendance(attendanceList, request);
+        attendanceService.saveAttendance(attendanceList, sectionId, request);
         log.info("Attendance data saved successfully.");
         return ResponseEntity.ok("Attendance data saved successfully.");
     }
@@ -65,7 +69,8 @@ public class AttendanceController {
     @GetMapping("/date/{absentDate}/class/{className}")
     public ResponseEntity<?> getAttendanceByDateAndClass(
             @PathVariable LocalDate absentDate,
-            @PathVariable String className) {
+            @PathVariable String className,
+            @RequestParam(required = false) Long sectionId) {
         // TEACHER: only their assigned class — same check as getClassAttendanceSummary/
         // getConsecutiveAbsentees below, applied here too since this endpoint was missing it.
         if (Role.TEACHER.equals(authService.getRole())) {
@@ -77,7 +82,7 @@ public class AttendanceController {
             }
         }
         log.info("Request to get attendance for Date: {} and Class: {}", absentDate, className);
-        List<Attendance> attendanceList = attendanceService.getAttendanceByDateAndClass(absentDate, className);
+        List<Attendance> attendanceList = attendanceService.getAttendanceByDateAndClass(absentDate, className, sectionId);
         return ResponseEntity.ok(attendanceList);
     }
 
@@ -90,6 +95,17 @@ public class AttendanceController {
         log.info("Request to get attendance counts for Student: {} in {}-{}", studentId, year, month);
         Map<String, Long> counts = attendanceService.getAttendanceCounts(studentId, year, month);
         return ResponseEntity.ok(counts);
+    }
+
+    @PreAuthorize("hasAnyRole('" + Role.TEACHER + "', '" + Role.ADMIN + "')")
+    @GetMapping("/calendar-config")
+    public ResponseEntity<?> getAttendanceCalendarConfig() {
+        Long schoolId = securityUtil.getSchoolId();
+        return schoolRepository.findById(schoolId)
+                .<ResponseEntity<?>>map(s -> ResponseEntity.ok(Map.of(
+                        "workingDays", s.getWorkingDays() != null ? s.getWorkingDays() : "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY",
+                        "timezone", s.getTimezone() != null ? s.getTimezone() : "Asia/Kolkata")))
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @GetMapping("/unapplied-leave-count/{studentId}/session/{session}")
@@ -108,6 +124,7 @@ public class AttendanceController {
     public ResponseEntity<String> deleteAttendanceByDateAndClass(
             @PathVariable LocalDate date,
             @PathVariable String className,
+            @RequestParam(required = false) Long sectionId,
             HttpServletRequest request) {
         // TEACHER: only their assigned class — same check as getAttendanceByDateAndClass above;
         // without this a teacher could delete another class's attendance for a day.
@@ -120,7 +137,7 @@ public class AttendanceController {
             }
         }
         log.warn("Request to delete attendance for Date: {} and Class: {}", date, className);
-        attendanceService.deleteAttendanceByDateAndClass(date, className, request);
+        attendanceService.deleteAttendanceByDateAndClass(date, className, sectionId, request);
         log.info("Attendance records deleted successfully for Date: {} and Class: {}", date, className);
         return ResponseEntity.ok("Attendance records deleted successfully.");
     }
@@ -321,7 +338,7 @@ public class AttendanceController {
      * the school (className is included per row) — for admin-level comparisons and
      * low-attendance lookups that would otherwise need one request per class.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/summary/school")
     public ResponseEntity<?> getSchoolAttendanceSummary(
             @RequestParam(defaultValue = "year") String type,

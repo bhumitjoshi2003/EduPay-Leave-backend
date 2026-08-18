@@ -261,6 +261,22 @@ class TeacherAttendanceServiceTest {
     }
 
     @Test
+    void getAttendanceByDate_beforeTrackingStart_doesNotSynthesizeAbsence() {
+        useClock(Instant.parse("2026-08-20T04:00:00Z"));
+        LocalDate preRolloutDate = LocalDate.of(2026, 8, 17);
+        School school = school("Asia/Kolkata");
+        school.setStaffAttendanceTrackingStartDate(LocalDate.of(2026, 8, 18));
+
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+        when(teacherAttendanceRepository.findBySchoolIdAndDate(SCHOOL_ID, preRolloutDate)).thenReturn(List.of());
+        when(teacherRepository.findBySchoolId(SCHOOL_ID)).thenReturn(List.of(teacher("T1", "Alex", null)));
+
+        assertThat(service.getAttendanceByDate(preRolloutDate)).isEmpty();
+        verify(schoolHolidayRepository, never()).findOverlapping(any(), any(), any());
+    }
+
+    @Test
     void getAttendanceByDate_pastWeekendWithNoRow_isNotAbsent() {
         Instant instant = Instant.parse("2026-08-20T04:00:00Z");
         useClock(instant);
@@ -534,6 +550,32 @@ class TeacherAttendanceServiceTest {
         assertThat(dto.getLateDays()).isEqualTo(1);
         // August 2026 has 26 weekdays under a Mon-Sat pattern; 2 are real rows, the rest ABSENT.
         assertThat(dto.getAbsentDays()).isEqualTo(dto.getTotalWorkingDays() - 2);
+    }
+
+    @Test
+    void summary_midMonthTrackingStart_excludesEarlierWorkingDaysFromAbsences() {
+        useClock(Instant.parse("2026-09-01T04:00:00Z"));
+        School school = school("Asia/Kolkata");
+        LocalDate trackingStart = LocalDate.of(2026, 8, 18);
+        school.setStaffAttendanceTrackingStartDate(trackingStart);
+
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(securityUtil.getUsername()).thenReturn("T1");
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Alex", LocalDate.of(2020, 1, 1))));
+        when(schoolHolidayRepository.findOverlapping(eq(SCHOOL_ID), any(), any())).thenReturn(List.of());
+        when(teacherAttendanceRepository.findByTeacherIdAndSchoolIdAndDateBetweenOrderByDateAsc(
+                eq("T1"), eq(SCHOOL_ID), any(), any()))
+                .thenReturn(List.of(row("T1", trackingStart, TeacherAttendanceService.STATUS_ON_TIME)));
+
+        TeacherAttendanceSummaryDTO dto = service.getMyAttendance(8, 2026);
+
+        assertThat(dto.getTrackingStartDate()).isEqualTo(trackingStart);
+        assertThat(dto.getTotalWorkingDays()).isEqualTo(12);
+        assertThat(dto.getPresentDays()).isEqualTo(1);
+        assertThat(dto.getAbsentDays()).isEqualTo(11);
+        assertThat(dto.getRecords()).allMatch(r -> !r.getDate().isBefore(trackingStart));
     }
 
     @Test

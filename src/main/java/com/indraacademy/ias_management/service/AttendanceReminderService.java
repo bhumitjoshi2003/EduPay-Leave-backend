@@ -143,7 +143,8 @@ public class AttendanceReminderService {
         String safeSchool = (schoolName != null && !schoolName.isBlank()) ? schoolName : "School";
         int year = LocalDate.now().getYear();
         String pct = String.format("%.1f%%", attendance.getAttendancePercentage());
-        String daysLine = attendance.getDaysPresent() + " of " + attendance.getTotalWorkingDays() + " working days present";
+        String daysLine = formatDayCount(attendance.getDaysPresent()) + " of "
+                + attendance.getTotalWorkingDays() + " working days present";
 
         // The only two pieces that differ between a threshold batch and a consecutive-absence
         // batch. Everything below — layout, palette, stat box, tip, footer — is shared, so the
@@ -267,6 +268,10 @@ public class AttendanceReminderService {
             </html>
             """.formatted(safeSchool, session, studentName, reasonSentence, pct, daysLine, session,
                           absenceDatesLine, safeSchool, year, safeSchool);
+    }
+
+    private String formatDayCount(double value) {
+        return java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
     }
 
     /** "2026-08-14","2026-08-15","2026-08-16" → "14, 15 &amp; 16 Aug" — readable in an email,

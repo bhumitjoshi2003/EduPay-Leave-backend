@@ -30,14 +30,14 @@ public class ConsecutiveAbsenceDTO {
 
     // Cumulative session context — same numbers the percentage-based view reports.
     private long totalWorkingDays;
-    private long daysPresent;
-    private long daysAbsent;
+    private double daysPresent;
+    private double daysAbsent;
     private double attendancePercentage;
 
     public ConsecutiveAbsenceDTO(String studentId, String studentName, String className,
                                  int consecutiveAbsentDays, List<String> absentDates,
-                                 long totalWorkingDays, long daysPresent,
-                                 long daysAbsent, double attendancePercentage) {
+                                 long totalWorkingDays, double daysPresent,
+                                 double daysAbsent, double attendancePercentage) {
         this.studentId = studentId;
         this.studentName = studentName;
         this.className = className;
@@ -55,7 +55,7 @@ public class ConsecutiveAbsenceDTO {
     public int getConsecutiveAbsentDays() { return consecutiveAbsentDays; }
     public List<String> getAbsentDates() { return absentDates; }
     public long getTotalWorkingDays() { return totalWorkingDays; }
-    public long getDaysPresent() { return daysPresent; }
-    public long getDaysAbsent() { return daysAbsent; }
+    public double getDaysPresent() { return daysPresent; }
+    public double getDaysAbsent() { return daysAbsent; }
     public double getAttendancePercentage() { return attendancePercentage; }
 }

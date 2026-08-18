@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.dto;
 
 import com.indraacademy.ias_management.entity.BoardType;
+import java.time.LocalDate;
 
 /**
  * Fields an ADMIN is allowed to update on their school record.
@@ -35,6 +36,7 @@ public class SchoolSettingsUpdateRequest {
     private Integer lateThresholdMinutes;
     private String checkinWindowStart;    // "HH:mm" format
     private String checkinWindowEnd;      // "HH:mm" format
+    private LocalDate staffAttendanceTrackingStartDate;
     private String timezone;              // IANA zone id, e.g. "Asia/Kolkata"
 
     public String getName() { return name; }
@@ -108,6 +110,11 @@ public class SchoolSettingsUpdateRequest {
 
     public String getCheckinWindowEnd() { return checkinWindowEnd; }
     public void setCheckinWindowEnd(String checkinWindowEnd) { this.checkinWindowEnd = checkinWindowEnd; }
+
+    public LocalDate getStaffAttendanceTrackingStartDate() { return staffAttendanceTrackingStartDate; }
+    public void setStaffAttendanceTrackingStartDate(LocalDate staffAttendanceTrackingStartDate) {
+        this.staffAttendanceTrackingStartDate = staffAttendanceTrackingStartDate;
+    }
 
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }

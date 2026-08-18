@@ -22,7 +22,7 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
 
     List<Attendance> findByDateAndClassNameAndSchoolId(LocalDate date, String className, Long schoolId);
 
-    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")
+    @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND (a.status IS NULL OR a.status = 'ABSENT') AND EXTRACT(YEAR FROM a.date) = :year AND EXTRACT(MONTH FROM a.date) = :month")
     long countAbsences(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("year") int year, @Param("month") int month);
 
     @Query("SELECT COUNT(a) FROM Attendance a WHERE a.studentId = :studentId AND a.schoolId = :schoolId AND a.chargePaid = false " +

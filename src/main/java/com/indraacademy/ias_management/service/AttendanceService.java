@@ -26,6 +26,7 @@ import java.time.LocalDate;
 import java.time.Month;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -41,6 +43,8 @@ import java.util.stream.Collectors;
 public class AttendanceService {
 
     private static final Logger log = LoggerFactory.getLogger(AttendanceService.class);
+    private static final Set<String> VALID_STATUSES =
+            Set.of("ABSENT", "PRESENT", "HALF_DAY", "LATE", "EXCUSED");
 
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private StudentRepository studentRepository;
@@ -52,6 +56,11 @@ public class AttendanceService {
 
     @Transactional
     public void saveAttendance(List<Attendance> attendanceList, HttpServletRequest request) {
+        saveAttendance(attendanceList, null, request);
+    }
+
+    @Transactional
+    public void saveAttendance(List<Attendance> attendanceList, Long sectionId, HttpServletRequest request) {
 
         if (attendanceList == null || attendanceList.isEmpty()) {
             log.warn("Attempted to save empty or null attendance list.");
@@ -61,10 +70,40 @@ public class AttendanceService {
         LocalDate absentDate = attendanceList.getFirst().getDate();
         String className = attendanceList.getFirst().getClassName();
 
+        if (absentDate == null || className == null || className.isBlank()
+                || attendanceList.stream().anyMatch(a -> !Objects.equals(absentDate, a.getDate())
+                || !Objects.equals(className, a.getClassName()))) {
+            throw new IllegalArgumentException("All attendance rows must use the same date and class.");
+        }
+        if (attendanceList.stream().noneMatch(a -> "X".equals(a.getStudentId()))) {
+            throw new IllegalArgumentException("Attendance submission marker is missing.");
+        }
+
         log.info("Saving attendance for date: {} and class: {}", absentDate, className);
 
         try {
             Long schoolId = securityUtil.getSchoolId();
+
+            School school = schoolRepository.findById(schoolId)
+                    .orElseThrow(() -> new NoSuchElementException("School not found"));
+            if (!isConfiguredWorkingDay(absentDate, school.getWorkingDays())) {
+                throw new IllegalArgumentException("Attendance cannot be marked on a configured non-working day.");
+            }
+
+            List<Student> classStudents = studentRepository.findByClassNameAndSchoolId(className, schoolId);
+            Map<String, Student> studentsById = classStudents.stream()
+                    .collect(Collectors.toMap(Student::getStudentId, s -> s, (a, b) -> a));
+            for (Attendance a : attendanceList) {
+                if ("X".equals(a.getStudentId())) continue;
+                Student student = studentsById.get(a.getStudentId());
+                if (student == null) {
+                    throw new IllegalArgumentException("Student " + a.getStudentId() + " does not belong to class " + className + ".");
+                }
+                if (sectionId != null && !Objects.equals(sectionId, student.getSectionId())) {
+                    throw new IllegalArgumentException("Student " + a.getStudentId() + " does not belong to the selected section.");
+                }
+                a.setSectionId(student.getSectionId());
+            }
 
             // Set schoolId and markedBy on each attendance record before saving
             String markedBy = securityUtil.getUsername();
@@ -73,9 +112,11 @@ public class AttendanceService {
                 if (a.getMarkedBy() == null) {
                     a.setMarkedBy(markedBy);
                 }
-                if (a.getStatus() == null) {
-                    a.setStatus("ABSENT");
+                String status = a.getStatus() == null ? "ABSENT" : a.getStatus().trim().toUpperCase(Locale.ROOT);
+                if (!VALID_STATUSES.contains(status)) {
+                    throw new IllegalArgumentException("Unsupported attendance status: " + a.getStatus());
                 }
+                a.setStatus(status);
             }
 
             // Dual-write: resolve className → classId
@@ -91,8 +132,24 @@ public class AttendanceService {
 
             String oldValue = objectMapper.writeValueAsString(oldRecords);
 
-            attendanceRepository.deleteByDateAndClassNameAndSchoolId(absentDate, className, schoolId);
-            attendanceRepository.saveAll(attendanceList);
+            if (sectionId != null) {
+                Set<String> sectionStudentIds = classStudents.stream()
+                        .filter(s -> Objects.equals(sectionId, s.getSectionId()))
+                        .map(Student::getStudentId)
+                        .collect(Collectors.toSet());
+                List<Attendance> toDelete = oldRecords.stream()
+                        .filter(a -> sectionStudentIds.contains(a.getStudentId())
+                                || ("X".equals(a.getStudentId()) && Objects.equals(sectionId, a.getSectionId())))
+                        .toList();
+                attendanceRepository.deleteAll(toDelete);
+                attendanceList.forEach(a -> {
+                    if ("X".equals(a.getStudentId())) a.setSectionId(sectionId);
+                });
+                attendanceRepository.saveAll(attendanceList);
+            } else {
+                attendanceRepository.deleteByDateAndClassNameAndSchoolId(absentDate, className, schoolId);
+                attendanceRepository.saveAll(attendanceList);
+            }
 
             auditService.log(
                     securityUtil.getUsername(),
@@ -117,13 +174,29 @@ public class AttendanceService {
 
     @Transactional(readOnly = true)
     public List<Attendance> getAttendanceByDateAndClass(LocalDate absentDate, String className) {
+        return getAttendanceByDateAndClass(absentDate, className, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Attendance> getAttendanceByDateAndClass(LocalDate absentDate, String className, Long sectionId) {
         if (absentDate == null || className == null || className.trim().isEmpty()) {
             log.warn("Attempted to fetch attendance with null date or empty class name.");
             return Collections.emptyList();
         }
         log.info("Fetching attendance for date: {} and class: {}", absentDate, className);
         try {
-            List<Attendance> attendanceList = attendanceRepository.findByDateAndClassNameAndSchoolId(absentDate, className, securityUtil.getSchoolId());
+            Long schoolId = securityUtil.getSchoolId();
+            List<Attendance> attendanceList = attendanceRepository.findByDateAndClassNameAndSchoolId(absentDate, className, schoolId);
+            if (sectionId != null) {
+                Set<String> sectionStudentIds = studentRepository
+                        .findByClassNameAndSectionIdAndSchoolId(className, sectionId, schoolId).stream()
+                        .map(Student::getStudentId).collect(Collectors.toSet());
+                attendanceList = attendanceList.stream()
+                        .filter(a -> sectionStudentIds.contains(a.getStudentId())
+                                || ("X".equals(a.getStudentId())
+                                && (a.getSectionId() == null || Objects.equals(sectionId, a.getSectionId()))))
+                        .collect(Collectors.toList());
+            }
             log.info("Found {} attendance records for date: {} and class: {}", attendanceList.size(), absentDate, className);
             return attendanceList;
         } catch (DataAccessException e) {
@@ -341,6 +414,14 @@ public class AttendanceService {
     public void deleteAttendanceByDateAndClass(LocalDate date,
                                                String className,
                                                HttpServletRequest request) {
+        deleteAttendanceByDateAndClass(date, className, null, request);
+    }
+
+    @Transactional
+    public void deleteAttendanceByDateAndClass(LocalDate date,
+                                               String className,
+                                               Long sectionId,
+                                               HttpServletRequest request) {
 
         if (date == null || className == null || className.trim().isEmpty()) {
             log.warn("Invalid input for deleteAttendanceByDateAndClass.");
@@ -352,9 +433,24 @@ public class AttendanceService {
             List<Attendance> oldRecords =
                     attendanceRepository.findByDateAndClassNameAndSchoolId(date, className, schoolId);
 
-            String oldValue = objectMapper.writeValueAsString(oldRecords);
+            List<Attendance> recordsToDelete = oldRecords;
+            if (sectionId != null) {
+                Set<String> sectionStudentIds = studentRepository
+                        .findByClassNameAndSectionIdAndSchoolId(className, sectionId, schoolId).stream()
+                        .map(Student::getStudentId).collect(Collectors.toSet());
+                recordsToDelete = oldRecords.stream()
+                        .filter(a -> sectionStudentIds.contains(a.getStudentId())
+                                || ("X".equals(a.getStudentId()) && Objects.equals(sectionId, a.getSectionId())))
+                        .toList();
+            }
 
-            attendanceRepository.deleteByDateAndClassNameAndSchoolId(date, className, schoolId);
+            String oldValue = objectMapper.writeValueAsString(recordsToDelete);
+
+            if (sectionId == null) {
+                attendanceRepository.deleteByDateAndClassNameAndSchoolId(date, className, schoolId);
+            } else {
+                attendanceRepository.deleteAll(recordsToDelete);
+            }
 
             auditService.log(
                     securityUtil.getUsername(),
@@ -412,14 +508,14 @@ public class AttendanceService {
 
             // Use the student's joining date as the lower bound so a mid-month joiner
             // is not penalised for working days that existed before they enrolled.
-            LocalDate joiningDate    = student.getJoiningDate();
-            LocalDate effectiveStart = (joiningDate != null && joiningDate.isAfter(start))
-                    ? joiningDate : start;
+            LocalDate effectiveStart = effectiveStart(student, start);
+            LocalDate effectiveEnd = effectiveEnd(student, end);
 
             // NOTE: DO NOT filter 'X' from countDistinctWorkingDays — see getClassSummary.
-            long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), effectiveStart, end);
-            long absences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
-            long present     = Math.max(0, workingDays - absences);
+            long workingDays = countClassMarkedDays(student.getClassName(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd);
+            double absences = absenceEquivalent(attendanceRepository
+                    .findByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), effectiveStart, effectiveEnd));
+            double present = Math.max(0, workingDays - absences);
 
             AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
             dto.setStudentId(studentId);
@@ -443,16 +539,19 @@ public class AttendanceService {
             LocalDate start = LocalDate.of(startYear, startMonth, 1);
             LocalDate end   = start.plusYears(1).minusDays(1);
 
-            long totalWorkingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
-            long totalAbsences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
-            long totalPresent     = Math.max(0, totalWorkingDays - totalAbsences);
+            LocalDate effectiveStart = effectiveStart(student, start);
+            LocalDate effectiveEnd = effectiveEnd(student, end);
+            long totalWorkingDays = countClassMarkedDays(student.getClassName(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd);
+            double totalAbsences = absenceEquivalent(attendanceRepository
+                    .findByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), effectiveStart, effectiveEnd));
+            double totalPresent = Math.max(0, totalWorkingDays - totalAbsences);
 
             // Monthly breakdown: iterate all 12 academic months in order for this school's calendar
             List<AttendanceSummaryDTO.MonthlyBreakdown> breakdown = new ArrayList<>();
             for (int am = 1; am <= 12; am++) {
                 int calMonth = ((startMonth - 1 + am - 1) % 12) + 1;
                 int calYear  = (calMonth >= startMonth) ? startYear : endYear;
-                breakdown.add(buildMonthBreakdown(studentId, className, calYear, calMonth));
+                breakdown.add(buildMonthBreakdown(student, calYear, calMonth));
             }
 
             AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
@@ -506,20 +605,25 @@ public class AttendanceService {
         // 'X' rows (studentId = "X") are excluded here — they are sentinel records used
         // to mark all-present days and must never appear in a student's absence count.
         List<Attendance> allAbsences = attendanceRepository.findByClassNameAndSchoolIdAndDateBetween(className, securityUtil.getSchoolId(), start, end);
-        Map<String, Long> absencesByStudent = allAbsences.stream()
+        Map<String, Double> absencesByStudent = allAbsences.stream()
                 .filter(a -> !"X".equals(a.getStudentId()))
-                .collect(Collectors.groupingBy(Attendance::getStudentId, Collectors.counting()));
+                .collect(Collectors.groupingBy(Attendance::getStudentId,
+                        Collectors.summingDouble(this::absenceWeight)));
 
         // NOTE: 'X' sentinel rows (studentId = "X") are inserted by the frontend whenever
         // attendance is submitted, including all-present days. These rows are essential —
         // they make all-present days visible to this COUNT(DISTINCT date) query.
         // DO NOT filter out 'X' from countDistinctWorkingDays.
-        final long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
+        Set<LocalDate> markedClassDays = allAbsences.stream().map(Attendance::getDate).collect(Collectors.toSet());
 
         List<ClassAttendanceSummaryDTO> result = students.stream()
                 .map(s -> {
-                    long absences = absencesByStudent.getOrDefault(s.getStudentId(), 0L);
-                    long present  = Math.max(0, workingDays - absences);
+                    LocalDate studentStart = effectiveStart(s, start);
+                    LocalDate studentEnd = effectiveEnd(s, end);
+                    long workingDays = markedClassDays.stream()
+                            .filter(d -> !d.isBefore(studentStart) && !d.isAfter(studentEnd)).count();
+                    double absences = absencesByStudent.getOrDefault(s.getStudentId(), 0.0);
+                    double present  = Math.max(0, workingDays - absences);
                     return new ClassAttendanceSummaryDTO(
                             s.getStudentId(),
                             s.getName(),
@@ -618,7 +722,7 @@ public class AttendanceService {
         }
 
         Map<String, Set<LocalDate>> absencesByStudent = rows.stream()
-                .filter(a -> !"X".equals(a.getStudentId()))
+                .filter(a -> !"X".equals(a.getStudentId()) && isFullAbsence(a))
                 .collect(Collectors.groupingBy(Attendance::getStudentId,
                         Collectors.mapping(Attendance::getDate, Collectors.toSet())));
 
@@ -655,8 +759,8 @@ public class AttendanceService {
                     streak.size(),
                     streak.stream().map(LocalDate::toString).collect(Collectors.toList()),
                     cumulative != null ? cumulative.getTotalWorkingDays() : 0L,
-                    cumulative != null ? cumulative.getDaysPresent() : 0L,
-                    cumulative != null ? cumulative.getDaysAbsent() : 0L,
+                    cumulative != null ? cumulative.getDaysPresent() : 0.0,
+                    cumulative != null ? cumulative.getDaysAbsent() : 0.0,
                     cumulative != null ? cumulative.getAttendancePercentage() : 0.0
             ));
         }
@@ -669,14 +773,15 @@ public class AttendanceService {
         return result;
     }
 
-    private AttendanceSummaryDTO.MonthlyBreakdown buildMonthBreakdown(String studentId, String className,
-                                                                       int year, int monthNum) {
+    private AttendanceSummaryDTO.MonthlyBreakdown buildMonthBreakdown(Student student, int year, int monthNum) {
         LocalDate start = LocalDate.of(year, monthNum, 1);
         LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
-
-        long workingDays = attendanceRepository.countDistinctWorkingDays(className, securityUtil.getSchoolId(), start, end);
-        long absences    = attendanceRepository.countByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), start, end);
-        long present     = Math.max(0, workingDays - absences);
+        LocalDate effectiveStart = effectiveStart(student, start);
+        LocalDate effectiveEnd = effectiveEnd(student, end);
+        long workingDays = countClassMarkedDays(student.getClassName(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd);
+        double absences = absenceEquivalent(attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(
+                student.getStudentId(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd));
+        double present = Math.max(0, workingDays - absences);
         String monthName = Month.of(monthNum).getDisplayName(TextStyle.FULL, Locale.ENGLISH);
 
         return new AttendanceSummaryDTO.MonthlyBreakdown(monthName, year, workingDays, present, absences, pct(present, workingDays));
@@ -690,14 +795,18 @@ public class AttendanceService {
         LocalDate start = LocalDate.of(year, month, 1);
         LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
 
-        // School days = distinct dates on which attendance was submitted for this class.
+        LocalDate effectiveStart = effectiveStart(student, start);
+        LocalDate effectiveEnd = effectiveEnd(student, end);
+
+        // School days = distinct dates on which this student's class submitted attendance.
+        // Another class being marked must never make this student appear present.
         // 'X' rows (studentId = "X") are inserted by the frontend on all-present days,
         // so they intentionally make those days visible here as "school was open".
         // Do NOT filter out 'X' from this query — without it, all-present days would
         // be indistinguishable from holidays.
         Long schoolId = securityUtil.getSchoolId();
         List<String> schoolDays = attendanceRepository
-                .findByClassNameAndSchoolIdAndDateBetween(student.getClassName(), schoolId, start, end)
+                .findByClassNameAndSchoolIdAndDateBetween(student.getClassName(), schoolId, effectiveStart, effectiveEnd)
                 .stream()
                 .map(a -> a.getDate().toString())
                 .distinct()
@@ -705,21 +814,73 @@ public class AttendanceService {
                 .collect(Collectors.toList());
 
         // Absent days = dates this student was marked absent
-        List<String> absentDays = attendanceRepository
-                .findByStudentIdAndSchoolIdAndDateBetween(studentId, schoolId, start, end)
+        List<Attendance> studentRows = attendanceRepository
+                .findByStudentIdAndSchoolIdAndDateBetween(studentId, schoolId, effectiveStart, effectiveEnd);
+        List<String> absentDays = studentRows
                 .stream()
+                .filter(this::isFullAbsence)
                 .map(a -> a.getDate().toString())
                 .sorted()
                 .collect(Collectors.toList());
+        Map<String, String> statuses = studentRows.stream()
+                .filter(a -> a.getDate() != null)
+                .collect(Collectors.toMap(a -> a.getDate().toString(),
+                        a -> a.getStatus() == null ? "ABSENT" : a.getStatus().toUpperCase(Locale.ROOT),
+                        (first, ignored) -> first));
 
         log.info("Daily attendance for student {} in {}/{}: {} school days, {} absent",
                 studentId, month, year, schoolDays.size(), absentDays.size());
-        return new DailyAttendanceDTO(schoolDays, absentDays);
+        School school = schoolRepository.findById(schoolId).orElse(null);
+        List<String> nonWorkingDays = new ArrayList<>();
+        if (school != null && school.getWorkingDays() != null && !school.getWorkingDays().isBlank()) {
+            for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+                if (!isConfiguredWorkingDay(d, school.getWorkingDays())) nonWorkingDays.add(d.toString());
+            }
+        }
+        return new DailyAttendanceDTO(schoolDays, absentDays, nonWorkingDays, statuses);
     }
 
     /** Round to 1 decimal place; returns 0.0 if workingDays is 0. */
-    private double pct(long present, long workingDays) {
+    private double pct(double present, long workingDays) {
         if (workingDays == 0) return 0.0;
         return Math.round((double) present / workingDays * 1000.0) / 10.0;
+    }
+
+    private double absenceEquivalent(List<Attendance> rows) {
+        return rows.stream().mapToDouble(this::absenceWeight).sum();
+    }
+
+    private double absenceWeight(Attendance attendance) {
+        String status = attendance.getStatus();
+        if (status == null || "ABSENT".equalsIgnoreCase(status)) return 1.0;
+        if ("HALF_DAY".equalsIgnoreCase(status)) return 0.5;
+        return 0.0; // PRESENT, LATE and EXCUSED do not reduce attendance percentage
+    }
+
+    private boolean isFullAbsence(Attendance attendance) {
+        return attendance.getStatus() == null || "ABSENT".equalsIgnoreCase(attendance.getStatus());
+    }
+
+    private LocalDate effectiveStart(Student student, LocalDate periodStart) {
+        return student.getJoiningDate() != null && student.getJoiningDate().isAfter(periodStart)
+                ? student.getJoiningDate() : periodStart;
+    }
+
+    private LocalDate effectiveEnd(Student student, LocalDate periodEnd) {
+        return student.getLeavingDate() != null && student.getLeavingDate().isBefore(periodEnd)
+                ? student.getLeavingDate() : periodEnd;
+    }
+
+    private long countClassMarkedDays(String className, Long schoolId, LocalDate start, LocalDate end) {
+        if (end.isBefore(start)) return 0;
+        return attendanceRepository.findByClassNameAndSchoolIdAndDateBetween(className, schoolId, start, end).stream()
+                .map(Attendance::getDate).distinct().count();
+    }
+
+    private boolean isConfiguredWorkingDay(LocalDate date, String workingDays) {
+        if (workingDays == null || workingDays.isBlank()) return true;
+        return Arrays.stream(workingDays.split(","))
+                .map(String::trim)
+                .anyMatch(day -> date.getDayOfWeek().name().equalsIgnoreCase(day));
     }
 }

@@ -53,6 +53,10 @@ public class AttendanceEmailScheduler {
                 log.warn("Skipping attendance record with non-standard student ID 'X'. Record details: {}", attendance.toString());
                 continue;
             }
+            if (attendance.getStatus() != null && !"ABSENT".equalsIgnoreCase(attendance.getStatus())) {
+                log.debug("Skipping absence email for student {} with status {}", studentId, attendance.getStatus());
+                continue;
+            }
 
             Optional<Student> studentOptional = Optional.empty();
             try {

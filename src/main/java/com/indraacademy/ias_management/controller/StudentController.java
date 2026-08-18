@@ -138,7 +138,7 @@ public class StudentController {
                 ? studentService.getUpcomingStudentsByClassAndSection(className, sectionId)
                 : studentService.getUpcomingStudentsByClass(className);
         return students.stream()
-                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName(), s.getSectionId()))
                 .collect(Collectors.toList());
     }
 
@@ -162,7 +162,7 @@ public class StudentController {
                 ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
                 : studentService.getActiveStudentsByClass(className);
         return ResponseEntity.ok(students.stream()
-                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName(), s.getSectionId()))
                 .collect(Collectors.toList()));
     }
 
@@ -176,7 +176,7 @@ public class StudentController {
                 ? studentService.getInactiveStudentsByClassAndSection(className, sectionId)
                 : studentService.getInactiveStudentsByClass(className);
         return students.stream()
-                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName(), s.getSectionId()))
                 .collect(Collectors.toList());
     }
 
@@ -298,7 +298,7 @@ public class StudentController {
                 ? studentService.getGraduatedStudentsByClassAndSection(className, sectionId)
                 : studentService.getGraduatedStudentsByClass(className);
         return ResponseEntity.ok(students.stream()
-                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName(), s.getSectionId()))
                 .collect(Collectors.toList()));
     }
 
@@ -312,7 +312,7 @@ public class StudentController {
                 ? studentService.getLeftStudentsByClassAndSection(className, sectionId)
                 : studentService.getLeftStudentsByClass(className);
         return students.stream()
-                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
+                .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName(), s.getSectionId()))
                 .collect(Collectors.toList());
     }
 

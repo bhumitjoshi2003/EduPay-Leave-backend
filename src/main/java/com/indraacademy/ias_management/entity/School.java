@@ -147,6 +147,15 @@ public class School {
     private LocalTime checkinWindowEnd;
 
     /**
+     * First date on which missing staff check-ins may be resolved as absences. This lets a school
+     * adopt Edunexify midway through a month/session without manufacturing absences for dates on
+     * which the platform was not yet its attendance system of record. Null preserves legacy
+     * behaviour for schools that have already been using staff attendance historically.
+     */
+    @Column(name = "staff_attendance_tracking_start_date")
+    private LocalDate staffAttendanceTrackingStartDate;
+
+    /**
      * IANA zone id (e.g. "Asia/Kolkata"), never a fixed UTC offset — so it stays correct across
      * DST transitions. Every "what day is today / is this check-in late / has this working day
      * elapsed" decision in TeacherAttendanceService is computed in this zone, not the
@@ -264,6 +273,11 @@ public class School {
 
     public LocalTime getCheckinWindowEnd() { return checkinWindowEnd; }
     public void setCheckinWindowEnd(LocalTime checkinWindowEnd) { this.checkinWindowEnd = checkinWindowEnd; }
+
+    public LocalDate getStaffAttendanceTrackingStartDate() { return staffAttendanceTrackingStartDate; }
+    public void setStaffAttendanceTrackingStartDate(LocalDate staffAttendanceTrackingStartDate) {
+        this.staffAttendanceTrackingStartDate = staffAttendanceTrackingStartDate;
+    }
 
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }

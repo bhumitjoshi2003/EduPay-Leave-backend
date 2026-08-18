@@ -8,8 +8,8 @@ public class AttendanceSummaryDTO {
     private String studentName;
     private String className;
     private long totalWorkingDays;
-    private long daysPresent;
-    private long daysAbsent;
+    private double daysPresent;
+    private double daysAbsent;
     private double attendancePercentage;
     /** Populated only when type=year; null for type=month. */
     private List<MonthlyBreakdown> monthlyBreakdown;
@@ -18,11 +18,11 @@ public class AttendanceSummaryDTO {
         private String month;
         private int year;
         private long workingDays;
-        private long present;
-        private long absent;
+        private double present;
+        private double absent;
         private double percentage;
 
-        public MonthlyBreakdown(String month, int year, long workingDays, long present, long absent, double percentage) {
+        public MonthlyBreakdown(String month, int year, long workingDays, double present, double absent, double percentage) {
             this.month = month;
             this.year = year;
             this.workingDays = workingDays;
@@ -34,8 +34,8 @@ public class AttendanceSummaryDTO {
         public String getMonth() { return month; }
         public int getYear() { return year; }
         public long getWorkingDays() { return workingDays; }
-        public long getPresent() { return present; }
-        public long getAbsent() { return absent; }
+        public double getPresent() { return present; }
+        public double getAbsent() { return absent; }
         public double getPercentage() { return percentage; }
     }
 
@@ -51,11 +51,11 @@ public class AttendanceSummaryDTO {
     public long getTotalWorkingDays() { return totalWorkingDays; }
     public void setTotalWorkingDays(long totalWorkingDays) { this.totalWorkingDays = totalWorkingDays; }
 
-    public long getDaysPresent() { return daysPresent; }
-    public void setDaysPresent(long daysPresent) { this.daysPresent = daysPresent; }
+    public double getDaysPresent() { return daysPresent; }
+    public void setDaysPresent(double daysPresent) { this.daysPresent = daysPresent; }
 
-    public long getDaysAbsent() { return daysAbsent; }
-    public void setDaysAbsent(long daysAbsent) { this.daysAbsent = daysAbsent; }
+    public double getDaysAbsent() { return daysAbsent; }
+    public void setDaysAbsent(double daysAbsent) { this.daysAbsent = daysAbsent; }
 
     public double getAttendancePercentage() { return attendancePercentage; }
     public void setAttendancePercentage(double attendancePercentage) { this.attendancePercentage = attendancePercentage; }

@@ -96,6 +96,12 @@ public class TeacherAttendanceService {
         LocalDate today = LocalDate.now(clock.withZone(zone));
         LocalTime now = LocalTime.now(clock.withZone(zone));
 
+        if (school.getStaffAttendanceTrackingStartDate() != null
+                && today.isBefore(school.getStaffAttendanceTrackingStartDate())) {
+            throw new IllegalStateException("Staff attendance tracking starts on "
+                    + school.getStaffAttendanceTrackingStartDate() + ".");
+        }
+
         // Validate school location is configured
         if (school.getSchoolLatitude() == null || school.getSchoolLongitude() == null) {
             throw new IllegalStateException("School location is not configured. Please contact your admin.");
@@ -322,7 +328,8 @@ public class TeacherAttendanceService {
                 .map(ta -> TeacherAttendanceResponse.from(ta, nameMap.getOrDefault(ta.getTeacherId(), ta.getTeacherId())))
                 .collect(Collectors.toCollection(ArrayList::new));
 
-        if (school != null) {
+        if (school != null && (school.getStaffAttendanceTrackingStartDate() == null
+                || !date.isBefore(school.getStaffAttendanceTrackingStartDate()))) {
             List<SchoolHoliday> holidaysOnDate = schoolHolidayRepository.findOverlapping(schoolId, date, date);
             if (isWorkingDay(date, school.getWorkingDays(), holidaysOnDate)) {
                 boolean pastDay = date.isBefore(today);
@@ -404,20 +411,23 @@ public class TeacherAttendanceService {
         YearMonth ym = YearMonth.of(year, month);
         LocalDate monthStart = ym.atDay(1);
         LocalDate monthEnd = ym.atEndOfMonth();
+        LocalDate trackingStart = school.getStaffAttendanceTrackingStartDate();
+        LocalDate calculationStart = trackingStart != null && trackingStart.isAfter(monthStart)
+                ? trackingStart : monthStart;
 
         // Settled = fully elapsed days only. Today is handled separately below: a real row
         // included normally, an ABSENT never synthesized (the day isn't over) but an ON_LEAVE
         // still synthesized when covered by approved leave (see getAttendanceByDate's Javadoc
         // for why that one status is different).
         LocalDate settledEnd = monthEnd.isBefore(today) ? monthEnd : today.minusDays(1);
-        boolean hasSettledDays = !settledEnd.isBefore(monthStart);
+        boolean hasSettledDays = !settledEnd.isBefore(calculationStart);
 
         // Fetched for the WHOLE month (not just the settled portion) in one shot each, since
         // today's ON_LEAVE check needs them too — both are cheap, indexed, single queries either way.
         List<SchoolHoliday> holidays = schoolHolidayRepository.findOverlapping(schoolId, monthStart, monthEnd);
         List<TeacherLeave> approvedLeaves = teacherLeaveRepository.findApprovedOverlapping(schoolId, monthStart, monthEnd);
         List<LocalDate> settledWorkingDays = hasSettledDays
-                ? computeWorkingDays(monthStart, settledEnd, school.getWorkingDays(), holidays)
+                ? computeWorkingDays(calculationStart, settledEnd, school.getWorkingDays(), holidays)
                 : List.of();
 
         List<Teacher> teachers;
@@ -425,6 +435,7 @@ public class TeacherAttendanceService {
             Optional<Teacher> t = teacherRepository.findByTeacherIdAndSchoolId(teacherIdFilter, schoolId);
             if (t.isEmpty()) {
                 TeacherAttendanceSummaryDTO empty = new TeacherAttendanceSummaryDTO();
+                empty.setTrackingStartDate(trackingStart);
                 empty.setRecords(List.of());
                 return empty;
             }
@@ -444,7 +455,8 @@ public class TeacherAttendanceService {
 
         List<TeacherAttendanceResponse> merged = new ArrayList<>();
         long syntheticSeq = -1;
-        boolean todayInRange = !today.isBefore(monthStart) && !today.isAfter(monthEnd);
+        boolean todayInRange = !today.isBefore(monthStart) && !today.isAfter(monthEnd)
+                && (trackingStart == null || !today.isBefore(trackingStart));
         int totalWorkingDaysForFilter = 0;
 
         for (Teacher teacher : teachers) {
@@ -496,6 +508,7 @@ public class TeacherAttendanceService {
         dto.setHalfDayDays(halfDay);
         dto.setOnLeaveDays(onLeave);
         dto.setOnTimePercentage(present > 0 ? Math.round(((present - late) * 100.0 / present) * 10.0) / 10.0 : 0);
+        dto.setTrackingStartDate(trackingStart);
         dto.setRecords(merged);
         return dto;
     }

@@ -6,6 +6,8 @@ import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.Refund;
 import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -158,6 +160,38 @@ class DashboardServiceTest {
         assertThat(stats.getTotalTeachers()).isEqualTo(2L);
         assertThat(stats.getOverdueStudents()).isEqualTo(0L);
         assertThat(stats.getPendingLeaves()).isEqualTo(0L);
+    }
+
+    @Test
+    void todayAttendance_allPresentMarker_isOneHundredPercent_andXIsNotAStudent() {
+        Attendance marker = attendance("X", "10", null, "PRESENT");
+        when(attendanceRepository.findByDateAndSchoolId(any(), any())).thenReturn(List.of(marker));
+        when(studentRepository.findByClassNameAndStatusAndSchoolId("10", StudentStatus.ACTIVE, SCHOOL_ID))
+                .thenReturn(List.of(new Student(), new Student(), new Student()));
+
+        assertThat(service.getStats().getTodayAttendanceRate()).isEqualTo(100.0);
+    }
+
+    @Test
+    void todayAttendance_sectionSubmission_doesNotTreatUnmarkedSectionsAsPresent() {
+        Attendance marker = attendance("X", "10", 11L, "PRESENT");
+        Attendance absent = attendance("S1", "10", 11L, "ABSENT");
+        when(attendanceRepository.findByDateAndSchoolId(any(), any())).thenReturn(List.of(marker, absent));
+        when(studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(
+                "10", 11L, StudentStatus.ACTIVE, SCHOOL_ID))
+                .thenReturn(List.of(new Student(), new Student()));
+
+        assertThat(service.getStats().getTodayAttendanceRate()).isEqualTo(50.0);
+    }
+
+    private Attendance attendance(String studentId, String className, Long sectionId, String status) {
+        Attendance attendance = new Attendance();
+        attendance.setStudentId(studentId);
+        attendance.setClassName(className);
+        attendance.setSectionId(sectionId);
+        attendance.setStatus(status);
+        attendance.setDate(LocalDate.now());
+        return attendance;
     }
 
     @Test

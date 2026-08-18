@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.dto;
 
+import java.time.LocalDate;
 import java.util.List;
 
 public class TeacherAttendanceSummaryDTO {
@@ -11,6 +12,7 @@ public class TeacherAttendanceSummaryDTO {
     private int halfDayDays;
     private int onLeaveDays;
     private double onTimePercentage;
+    private LocalDate trackingStartDate;
     private List<TeacherAttendanceResponse> records;
 
     public int getTotalWorkingDays() { return totalWorkingDays; }
@@ -33,6 +35,9 @@ public class TeacherAttendanceSummaryDTO {
 
     public double getOnTimePercentage() { return onTimePercentage; }
     public void setOnTimePercentage(double onTimePercentage) { this.onTimePercentage = onTimePercentage; }
+
+    public LocalDate getTrackingStartDate() { return trackingStartDate; }
+    public void setTrackingStartDate(LocalDate trackingStartDate) { this.trackingStartDate = trackingStartDate; }
 
     public List<TeacherAttendanceResponse> getRecords() { return records; }
     public void setRecords(List<TeacherAttendanceResponse> records) { this.records = records; }

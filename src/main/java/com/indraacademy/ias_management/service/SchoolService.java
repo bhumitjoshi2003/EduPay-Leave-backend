@@ -319,6 +319,9 @@ public class SchoolService {
         if (req.getCheckinWindowEnd() != null && !req.getCheckinWindowEnd().isBlank()) {
             school.setCheckinWindowEnd(LocalTime.parse(req.getCheckinWindowEnd()));
         }
+        if (req.getStaffAttendanceTrackingStartDate() != null) {
+            school.setStaffAttendanceTrackingStartDate(req.getStaffAttendanceTrackingStartDate());
+        }
         if (req.getTimezone() != null && !req.getTimezone().isBlank()) {
             try {
                 java.time.ZoneId.of(req.getTimezone());
