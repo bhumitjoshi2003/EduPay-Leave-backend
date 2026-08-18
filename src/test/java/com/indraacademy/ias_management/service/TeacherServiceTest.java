@@ -63,6 +63,7 @@ class TeacherServiceTest {
         t.setTeacherId(teacherId);
         t.setName("Test Teacher");
         t.setDob(dob);
+        t.setJoiningDate(LocalDate.of(2026, 4, 1));
         return t;
     }
 
@@ -82,6 +83,18 @@ class TeacherServiceTest {
         assertThatThrownBy(() -> service.addTeacher(newTeacher("T1", null), request))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Date of birth is required");
+
+        verify(teacherRepository, never()).save(any());
+    }
+
+    @Test
+    void addTeacherWithoutJoiningDateIsRejected() {
+        Teacher teacher = newTeacher("T1", LocalDate.of(1985, 3, 20));
+        teacher.setJoiningDate(null);
+
+        assertThatThrownBy(() -> service.addTeacher(teacher, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Joining date is required");
 
         verify(teacherRepository, never()).save(any());
     }

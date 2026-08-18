@@ -116,6 +116,9 @@ public class TeacherController {
     @PutMapping("/{teacherId}")
     public ResponseEntity<Teacher> updateTeacher(@PathVariable String teacherId, @Valid @RequestBody Teacher updatedTeacher, HttpServletRequest request) {
         log.info("Request to update teacher ID: {}", teacherId);
+        // The URL identifies the resource being updated. Never trust a conflicting or
+        // omitted ID in the request body to select a different teacher.
+        updatedTeacher.setTeacherId(teacherId);
         Optional<Teacher> existingTeacherOptional = teacherService.getTeacher(teacherId);
 
         if (existingTeacherOptional.isPresent()) {
@@ -145,7 +148,7 @@ public class TeacherController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping("/{teacherId}/photo")
     public ResponseEntity<?> uploadTeacherPhoto(@PathVariable String teacherId,
                                                 @RequestParam("file") MultipartFile file) {

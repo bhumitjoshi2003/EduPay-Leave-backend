@@ -128,6 +128,10 @@ public class TeacherService {
             log.warn("Attempted to add teacher {} without a date of birth.", teacher.getTeacherId());
             throw new IllegalArgumentException("Date of birth is required because it is used as the initial password.");
         }
+        if (teacher.getJoiningDate() == null) {
+            log.warn("Attempted to add teacher {} without a joining date.", teacher.getTeacherId());
+            throw new IllegalArgumentException("Joining date is required.");
+        }
         log.info("Attempting to add new teacher with ID: {}", teacher.getTeacherId());
 
         try {
