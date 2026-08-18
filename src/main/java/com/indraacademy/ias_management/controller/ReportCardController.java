@@ -15,6 +15,7 @@ import com.indraacademy.ias_management.service.ClassOverviewService;
 import com.indraacademy.ias_management.service.ReportCardPublicationService;
 import com.indraacademy.ias_management.service.ReportCardTemplateService;
 import com.indraacademy.ias_management.service.RemarksService;
+import com.indraacademy.ias_management.service.EntitlementService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +46,7 @@ public class ReportCardController {
     @Autowired private StudentRepository             studentRepository;
     @Autowired private TeacherRepository             teacherRepository;
     @Autowired private SecurityUtil                  securityUtil;
+    @Autowired private EntitlementService            entitlementService;
 
     // ── Template CRUD ─────────────────────────────────────────────────────
 
@@ -317,6 +319,7 @@ public class ReportCardController {
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     public ResponseEntity<Map<String, Object>> emailBlast(
             @Valid @RequestBody PublishRequest req) {
+        entitlementService.requireFeature(securityUtil.getSchoolId(), "BULK_COMMUNICATIONS");
         int initiated = publicationService.startEmailBlast(
             req.getTemplateId(), req.getSession(), req.getClassName());
         return ResponseEntity.accepted().body(Map.of(

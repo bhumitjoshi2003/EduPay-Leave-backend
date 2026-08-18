@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -13,6 +14,7 @@ import java.nio.file.Paths;
 public class WebConfig implements WebMvcConfigurer {
 
     private final FileStorageProperties fileStorageProperties;
+    private final AiCopilotEntitlementInterceptor aiCopilotEntitlementInterceptor;
 
     @Value("${student.photo.directory:./uploads/student-photos}")
     private String studentPhotoDirectory;
@@ -27,8 +29,17 @@ public class WebConfig implements WebMvcConfigurer {
     private String schoolLogoDirectory;
 
     @Autowired
-    public WebConfig(FileStorageProperties fileStorageProperties) {
+    public WebConfig(FileStorageProperties fileStorageProperties,
+                     AiCopilotEntitlementInterceptor aiCopilotEntitlementInterceptor) {
         this.fileStorageProperties = fileStorageProperties;
+        this.aiCopilotEntitlementInterceptor = aiCopilotEntitlementInterceptor;
+    }
+
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(aiCopilotEntitlementInterceptor)
+                .addPathPatterns("/api/**")
+                .excludePathPatterns("/api/public/**", "/api/auth/**", "/api/super-admin/**");
     }
 
     @Override

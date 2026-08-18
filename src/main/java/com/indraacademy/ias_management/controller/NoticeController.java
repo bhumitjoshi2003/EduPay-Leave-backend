@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Notification;
 import com.indraacademy.ias_management.service.EmailService;
+import com.indraacademy.ias_management.service.EntitlementService;
 import com.indraacademy.ias_management.service.NotificationService;
 import com.indraacademy.ias_management.service.SchoolService;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -26,6 +27,7 @@ public class NoticeController {
     @Autowired private NotificationService notificationService;
     @Autowired private SchoolService schoolService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private EntitlementService entitlementService;
 
     /**
      * POST /api/admin/notice
@@ -70,6 +72,9 @@ public class NoticeController {
 
         if (sendEmail && (subject == null || subject.isBlank())) {
             return ResponseEntity.badRequest().body("subject is required when deliveryMode is EMAIL or BOTH.");
+        }
+        if (sendEmail) {
+            entitlementService.requireFeature(securityUtil.getSchoolId(), "BULK_COMMUNICATIONS");
         }
 
         // --- Email dispatch ---

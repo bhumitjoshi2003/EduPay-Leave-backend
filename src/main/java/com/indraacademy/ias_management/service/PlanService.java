@@ -170,6 +170,11 @@ public class PlanService {
         if (!planFeatureRepo.existsByPlanIdAndFeatureKey(planId, featureKey)) {
             throw new IllegalArgumentException("Feature " + featureKey + " is not on plan " + planId);
         }
+        FeatureCatalog target = featureCatalogRepo.findById(featureKey)
+                .orElseThrow(() -> new IllegalArgumentException("Feature not found: " + featureKey));
+        if (target.isAlwaysOn()) {
+            throw new IllegalArgumentException("Cannot remove always-on core feature: " + featureKey);
+        }
 
         // Dependency validation: block removal if other plan features depend on this one
         List<PlanFeature> planFeatures = planFeatureRepo.findByPlanId(planId);

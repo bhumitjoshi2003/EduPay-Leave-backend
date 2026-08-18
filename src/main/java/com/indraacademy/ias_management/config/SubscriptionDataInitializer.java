@@ -14,14 +14,16 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Seeds the feature catalog, default plans (Campus / Academy / Institute), and global
  * subscription config on application startup.
  *
  * Idempotent, but not purely additive any more — running this on an already-seeded database
- * converges it to the CURRENT target catalog below (adds missing rows, retires keys removed
- * from the catalog, corrects isAlwaysOn flags and plan-feature membership, and refreshes the
+ * converges the catalog metadata below (adds missing rows, retires keys removed
+ * from the catalog, corrects isAlwaysOn flags, and refreshes the
  * AI/KB limit numbers on existing plans) rather than only filling gaps. Running it any number
  * of times produces the same end state — every step re-derives from {@link #CORE_FEATURES} /
  * {@link #TIERED_PLAN_FEATURES} rather than assuming "already exists" means "already correct."
@@ -42,6 +44,7 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
     @Autowired private SchoolFeatureOverrideRepository overrideRepo;
     @Autowired private SchoolEntitlementFeatureRepository entitlementFeatureRepo;
     @Autowired private GlobalSubscriptionConfigRepository configRepo;
+    private final Set<Long> plansCreatedThisRun = new HashSet<>();
 
     /**
      * Feature keys that were catalogued as separately-gateable but never held enough
@@ -307,21 +310,23 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
         p.setMonthlyPricePaise(monthlyPaise);
         p.setAnnualPricePaise(annualPaise);
         Plan saved = planRepo.save(p);
+        plansCreatedThisRun.add(saved.getId());
         log.info("Seeded {} plan (id={})", name, saved.getId());
     }
 
     /**
-     * Ensures every plan's PlanFeature grants match {@link #TIERED_PLAN_FEATURES} (by tier) plus
-     * every {@link #CORE_FEATURES} key on all three plans — adding missing grants. Never removes
-     * a grant for a key that's still in the catalog (only {@link #retireFeatureCatalogKeys}
-     * removes grants, for keys actually being deleted) — so an Academy/Institute school that
-     * already had EVENT_CALENDAR/STUDENT_PROMOTION keeps that grant; this just also adds it to
-     * Campus and the six newly-catalogued Core keys to all three.
+     * Applies tier defaults only to plans created during this startup, then ensures every
+     * existing plan contains all always-on core keys. Existing tiered membership is deliberately
+     * preserved so a deployment cannot undo Super Admin feature changes.
      */
     private void reconcilePlanFeatureGrants() {
         for (Plan plan : planRepo.findAll()) {
-            List<String> tieredKeys = TIERED_PLAN_FEATURES.getOrDefault(plan.getTier().toUpperCase(), List.of());
-            addFeatures(plan.getId(), tieredKeys);
+            // Tier defaults are seed data, not an invariant. Applying them on every restart
+            // would undo intentional Super Admin removals during the next deployment.
+            if (plansCreatedThisRun.contains(plan.getId())) {
+                List<String> tieredKeys = TIERED_PLAN_FEATURES.getOrDefault(plan.getTier().toUpperCase(), List.of());
+                addFeatures(plan.getId(), tieredKeys);
+            }
 
             List<String> coreKeys = CORE_FEATURES.stream().map(FeatureCatalog::getFeatureKey).toList();
             addFeatures(plan.getId(), coreKeys);

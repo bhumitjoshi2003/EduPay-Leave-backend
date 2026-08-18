@@ -42,6 +42,7 @@ public class EntitlementRefreshService {
     @Autowired private SchoolFeatureOverrideRepository overrideRepo;
     @Autowired private PlanRepository planRepo;
     @Autowired private PlanFeatureRepository planFeatureRepo;
+    @Autowired private FeatureCatalogRepository featureCatalogRepo;
     @Autowired private GlobalSubscriptionConfigRepository configRepo;
     @Autowired private SchoolRepository schoolRepo;
     @Autowired private AdminRepository adminRepo;
@@ -164,9 +165,20 @@ public class EntitlementRefreshService {
                 .collect(Collectors.toCollection(java.util.HashSet::new));
         effectiveKeys.addAll(enabledKeys);  // super admin can grant extras beyond the plan
 
+        // Enforce catalog dependencies in the resolved set. This matters for school-level
+        // overrides: disabling EXAM_MARKS must also make REPORT_CARD unavailable, and disabling
+        // FEE_MANAGEMENT must make PAYMENT_COLLECTION unavailable. Iterate to a fixed point so
+        // future dependency chains are handled safely as well.
+        boolean removedDependency;
+        do {
+            removedDependency = effectiveKeys.removeIf(key -> featureCatalogRepo.findById(key)
+                    .map(feature -> !effectiveKeys.containsAll(feature.getDependsOn()))
+                    .orElse(true));
+        } while (removedDependency);
+
         // EXPIRED schools lose all features (overrides included)
         if ("EXPIRED".equals(resolvedStatus)) {
-            effectiveKeys = Set.of();
+            effectiveKeys.clear();
         }
 
         // Step 4: Upsert SchoolEffectiveEntitlement
