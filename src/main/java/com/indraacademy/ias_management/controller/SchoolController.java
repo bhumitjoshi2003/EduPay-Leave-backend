@@ -120,7 +120,7 @@ public class SchoolController {
      * Returns the calling school's settings.
      */
     @GetMapping("/api/school/settings")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.SUB_ADMIN + "', 'TEACHER', 'STUDENT')")
     public ResponseEntity<?> getSettings() {
         log.info("GET /api/school/settings");
         try {
@@ -240,7 +240,7 @@ public class SchoolController {
      * Returns full SchoolClass records (id + name + order) for the management UI.
      */
     @GetMapping("/api/school/classes/manage")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUB_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUB_ADMIN + "', 'TEACHER', 'STUDENT')")
     public ResponseEntity<List<SchoolClass>> getManagedClasses() {
         return ResponseEntity.ok(schoolService.getManagedClasses());
     }

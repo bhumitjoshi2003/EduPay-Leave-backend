@@ -40,7 +40,7 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
 
     @Query("SELECT l FROM Leave l WHERE l.schoolId = :schoolId " +
            "AND (:className IS NULL OR l.className = :className) " +
-           "AND (:studentId IS NULL OR LOWER(l.studentId) LIKE LOWER(CONCAT('%', :studentId, '%'))) " +
+           "AND (:studentId IS NULL OR LOWER(l.studentId) LIKE LOWER(CONCAT('%', CAST(:studentId AS string), '%'))) " +
            "AND (:date IS NULL OR l.leaveDate = :date) " +
            "AND (:status IS NULL OR l.status = :status)")
     Page<Leave> findFilteredForManagement(@Param("schoolId") Long schoolId,
