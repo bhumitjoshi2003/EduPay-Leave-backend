@@ -147,4 +147,12 @@ public final class FeeWorkflowDtos {
     public record LegacyAdoptionRequest(String academicSession, List<String> studentIds, String reason) {}
     public record LegacyAdoptionResult(int requestedStudents, int adoptedStudents,
                                        List<String> skippedStudentIds) {}
+
+    public record ReadinessIssue(String severity, String code, String message,
+                                 String className, Integer affectedStudents) {}
+    public record FeeReadinessReport(String academicSession, boolean readyToGenerate,
+                                     int blockerCount, int warningCount, int configuredClasses,
+                                     int missingConfigurationClasses, int unassignedStudents,
+                                     int failedStudents, int legacyStudents,
+                                     List<ReadinessIssue> issues) {}
 }

@@ -115,6 +115,8 @@ public class FeeWorkflowService {
         List<Student> students = className == null || className.isBlank()
                 ? studentRepository.findBySchoolId(schoolId)
                 : studentRepository.findByClassNameAndSchoolId(className, schoolId);
+        students = students.stream().filter(student -> student.getStatus() == null
+                || !student.getStatus().isExitStatus()).toList();
         Map<String, StudentFeeAssignment> assignments = assignmentRepository.findBySchoolIdAndAcademicSession(schoolId, session)
                 .stream().collect(Collectors.toMap(StudentFeeAssignment::getStudentId, Function.identity()));
         Map<String, List<Integer>> generatedByStudent = studentFeesRepository.findBySchoolIdAndYear(schoolId, session).stream()
@@ -344,6 +346,57 @@ public class FeeWorkflowService {
                 "StudentFeeAssignment", request.academicSession(), null,
                 "students=" + request.studentIds() + ", adopted=" + adopted + ", reason=" + reason, ip);
         return new LegacyAdoptionResult(students.size(), adopted, skipped);
+    }
+
+    @Transactional(readOnly = true)
+    public FeeReadinessReport readiness(String session) {
+        validateSession(session);
+        Long schoolId = securityUtil.getSchoolId();
+        List<ReadinessIssue> issues = new ArrayList<>();
+        SchoolFeeSettings settings = settingsRepository.findBySchoolId(schoolId).orElse(null);
+        if (settings == null || settings.getActivationDate() == null) {
+            issues.add(new ReadinessIssue("BLOCKER", "ACTIVATION_DATE_MISSING",
+                    "Set the fee activation date before generating charges.", null, null));
+        }
+        if (settings == null || settings.getOperationalStatus() != FeeOperationalStatus.ACTIVE) {
+            issues.add(new ReadinessIssue("BLOCKER", "FEES_NOT_ACTIVE",
+                    "Fee operations must be ACTIVE before charges can be generated.", null, null));
+        }
+        if (academicSessionRepository.findBySchoolIdAndLabel(schoolId, session).isEmpty()) {
+            issues.add(new ReadinessIssue("BLOCKER", "SESSION_MISSING",
+                    "The selected academic session is not configured for this school.", null, null));
+        }
+
+        List<AssignmentRow> rows = listAssignments(session, null, null);
+        Map<String, Long> studentsByClass = rows.stream()
+                .filter(row -> row.status() != StudentFeeAssignmentStatus.EXCLUDED)
+                .collect(Collectors.groupingBy(AssignmentRow::className, TreeMap::new, Collectors.counting()));
+        int configuredClasses = 0;
+        int missingClasses = 0;
+        for (Map.Entry<String, Long> entry : studentsByClass.entrySet()) {
+            FeeCalculationService.FeeConfigurationStatus status = calculationService
+                    .validateFeeConfiguration(schoolId, session, entry.getKey());
+            if (status.valid()) configuredClasses++;
+            else {
+                missingClasses++;
+                issues.add(new ReadinessIssue("BLOCKER", "FEE_STRUCTURE_MISSING",
+                        "Configure at least one fee rule for this class and session.", entry.getKey(),
+                        Math.toIntExact(entry.getValue())));
+            }
+        }
+        int unassigned = Math.toIntExact(rows.stream().filter(row -> row.status() == StudentFeeAssignmentStatus.NOT_ASSIGNED).count());
+        int failed = Math.toIntExact(rows.stream().filter(row -> row.status() == StudentFeeAssignmentStatus.GENERATION_FAILED).count());
+        int legacy = legacyFeeCandidates(session).size();
+        if (unassigned > 0) issues.add(new ReadinessIssue("WARNING", "STUDENTS_NOT_ASSIGNED",
+                "Students remain unassigned. Assign or explicitly exclude them before rollout.", null, unassigned));
+        if (failed > 0) issues.add(new ReadinessIssue("BLOCKER", "GENERATION_FAILURES",
+                "Resolve or retry failed fee-generation students.", null, failed));
+        if (legacy > 0) issues.add(new ReadinessIssue("WARNING", "LEGACY_RECORDS_UNADOPTED",
+                "Existing fee records still need explicit workflow adoption.", null, legacy));
+        int blockers = Math.toIntExact(issues.stream().filter(issue -> "BLOCKER".equals(issue.severity())).count());
+        int warnings = issues.size() - blockers;
+        return new FeeReadinessReport(session, blockers == 0, blockers, warnings, configuredClasses,
+                missingClasses, unassigned, failed, legacy, issues);
     }
 
     public WorkflowChangeResult changeTransport(TransportChangeRequest request, String ip) {

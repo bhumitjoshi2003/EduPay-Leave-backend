@@ -69,6 +69,65 @@ class FeeWorkflowServiceTest {
 
     private FeeWorkflowService service;
 
+    @Test
+    void readiness_reportsConfigurationAndOperationalBlockers() {
+        SchoolFeeSettings settings = new SchoolFeeSettings();
+        settings.setOperationalStatus(FeeOperationalStatus.DRAFT);
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+        when(academicSessionRepository.findBySchoolIdAndLabel(1L, "2026-2027")).thenReturn(Optional.of(session()));
+        Student student = student("S1"); student.setClassName("Class 9");
+        when(studentRepository.findBySchoolId(1L)).thenReturn(List.of(student));
+        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027")).thenReturn(List.of());
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of());
+        when(calculationService.validateFeeConfiguration(1L, "2026-2027", "Class 9"))
+                .thenReturn(FeeCalculationService.FeeConfigurationStatus.fail("missing"));
+
+        var report = service.readiness("2026-2027");
+
+        assertThat(report.readyToGenerate()).isFalse();
+        assertThat(report.blockerCount()).isEqualTo(3);
+        assertThat(report.warningCount()).isEqualTo(1);
+        assertThat(report.issues()).extracting("code").contains("ACTIVATION_DATE_MISSING", "FEES_NOT_ACTIVE",
+                "FEE_STRUCTURE_MISSING", "STUDENTS_NOT_ASSIGNED");
+    }
+
+    @Test
+    void readiness_isReadyWhenActiveAndConfigured() {
+        SchoolFeeSettings settings = new SchoolFeeSettings();
+        settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
+        settings.setActivationDate(LocalDate.of(2026, 8, 18));
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+        when(academicSessionRepository.findBySchoolIdAndLabel(1L, "2026-2027")).thenReturn(Optional.of(session()));
+        Student student = student("S1"); student.setClassName("Class 9");
+        when(studentRepository.findBySchoolId(1L)).thenReturn(List.of(student));
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setStudentId("S1"); assignment.setStatus(StudentFeeAssignmentStatus.READY);
+        assignment.setSelectedMonths("1,2");
+        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027")).thenReturn(List.of(assignment));
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of());
+        when(calculationService.validateFeeConfiguration(1L, "2026-2027", "Class 9"))
+                .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
+
+        var report = service.readiness("2026-2027");
+
+        assertThat(report.readyToGenerate()).isTrue();
+        assertThat(report.issues()).isEmpty();
+        assertThat(report.configuredClasses()).isEqualTo(1);
+    }
+
+    @Test
+    void assignments_excludeExitedStudents() {
+        Student active = student("S1"); active.setStatus(com.indraacademy.ias_management.entity.StudentStatus.ACTIVE);
+        Student withdrawn = student("S2"); withdrawn.setStatus(com.indraacademy.ias_management.entity.StudentStatus.WITHDRAWN);
+        when(studentRepository.findBySchoolId(1L)).thenReturn(List.of(active, withdrawn));
+        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027")).thenReturn(List.of());
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of());
+
+        var rows = service.listAssignments("2026-2027", null, null);
+
+        assertThat(rows).extracting("studentId").containsExactly("S1");
+    }
+
     @BeforeEach
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);

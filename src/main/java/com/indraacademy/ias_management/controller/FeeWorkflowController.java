@@ -58,6 +58,9 @@ public class FeeWorkflowController {
             @RequestBody LegacyAdoptionRequest request, HttpServletRequest http) {
         return handle(() -> service.adoptLegacyFees(request, http.getRemoteAddr()));
     }
+    @GetMapping("/readiness") public ResponseEntity<?> readiness(@RequestParam String session) {
+        return handle(() -> service.readiness(session));
+    }
     @PostMapping("/transport") public ResponseEntity<?> transport(@RequestBody TransportChangeRequest request, HttpServletRequest http) {
         return handle(() -> service.changeTransport(request, http.getRemoteAddr()));
     }
