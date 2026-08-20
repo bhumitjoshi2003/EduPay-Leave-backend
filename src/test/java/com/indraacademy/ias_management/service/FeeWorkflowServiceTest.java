@@ -58,6 +58,7 @@ class FeeWorkflowServiceTest {
     @Mock private AcademicSessionRepository academicSessionRepository;
     @Mock private FeeHeadRepository feeHeadRepository;
     @Mock private StudentFeeConfigRepository feeConfigRepository;
+    @Mock private FeeGenerationBatchRepository generationBatchRepository;
     @Mock private FeeCalculationService calculationService;
     @Mock private StudentFeesRecalculationService recalculationService;
     @Mock private AuditService auditService;
@@ -70,6 +71,11 @@ class FeeWorkflowServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+        lenient().when(generationBatchRepository.save(any())).thenAnswer(invocation -> {
+            com.indraacademy.ias_management.entity.FeeGenerationBatch batch = invocation.getArgument(0);
+            if (batch.getId() == null) batch.setId(700L);
+            return batch;
+        });
         lenient().when(securityUtil.getSchoolId()).thenReturn(1L);
         lenient().when(securityUtil.getUsername()).thenReturn("admin1");
         lenient().when(securityUtil.getRole()).thenReturn("ADMIN");
@@ -83,7 +89,7 @@ class FeeWorkflowServiceTest {
         service = new FeeWorkflowService(settingsRepository, assignmentRepository, transportRepository,
                 studentRepository, studentFeesRepository, lineItemRepository, oneTimeRepository,
                 schoolRepository, academicSessionRepository, feeHeadRepository, feeConfigRepository,
-                calculationService, recalculationService, auditService, securityUtil, transactionManager);
+                generationBatchRepository, calculationService, recalculationService, auditService, securityUtil, transactionManager);
     }
 
     @Test
@@ -300,7 +306,7 @@ class FeeWorkflowServiceTest {
         StudentFeeAssignment assignment = new StudentFeeAssignment();
         assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
         assignment.setStatus(StudentFeeAssignmentStatus.READY);
-        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
+        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2026-2027"))
                 .thenReturn(Optional.of(assignment));
         when(calculationService.validateFeeConfiguration(1L, "2026-2027", "6A"))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
@@ -325,6 +331,37 @@ class FeeWorkflowServiceTest {
                 && value.getMidSessionFeePolicy() == MidSessionFeePolicy.PRORATE_JOINING_MONTH
                 && value.getProrationFactor().compareTo(new BigDecimal("0.51612903")) == 0
                 && value.getBaseAmountDue().compareTo(new BigDecimal("516.13")) == 0));
+        verify(generationBatchRepository, atLeastOnce()).save(argThat(value -> "COMPLETED".equals(value.getStatus())
+                && value.getGeneratedMonths() == 1 && value.getFailedStudents() == 0));
+    }
+
+    @Test
+    void reconciliation_reportsAssignedGeneratedAndMissingMonths() {
+        Student student = student("S1"); student.setName("Student One"); student.setClassName("6A");
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
+        assignment.setSelectedMonths("5,6,7"); assignment.setStatus(StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
+        when(studentRepository.findBySchoolId(1L)).thenReturn(List.of(student));
+        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027")).thenReturn(List.of(assignment));
+        StudentFees may = fee(5); may.setStudentId("S1");
+        StudentFees july = fee(7); july.setStudentId("S1");
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of(may, july));
+
+        var result = service.reconciliation("2026-2027");
+
+        assertThat(result.partiallyGenerated()).isEqualTo(1);
+        assertThat(result.missingMonthCount()).isEqualTo(1);
+        assertThat(result.students().getFirst().missingMonths()).containsExactly(6);
+    }
+
+    @Test
+    void retryGenerationBatch_withoutFailures_isRejected() {
+        com.indraacademy.ias_management.entity.FeeGenerationBatch batch = new com.indraacademy.ias_management.entity.FeeGenerationBatch();
+        batch.setId(700L); batch.setSchoolId(1L); batch.setFailedStudentIds(null);
+        when(generationBatchRepository.findByIdAndSchoolId(700L, 1L)).thenReturn(Optional.of(batch));
+
+        assertThatThrownBy(() -> service.retryGenerationBatch(700L, "127.0.0.1"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("no failed students");
     }
 
     private SchoolFeeSettings settings(MidSessionFeePolicy policy) {

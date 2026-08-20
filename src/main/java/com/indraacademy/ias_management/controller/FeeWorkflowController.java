@@ -41,6 +41,16 @@ public class FeeWorkflowController {
     @PostMapping("/generate") public ResponseEntity<?> generate(@RequestBody AssignmentRequest request, HttpServletRequest http) {
         return handle(() -> service.generate(request, http.getRemoteAddr()));
     }
+    @GetMapping("/generation-batches") public ResponseEntity<?> generationBatches(@RequestParam String session) {
+        return handle(() -> service.generationBatches(session));
+    }
+    @PostMapping("/generation-batches/{batchId}/retry") public ResponseEntity<?> retryBatch(
+            @PathVariable Long batchId, HttpServletRequest http) {
+        return handle(() -> service.retryGenerationBatch(batchId, http.getRemoteAddr()));
+    }
+    @GetMapping("/reconciliation") public ResponseEntity<?> reconciliation(@RequestParam String session) {
+        return handle(() -> service.reconciliation(session));
+    }
     @PostMapping("/transport") public ResponseEntity<?> transport(@RequestBody TransportChangeRequest request, HttpServletRequest http) {
         return handle(() -> service.changeTransport(request, http.getRemoteAddr()));
     }

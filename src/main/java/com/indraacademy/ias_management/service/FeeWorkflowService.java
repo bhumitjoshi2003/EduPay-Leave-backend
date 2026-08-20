@@ -30,6 +30,7 @@ public class FeeWorkflowService {
     private final AcademicSessionRepository academicSessionRepository;
     private final FeeHeadRepository feeHeadRepository;
     private final StudentFeeConfigRepository feeConfigRepository;
+    private final FeeGenerationBatchRepository generationBatchRepository;
     private final FeeCalculationService calculationService;
     private final StudentFeesRecalculationService recalculationService;
     private final AuditService auditService;
@@ -47,6 +48,7 @@ public class FeeWorkflowService {
                               AcademicSessionRepository academicSessionRepository,
                               FeeHeadRepository feeHeadRepository,
                               StudentFeeConfigRepository feeConfigRepository,
+                              FeeGenerationBatchRepository generationBatchRepository,
                               FeeCalculationService calculationService,
                               StudentFeesRecalculationService recalculationService,
                               AuditService auditService,
@@ -63,6 +65,7 @@ public class FeeWorkflowService {
         this.academicSessionRepository = academicSessionRepository;
         this.feeHeadRepository = feeHeadRepository;
         this.feeConfigRepository = feeConfigRepository;
+        this.generationBatchRepository = generationBatchRepository;
         this.calculationService = calculationService;
         this.recalculationService = recalculationService;
         this.auditService = auditService;
@@ -95,7 +98,9 @@ public class FeeWorkflowService {
         if (request.activationDate() != null) settings.setActivationDate(request.activationDate());
         if (request.midSessionPolicy() != null) settings.setMidSessionPolicy(request.midSessionPolicy());
         if (request.allowRetroactiveGeneration() != null) settings.setAllowRetroactiveGeneration(request.allowRetroactiveGeneration());
-        if (request.automaticAnnualGeneration() != null) settings.setAutomaticAnnualGeneration(request.automaticAnnualGeneration());
+        // Fee generation is deliberately admin-triggered. Retain the legacy column for compatibility,
+        // but never allow settings updates to activate unattended annual generation.
+        settings.setAutomaticAnnualGeneration(false);
         SchoolFeeSettings saved = settingsRepository.save(settings);
         auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "UPDATE_FEE_OPERATION_SETTINGS",
                 "SchoolFeeSettings", String.valueOf(saved.getSchoolId()), String.valueOf(old),
@@ -112,13 +117,18 @@ public class FeeWorkflowService {
                 : studentRepository.findByClassNameAndSchoolId(className, schoolId);
         Map<String, StudentFeeAssignment> assignments = assignmentRepository.findBySchoolIdAndAcademicSession(schoolId, session)
                 .stream().collect(Collectors.toMap(StudentFeeAssignment::getStudentId, Function.identity()));
+        Map<String, List<Integer>> generatedByStudent = studentFeesRepository.findBySchoolIdAndYear(schoolId, session).stream()
+                .collect(Collectors.groupingBy(StudentFees::getStudentId,
+                        Collectors.mapping(StudentFees::getMonth, Collectors.collectingAndThen(Collectors.toSet(),
+                                values -> values.stream().sorted().toList()))));
         List<AssignmentRow> rows = new ArrayList<>();
         for (Student student : students) {
             StudentFeeAssignment assignment = assignments.get(student.getStudentId());
-            StudentFeeAssignmentStatus resolved = assignment != null ? assignment.getStatus() : deriveStatus(student.getStudentId(), schoolId, session);
+            int generated = generatedByStudent.getOrDefault(student.getStudentId(), List.of()).size();
+            StudentFeeAssignmentStatus resolved = assignment != null ? assignment.getStatus()
+                    : generated == 0 ? StudentFeeAssignmentStatus.NOT_ASSIGNED
+                    : generated == 12 ? StudentFeeAssignmentStatus.GENERATED : StudentFeeAssignmentStatus.PARTIALLY_GENERATED;
             if (status != null && resolved != status) continue;
-            long generated = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(
-                    student.getStudentId(), schoolId, session).size();
             rows.add(new AssignmentRow(student.getStudentId(), student.getName(), student.getClassName(),
                     student.getSectionName(), student.getJoiningDate(), resolved,
                     assignment != null ? assignment.getEffectiveDate() : null,
@@ -180,6 +190,10 @@ public class FeeWorkflowService {
     }
 
     public List<GenerationResult> generate(AssignmentRequest request, String ip) {
+        return generate(request, ip, null);
+    }
+
+    private List<GenerationResult> generate(AssignmentRequest request, String ip, Long retryOfBatchId) {
         validateAssignmentRequest(request);
         SchoolFeeSettings settings = getSettings();
         if (settings.getOperationalStatus() != FeeOperationalStatus.ACTIVE) {
@@ -192,6 +206,14 @@ public class FeeWorkflowService {
         Long schoolId = securityUtil.getSchoolId();
         List<Student> students = requireStudents(schoolId, request.studentIds());
         List<Integer> months = normalizeMonths(request.months());
+        FeeGenerationBatch batch = new FeeGenerationBatch();
+        batch.setSchoolId(schoolId); batch.setAcademicSession(request.academicSession());
+        batch.setEffectiveDate(request.effectiveDate()); batch.setSelectedMonths(joinMonths(months));
+        batch.setRequestedStudentIds(String.join(",", students.stream().map(Student::getStudentId).toList()));
+        batch.setRequestedStudents(students.size()); batch.setStatus("RUNNING");
+        batch.setInitiatedBy(securityUtil.getUsername()); batch.setRetryOfBatchId(retryOfBatchId);
+        batch.setStartedAt(LocalDateTime.now());
+        batch = generationBatchRepository.save(batch);
         List<GenerationResult> results = new ArrayList<>();
         for (Student student : students) {
             try {
@@ -205,8 +227,64 @@ public class FeeWorkflowService {
             }
         }
         auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "GENERATE_ASSIGNED_STUDENT_FEES",
-                "StudentFees", request.academicSession(), null, request.studentIds() + ", months=" + months, ip);
+                "StudentFees", request.academicSession(), null,
+                request.studentIds() + ", months=" + months + ", batchId=" + batch.getId(), ip);
+        List<String> failedIds = results.stream().filter(value -> !value.successful()).map(GenerationResult::studentId).toList();
+        batch.setSuccessfulStudents(results.size() - failedIds.size()); batch.setFailedStudents(failedIds.size());
+        batch.setGeneratedMonths(results.stream().mapToInt(GenerationResult::generated).sum());
+        batch.setSkippedMonths(results.stream().mapToInt(GenerationResult::skipped).sum());
+        batch.setFailedStudentIds(failedIds.isEmpty() ? null : String.join(",", failedIds));
+        batch.setStatus(failedIds.isEmpty() ? "COMPLETED" : failedIds.size() == results.size() ? "FAILED" : "PARTIAL");
+        batch.setCompletedAt(LocalDateTime.now()); generationBatchRepository.save(batch);
         return results;
+    }
+
+    @Transactional(readOnly = true)
+    public List<GenerationBatchRow> generationBatches(String session) {
+        validateSession(session);
+        return generationBatchRepository.findTop25BySchoolIdAndAcademicSessionOrderByStartedAtDesc(
+                securityUtil.getSchoolId(), session).stream().map(this::toGenerationBatchRow).toList();
+    }
+
+    public List<GenerationResult> retryGenerationBatch(Long batchId, String ip) {
+        Long schoolId = securityUtil.getSchoolId();
+        FeeGenerationBatch batch = generationBatchRepository.findByIdAndSchoolId(batchId, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("Generation batch not found."));
+        List<String> failed = parseCsv(batch.getFailedStudentIds());
+        if (failed.isEmpty()) throw new IllegalStateException("This batch has no failed students to retry.");
+        AssignmentRequest request = new AssignmentRequest(failed, batch.getAcademicSession(),
+                batch.getEffectiveDate(), parseMonths(batch.getSelectedMonths()), "Retry of batch " + batchId);
+        return generate(request, ip, batchId);
+    }
+
+    @Transactional(readOnly = true)
+    public ReconciliationSummary reconciliation(String session) {
+        validateSession(session);
+        Long schoolId = securityUtil.getSchoolId();
+        Map<String, StudentFeeAssignment> assignments = assignmentRepository.findBySchoolIdAndAcademicSession(schoolId, session)
+                .stream().collect(Collectors.toMap(StudentFeeAssignment::getStudentId, Function.identity()));
+        Map<String, List<Integer>> generatedByStudent = studentFeesRepository.findBySchoolIdAndYear(schoolId, session).stream()
+                .collect(Collectors.groupingBy(StudentFees::getStudentId,
+                        Collectors.mapping(StudentFees::getMonth, Collectors.collectingAndThen(Collectors.toSet(),
+                                values -> values.stream().sorted().toList()))));
+        List<ReconciliationRow> rows = new ArrayList<>();
+        int full = 0, partial = 0, unassigned = 0, failed = 0, missingTotal = 0;
+        for (Student student : studentRepository.findBySchoolId(schoolId)) {
+            StudentFeeAssignment assignment = assignments.get(student.getStudentId());
+            List<Integer> generated = generatedByStudent.getOrDefault(student.getStudentId(), List.of());
+            List<Integer> assigned = assignment == null ? List.of() : parseMonths(assignment.getSelectedMonths());
+            List<Integer> missing = assigned.stream().filter(month -> !generated.contains(month)).toList();
+            StudentFeeAssignmentStatus status = assignment == null ? deriveStatus(student.getStudentId(), schoolId, session) : assignment.getStatus();
+            if (assignment == null || status == StudentFeeAssignmentStatus.NOT_ASSIGNED) unassigned++;
+            else if (status == StudentFeeAssignmentStatus.GENERATION_FAILED) failed++;
+            else if (!assigned.isEmpty() && missing.isEmpty()) full++;
+            else partial++;
+            missingTotal += missing.size();
+            rows.add(new ReconciliationRow(student.getStudentId(), student.getName(), student.getClassName(), status,
+                    assigned, generated, missing, assignment == null ? "Student has not been assigned for fees."
+                    : firstNonBlank(assignment.getFailureReason(), assignment.getExclusionReason())));
+        }
+        return new ReconciliationSummary(rows.size(), full, partial, unassigned, failed, missingTotal, rows);
     }
 
     public WorkflowChangeResult changeTransport(TransportChangeRequest request, String ip) {
@@ -515,6 +593,14 @@ public class FeeWorkflowService {
                 value.getEffectiveFrom(), value.getEffectiveTo(), value.getReason(), value.getChangedBy(), value.getCreatedAt());
     }
 
+    private GenerationBatchRow toGenerationBatchRow(FeeGenerationBatch value) {
+        return new GenerationBatchRow(value.getId(), value.getAcademicSession(), value.getEffectiveDate(),
+                parseMonths(value.getSelectedMonths()), value.getRequestedStudents(), value.getSuccessfulStudents(),
+                value.getFailedStudents(), value.getGeneratedMonths(), value.getSkippedMonths(), value.getStatus(),
+                value.getInitiatedBy(), value.getRetryOfBatchId(), value.getStartedAt(), value.getCompletedAt(),
+                parseCsv(value.getFailedStudentIds()));
+    }
+
     private LocalDate monthStart(LocalDate value) { return value == null ? null : value.withDayOfMonth(1); }
     private LocalDate monthEnd(LocalDate value) { return value == null ? null : value.withDayOfMonth(value.lengthOfMonth()); }
 
@@ -563,7 +649,7 @@ public class FeeWorkflowService {
     private GenerationResult generateForStudent(Student student, String session, LocalDate requestedEffectiveDate,
                                                 List<Integer> months, SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
-        StudentFeeAssignment assignment = assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(), session)
+        StudentFeeAssignment assignment = assignmentRepository.findForGenerationUpdate(schoolId, student.getStudentId(), session)
                 .orElse(null);
         if (assignment == null || assignment.isExcluded() || assignment.getStatus() == StudentFeeAssignmentStatus.NOT_ASSIGNED) {
             return new GenerationResult(student.getStudentId(), 0, months.size(), false, "Student is not assigned for fees.");
@@ -712,6 +798,7 @@ public class FeeWorkflowService {
     }
     private String joinMonths(List<Integer> months) { return months.stream().map(String::valueOf).collect(Collectors.joining(",")); }
     private List<Integer> parseMonths(String value) { return value == null || value.isBlank() ? List.of() : Arrays.stream(value.split(",")).map(Integer::valueOf).toList(); }
+    private List<String> parseCsv(String value) { return value == null || value.isBlank() ? List.of() : Arrays.stream(value.split(",")).map(String::trim).filter(v -> !v.isBlank()).toList(); }
     private String requireReason(String value) { if (value == null || value.isBlank()) throw new IllegalArgumentException("A reason is required."); return value.trim(); }
     private String firstNonBlank(String a, String b) { return a != null && !a.isBlank() ? a : b; }
     private BigDecimal safe(BigDecimal value) { return value == null ? BigDecimal.ZERO : value; }

@@ -125,4 +125,20 @@ public final class FeeWorkflowDtos {
     public record DiscountExpireRequest(LocalDate effectiveFrom, String reason) {}
     public record RevokeFutureRequest(String reason) {}
     public record TransportCorrectionRequest(boolean enabled, Double distance, String reason) {}
+
+    public record GenerationBatchRow(Long id, String academicSession, LocalDate effectiveDate,
+                                     List<Integer> selectedMonths, int requestedStudents,
+                                     int successfulStudents, int failedStudents, int generatedMonths,
+                                     int skippedMonths, String status, String initiatedBy,
+                                     Long retryOfBatchId, LocalDateTime startedAt, LocalDateTime completedAt,
+                                     List<String> failedStudentIds) {}
+
+    public record ReconciliationRow(String studentId, String studentName, String className,
+                                    StudentFeeAssignmentStatus status, List<Integer> assignedMonths,
+                                    List<Integer> generatedMonths, List<Integer> missingMonths,
+                                    String message) {}
+
+    public record ReconciliationSummary(int totalStudents, int fullyGenerated, int partiallyGenerated,
+                                        int notAssigned, int failed, int missingMonthCount,
+                                        List<ReconciliationRow> students) {}
 }
