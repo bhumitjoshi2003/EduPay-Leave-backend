@@ -141,4 +141,10 @@ public final class FeeWorkflowDtos {
     public record ReconciliationSummary(int totalStudents, int fullyGenerated, int partiallyGenerated,
                                         int notAssigned, int failed, int missingMonthCount,
                                         List<ReconciliationRow> students) {}
+
+    public record LegacyFeeCandidate(String studentId, String studentName, String className,
+                                     List<Integer> existingMonths, LocalDate earliestBillingDate) {}
+    public record LegacyAdoptionRequest(String academicSession, List<String> studentIds, String reason) {}
+    public record LegacyAdoptionResult(int requestedStudents, int adoptedStudents,
+                                       List<String> skippedStudentIds) {}
 }

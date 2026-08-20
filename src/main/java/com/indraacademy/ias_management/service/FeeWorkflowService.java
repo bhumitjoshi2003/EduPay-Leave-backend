@@ -287,6 +287,65 @@ public class FeeWorkflowService {
         return new ReconciliationSummary(rows.size(), full, partial, unassigned, failed, missingTotal, rows);
     }
 
+    @Transactional(readOnly = true)
+    public List<LegacyFeeCandidate> legacyFeeCandidates(String session) {
+        validateSession(session);
+        Long schoolId = securityUtil.getSchoolId();
+        Set<String> assignedIds = assignmentRepository.findBySchoolIdAndAcademicSession(schoolId, session).stream()
+                .map(StudentFeeAssignment::getStudentId).collect(Collectors.toSet());
+        Map<String, List<StudentFees>> feesByStudent = studentFeesRepository.findBySchoolIdAndYear(schoolId, session)
+                .stream().collect(Collectors.groupingBy(StudentFees::getStudentId));
+        if (feesByStudent.isEmpty()) return List.of();
+        Map<String, Student> students = studentRepository.findByStudentIdInAndSchoolId(
+                feesByStudent.keySet().stream().toList(), schoolId).stream()
+                .collect(Collectors.toMap(Student::getStudentId, Function.identity()));
+        return feesByStudent.entrySet().stream()
+                .filter(entry -> !assignedIds.contains(entry.getKey()) && students.containsKey(entry.getKey()))
+                .map(entry -> {
+                    Student student = students.get(entry.getKey());
+                    List<Integer> months = entry.getValue().stream().map(StudentFees::getMonth).distinct().sorted().toList();
+                    LocalDate earliest = entry.getValue().stream().map(StudentFees::getBillingEffectiveDate)
+                            .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+                    return new LegacyFeeCandidate(student.getStudentId(), student.getName(), student.getClassName(), months, earliest);
+                }).sorted(Comparator.comparing(LegacyFeeCandidate::studentName,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))).toList();
+    }
+
+    @Transactional
+    public LegacyAdoptionResult adoptLegacyFees(LegacyAdoptionRequest request, String ip) {
+        if (request == null || request.studentIds() == null || request.studentIds().isEmpty())
+            throw new IllegalArgumentException("Select at least one legacy student.");
+        validateSession(request.academicSession());
+        String reason = requireReason(request.reason());
+        Long schoolId = securityUtil.getSchoolId();
+        List<Student> students = requireStudents(schoolId, request.studentIds());
+        Map<String, List<StudentFees>> feesByStudent = studentFeesRepository.findBySchoolIdAndYear(schoolId,
+                request.academicSession()).stream().collect(Collectors.groupingBy(StudentFees::getStudentId));
+        List<String> skipped = new ArrayList<>();
+        int adopted = 0;
+        for (Student student : students) {
+            if (assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(),
+                    request.academicSession()).isPresent()) { skipped.add(student.getStudentId()); continue; }
+            List<StudentFees> fees = feesByStudent.getOrDefault(student.getStudentId(), List.of());
+            if (fees.isEmpty()) { skipped.add(student.getStudentId()); continue; }
+            List<Integer> months = fees.stream().map(StudentFees::getMonth).distinct().sorted().toList();
+            LocalDate effective = fees.stream().map(StudentFees::getBillingEffectiveDate).filter(Objects::nonNull)
+                    .min(LocalDate::compareTo).orElseGet(() -> sessionStart(request.academicSession(), schoolId));
+            StudentFeeAssignment assignment = new StudentFeeAssignment();
+            assignment.setSchoolId(schoolId); assignment.setStudentId(student.getStudentId());
+            assignment.setAcademicSession(request.academicSession()); assignment.setEffectiveDate(effective);
+            assignment.setSelectedMonths(joinMonths(months)); assignment.setExcluded(false);
+            assignment.setStatus(months.size() >= 12 ? StudentFeeAssignmentStatus.GENERATED
+                    : StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
+            assignment.setAssignedBy(securityUtil.getUsername()); assignment.setAssignedAt(LocalDateTime.now());
+            assignment.setGeneratedAt(LocalDateTime.now()); assignmentRepository.save(assignment); adopted++;
+        }
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "ADOPT_LEGACY_STUDENT_FEES",
+                "StudentFeeAssignment", request.academicSession(), null,
+                "students=" + request.studentIds() + ", adopted=" + adopted + ", reason=" + reason, ip);
+        return new LegacyAdoptionResult(students.size(), adopted, skipped);
+    }
+
     public WorkflowChangeResult changeTransport(TransportChangeRequest request, String ip) {
         if (request == null || request.studentIds() == null || request.studentIds().isEmpty()
                 || request.effectiveFrom() == null) throw new IllegalArgumentException("Students and effective date are required.");
@@ -772,6 +831,11 @@ public class FeeWorkflowService {
     private LocalDate latest(LocalDate... values) {
         return Arrays.stream(values).filter(Objects::nonNull).max(LocalDate::compareTo)
                 .orElseThrow(() -> new IllegalArgumentException("An effective billing date is required."));
+    }
+    private LocalDate sessionStart(String session, Long schoolId) {
+        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
+        int[] years = calculationService.parseSession(session);
+        return calculationService.academicMonthStart(1, years[0], years[1], startMonth);
     }
     private long count(List<AssignmentRow> rows, StudentFeeAssignmentStatus status) { return rows.stream().filter(r -> r.status() == status).count(); }
     private StudentFeeAssignmentStatus deriveStatus(String studentId, Long schoolId, String session) {

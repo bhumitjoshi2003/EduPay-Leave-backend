@@ -51,6 +51,13 @@ public class FeeWorkflowController {
     @GetMapping("/reconciliation") public ResponseEntity<?> reconciliation(@RequestParam String session) {
         return handle(() -> service.reconciliation(session));
     }
+    @GetMapping("/legacy-candidates") public ResponseEntity<?> legacyCandidates(@RequestParam String session) {
+        return handle(() -> service.legacyFeeCandidates(session));
+    }
+    @PostMapping("/legacy-adoptions") public ResponseEntity<?> adoptLegacyFees(
+            @RequestBody LegacyAdoptionRequest request, HttpServletRequest http) {
+        return handle(() -> service.adoptLegacyFees(request, http.getRemoteAddr()));
+    }
     @PostMapping("/transport") public ResponseEntity<?> transport(@RequestBody TransportChangeRequest request, HttpServletRequest http) {
         return handle(() -> service.changeTransport(request, http.getRemoteAddr()));
     }

@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.dto.FeeWorkflowDtos.GenerationResult;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.DiscountExpireRequest;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.RevokeFutureRequest;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.TransportCorrectionRequest;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.LegacyAdoptionRequest;
 import com.indraacademy.ias_management.dto.RecalculationEntryDto;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.AcademicSession;
@@ -362,6 +363,41 @@ class FeeWorkflowServiceTest {
 
         assertThatThrownBy(() -> service.retryGenerationBatch(700L, "127.0.0.1"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("no failed students");
+    }
+
+    @Test
+    void legacyCandidates_onlyReturnsStudentsWithFeesAndNoAssignment() {
+        Student student = student("S1"); student.setName("Legacy Student"); student.setClassName("7A");
+        StudentFees fee = fee(5); fee.setStudentId("S1"); fee.setBillingEffectiveDate(LocalDate.of(2026, 8, 1));
+        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027")).thenReturn(List.of());
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of(fee));
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+
+        var result = service.legacyFeeCandidates("2026-2027");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().existingMonths()).containsExactly(5);
+        assertThat(result.getFirst().earliestBillingDate()).isEqualTo(LocalDate.of(2026, 8, 1));
+    }
+
+    @Test
+    void adoptLegacyFees_createsAssignmentWithoutChangingFinancialRows() {
+        Student student = student("S1");
+        StudentFees first = fee(5); first.setStudentId("S1"); first.setBillingEffectiveDate(LocalDate.of(2026, 8, 1));
+        StudentFees second = fee(6); second.setStudentId("S1");
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of(first, second));
+        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
+                .thenReturn(Optional.empty());
+
+        var result = service.adoptLegacyFees(new LegacyAdoptionRequest("2026-2027", List.of("S1"),
+                "Phase 6 migration"), "127.0.0.1");
+
+        assertThat(result.adoptedStudents()).isEqualTo(1);
+        verify(assignmentRepository).save(argThat(value -> value.getSelectedMonths().equals("5,6")
+                && value.getEffectiveDate().equals(LocalDate.of(2026, 8, 1))
+                && value.getStatus() == StudentFeeAssignmentStatus.PARTIALLY_GENERATED));
+        verify(studentFeesRepository, never()).save(any(StudentFees.class));
     }
 
     private SchoolFeeSettings settings(MidSessionFeePolicy policy) {
