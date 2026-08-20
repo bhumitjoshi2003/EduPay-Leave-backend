@@ -29,6 +29,18 @@ public interface StudentFeeConfigRepository extends JpaRepository<StudentFeeConf
             @Param("sessionId") Long sessionId,
             @Param("asOfDate") LocalDate asOfDate);
 
+    @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END FROM StudentFeeConfig c " +
+            "WHERE c.schoolId = :schoolId AND c.studentId = :studentId " +
+            "AND c.academicSession.id = :sessionId AND c.feeHead.id = :feeHeadId " +
+            "AND (c.validUntil IS NULL OR c.validUntil >= :validFrom) " +
+            "AND (:validUntil IS NULL OR c.validFrom IS NULL OR c.validFrom <= :validUntil)")
+    boolean existsOverlapping(@Param("schoolId") Long schoolId,
+                              @Param("studentId") String studentId,
+                              @Param("sessionId") Long sessionId,
+                              @Param("feeHeadId") Long feeHeadId,
+                              @Param("validFrom") LocalDate validFrom,
+                              @Param("validUntil") LocalDate validUntil);
+
     @Modifying
     @Query("DELETE FROM StudentFeeConfig c WHERE c.schoolId = :schoolId AND c.studentId = :studentId AND c.academicSession.id = :sessionId")
     void deleteBySchoolIdAndStudentIdAndAcademicSessionId(

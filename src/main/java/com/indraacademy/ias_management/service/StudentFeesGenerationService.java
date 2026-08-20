@@ -7,12 +7,15 @@ import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
 import com.indraacademy.ias_management.entity.StudentOneTimeFeeCharged;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.entity.SchoolFeeSettings;
+import com.indraacademy.ias_management.entity.FeeOperationalStatus;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentOneTimeFeeChargedRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.SchoolFeeSettingsRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -26,6 +29,7 @@ import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -47,6 +51,7 @@ public class StudentFeesGenerationService {
     @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private StudentOneTimeFeeChargedRepository studentOneTimeFeeChargedRepository;
     @Autowired private StudentFeesLineItemRepository studentFeesLineItemRepository;
+    @Autowired private SchoolFeeSettingsRepository schoolFeeSettingsRepository;
 
     /**
      * Runs on the 1st of every month. For each active school, checks whether this
@@ -75,6 +80,18 @@ public class StudentFeesGenerationService {
 
         for (School school : activeSchools) {
             try {
+                // Legacy schools with no workflow settings retain the old scheduler behaviour.
+                // Once a school adopts the workflow, annual generation is opt-in and only runs
+                // while fees are operationally ACTIVE.
+                Optional<SchoolFeeSettings> feeSettings = schoolFeeSettingsRepository.findBySchoolId(school.getId());
+                if (feeSettings.isPresent()
+                        && (feeSettings.get().getOperationalStatus() != FeeOperationalStatus.ACTIVE
+                        || !feeSettings.get().isAutomaticAnnualGeneration())) {
+                    log.debug("Skipping annual fee generation for school {}: workflow status={}, automatic={}",
+                            school.getId(), feeSettings.get().getOperationalStatus(),
+                            feeSettings.get().isAutomaticAnnualGeneration());
+                    continue;
+                }
                 generateForSchool(school, today, studentsBySchool.getOrDefault(school.getId(), List.of()));
             } catch (DataAccessException e) {
                 log.error("DB error generating fees for school {}", school.getId(), e);
