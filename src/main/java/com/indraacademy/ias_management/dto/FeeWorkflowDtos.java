@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.entity.StudentFeeAssignmentStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 public final class FeeWorkflowDtos {
@@ -104,4 +105,24 @@ public final class FeeWorkflowDtos {
             int recalculatedMonths,
             int skippedMonths,
             List<StudentRecalculationResult> students) {}
+
+    public record DiscountHistoryRow(Long id, String studentId, Long feeHeadId, String feeHeadName,
+                                     FeeConfigType configType, BigDecimal value, LocalDate validFrom,
+                                     LocalDate validUntil, String reason, String approvedBy,
+                                     LocalDateTime createdAt, LocalDateTime revokedAt,
+                                     String revokedBy, String revokeReason) {}
+
+    public record TransportHistoryRow(Long id, String studentId, boolean enabled, Double distance,
+                                      LocalDate effectiveFrom, LocalDate effectiveTo, String reason,
+                                      String changedBy, LocalDateTime createdAt) {}
+
+    public record FeeLifecycleHistory(String studentId, String academicSession,
+                                      List<DiscountHistoryRow> discounts,
+                                      List<TransportHistoryRow> transport) {}
+
+    public record DiscountUpdateRequest(FeeConfigType configType, BigDecimal value,
+                                        LocalDate validFrom, LocalDate validUntil, String reason) {}
+    public record DiscountExpireRequest(LocalDate effectiveFrom, String reason) {}
+    public record RevokeFutureRequest(String reason) {}
+    public record TransportCorrectionRequest(boolean enabled, Double distance, String reason) {}
 }

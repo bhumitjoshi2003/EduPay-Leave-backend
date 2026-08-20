@@ -22,4 +22,6 @@ public interface StudentTransportFeeAssignmentRepository extends JpaRepository<S
     default Optional<StudentTransportFeeAssignment> effectiveOn(Long schoolId, String studentId, String session, LocalDate date) {
         return findEffective(schoolId, studentId, session, date).stream().findFirst();
     }
+
+    Optional<StudentTransportFeeAssignment> findByIdAndSchoolId(Long id, Long schoolId);
 }

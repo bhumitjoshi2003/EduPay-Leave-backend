@@ -240,6 +240,113 @@ public class FeeWorkflowService {
         return transportRepository.findBySchoolIdAndStudentIdAndAcademicSessionOrderByEffectiveFromDesc(schoolId, studentId, session);
     }
 
+    @Transactional(readOnly = true)
+    public FeeLifecycleHistory lifecycleHistory(String studentId, String sessionLabel) {
+        Long schoolId = securityUtil.getSchoolId();
+        studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("Student not found."));
+        AcademicSession session = academicSessionRepository.findBySchoolIdAndLabel(schoolId, sessionLabel)
+                .orElseThrow(() -> new IllegalArgumentException("Academic session not found."));
+        List<DiscountHistoryRow> discounts = feeConfigRepository
+                .findBySchoolIdAndStudentIdAndAcademicSessionIdOrderByValidFromDescIdDesc(schoolId, studentId, session.getId())
+                .stream().map(this::toDiscountHistory).toList();
+        List<TransportHistoryRow> transport = transportRepository
+                .findBySchoolIdAndStudentIdAndAcademicSessionOrderByEffectiveFromDesc(schoolId, studentId, sessionLabel)
+                .stream().map(this::toTransportHistory).toList();
+        return new FeeLifecycleHistory(studentId, sessionLabel, discounts, transport);
+    }
+
+    @Transactional
+    public DiscountHistoryRow updateFutureDiscount(Long configId, DiscountUpdateRequest request, String ip) {
+        validateDiscountUpdate(request);
+        Long schoolId = securityUtil.getSchoolId();
+        StudentFeeConfig config = feeConfigRepository.findById(configId)
+                .filter(value -> Objects.equals(value.getSchoolId(), schoolId))
+                .orElseThrow(() -> new IllegalArgumentException("Discount configuration not found."));
+        if (config.getRevokedAt() != null || config.getValidFrom() == null || !config.getValidFrom().isAfter(LocalDate.now())) {
+            throw new IllegalStateException("Only a future discount can be edited. Expire an active discount instead.");
+        }
+        LocalDate from = monthStart(request.validFrom());
+        LocalDate until = monthEnd(request.validUntil());
+        if (!from.isAfter(LocalDate.now())) throw new IllegalArgumentException("The updated start month must be in the future.");
+        if (until != null && until.isBefore(from)) throw new IllegalArgumentException("End month cannot precede start month.");
+        if (feeConfigRepository.existsOverlappingExcluding(configId, schoolId, config.getStudentId(),
+                config.getAcademicSession().getId(), config.getFeeHead().getId(), from, until)) {
+            throw new IllegalArgumentException("An overlapping discount already exists.");
+        }
+        config.setConfigType(request.configType()); config.setValue(request.value());
+        config.setValidFrom(from); config.setValidUntil(until); config.setReason(requireReason(request.reason()));
+        feeConfigRepository.save(config);
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "UPDATE_FUTURE_STUDENT_DISCOUNT",
+                "StudentFeeConfig", String.valueOf(configId), null, "from=" + from + ", until=" + until, ip);
+        return toDiscountHistory(config);
+    }
+
+    public WorkflowChangeResult expireDiscount(Long configId, DiscountExpireRequest request, String ip) {
+        if (request == null || request.effectiveFrom() == null) throw new IllegalArgumentException("Effective month is required.");
+        String reason = requireReason(request.reason());
+        Long schoolId = securityUtil.getSchoolId();
+        return Objects.requireNonNull(transactionTemplate.execute(status -> {
+            StudentFeeConfig config = feeConfigRepository.findById(configId)
+                    .filter(value -> Objects.equals(value.getSchoolId(), schoolId))
+                    .orElseThrow(() -> new IllegalArgumentException("Discount configuration not found."));
+            if (config.getRevokedAt() != null) throw new IllegalStateException("This discount has already been revoked.");
+            LocalDate effectiveMonth = monthStart(request.effectiveFrom());
+            if (config.getValidFrom() == null || !effectiveMonth.isAfter(config.getValidFrom())) {
+                throw new IllegalArgumentException("Use remove-future for a discount that has not started; expiry must follow its start month.");
+            }
+            LocalDate oldUntil = config.getValidUntil();
+            config.setValidUntil(effectiveMonth.minusDays(1));
+            config.setRevokeReason(reason);
+            config.setRevokedBy(securityUtil.getUsername());
+            feeConfigRepository.save(config);
+            String session = config.getAcademicSession().getLabel();
+            List<RecalculationEntryDto> months = generatedMonthsInRange(config.getStudentId(), session, effectiveMonth, oldUntil)
+                    .stream().map(month -> recalculationService.recalculateOne(config.getStudentId(), session, month, reason, ip)).toList();
+            auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "EXPIRE_STUDENT_DISCOUNT",
+                    "StudentFeeConfig", String.valueOf(configId), null, "effectiveMonth=" + effectiveMonth, ip);
+            return summarizeChanges(1, List.of(new StudentRecalculationResult(config.getStudentId(), true, months, null)));
+        }));
+    }
+
+    @Transactional
+    public DiscountHistoryRow revokeFutureDiscount(Long configId, RevokeFutureRequest request, String ip) {
+        String reason = requireReason(request == null ? null : request.reason());
+        Long schoolId = securityUtil.getSchoolId();
+        StudentFeeConfig config = feeConfigRepository.findById(configId)
+                .filter(value -> Objects.equals(value.getSchoolId(), schoolId))
+                .orElseThrow(() -> new IllegalArgumentException("Discount configuration not found."));
+        if (config.getRevokedAt() != null) throw new IllegalStateException("This discount has already been revoked.");
+        if (config.getValidFrom() == null || !config.getValidFrom().isAfter(LocalDate.now())) {
+            throw new IllegalStateException("Only a future discount can be removed. Expire an active discount instead.");
+        }
+        config.setRevokedAt(LocalDateTime.now()); config.setRevokedBy(securityUtil.getUsername()); config.setRevokeReason(reason);
+        feeConfigRepository.save(config);
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "REVOKE_FUTURE_STUDENT_DISCOUNT",
+                "StudentFeeConfig", String.valueOf(configId), null, reason, ip);
+        return toDiscountHistory(config);
+    }
+
+    @Transactional
+    public TransportHistoryRow correctFutureTransport(Long assignmentId, TransportCorrectionRequest request, String ip) {
+        if (request == null) throw new IllegalArgumentException("Correction details are required.");
+        if (request.enabled() && (request.distance() == null || request.distance() <= 0))
+            throw new IllegalArgumentException("A positive distance is required when transport is enabled.");
+        String reason = requireReason(request.reason());
+        Long schoolId = securityUtil.getSchoolId();
+        StudentTransportFeeAssignment value = transportRepository.findByIdAndSchoolId(assignmentId, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("Transport assignment not found."));
+        if (!value.getEffectiveFrom().isAfter(LocalDate.now())) {
+            throw new IllegalStateException("Only a future transport entry can be corrected. Add a new effective-dated change instead.");
+        }
+        value.setEnabled(request.enabled()); value.setDistance(request.enabled() ? request.distance() : null);
+        value.setReason(reason); value.setChangedBy(securityUtil.getUsername()); transportRepository.save(value);
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "CORRECT_FUTURE_TRANSPORT_ASSIGNMENT",
+                "StudentTransportFeeAssignment", String.valueOf(assignmentId), null,
+                "enabled=" + request.enabled() + ", distance=" + request.distance(), ip);
+        return toTransportHistory(value);
+    }
+
     public WorkflowChangeResult applyBulkDiscount(BulkDiscountRequest request, String ip) {
         validateBulkDiscount(request);
         Long schoolId = securityUtil.getSchoolId();
@@ -309,8 +416,10 @@ public class FeeWorkflowService {
                                                                 FeeHead feeHead, BulkDiscountRequest request,
                                                                 String ip) {
         Long schoolId = securityUtil.getSchoolId();
+        LocalDate validFrom = monthStart(request.validFrom());
+        LocalDate validUntil = monthEnd(request.validUntil());
         if (feeConfigRepository.existsOverlapping(schoolId, student.getStudentId(), session.getId(), feeHead.getId(),
-                request.validFrom(), request.validUntil())) {
+                validFrom, validUntil)) {
             throw new IllegalArgumentException("An overlapping discount already exists.");
         }
         StudentFeeConfig config = new StudentFeeConfig();
@@ -320,14 +429,13 @@ public class FeeWorkflowService {
         config.setFeeHead(feeHead);
         config.setConfigType(request.configType());
         config.setValue(request.value());
-        config.setValidFrom(request.validFrom());
-        config.setValidUntil(request.validUntil());
+        config.setValidFrom(validFrom);
+        config.setValidUntil(validUntil);
         config.setReason(request.reason().trim());
         config.setApprovedBy(securityUtil.getUsername());
         feeConfigRepository.save(config);
 
-        List<Integer> months = generatedMonthsInRange(student.getStudentId(), session.getLabel(),
-                request.validFrom(), request.validUntil());
+        List<Integer> months = generatedMonthsInRange(student.getStudentId(), session.getLabel(), validFrom, validUntil);
         List<RecalculationEntryDto> recalculated = months.stream()
                 .map(month -> recalculationService.recalculateOne(student.getStudentId(), session.getLabel(), month,
                         request.reason(), ip))
@@ -381,6 +489,34 @@ public class FeeWorkflowService {
             throw new IllegalArgumentException("A non-negative amount is required.");
         }
     }
+
+    private void validateDiscountUpdate(DiscountUpdateRequest request) {
+        if (request == null || request.configType() == null || request.validFrom() == null)
+            throw new IllegalArgumentException("Discount type and start month are required.");
+        if (request.configType() == FeeConfigType.DISCOUNT_PERCENT
+                && (request.value() == null || request.value().compareTo(BigDecimal.ZERO) < 0
+                || request.value().compareTo(BigDecimal.valueOf(100)) > 0))
+            throw new IllegalArgumentException("Percentage discount must be between 0 and 100.");
+        if ((request.configType() == FeeConfigType.DISCOUNT_FIXED || request.configType() == FeeConfigType.CUSTOM_AMOUNT)
+                && (request.value() == null || request.value().compareTo(BigDecimal.ZERO) < 0))
+            throw new IllegalArgumentException("A non-negative amount is required.");
+        requireReason(request.reason());
+    }
+
+    private DiscountHistoryRow toDiscountHistory(StudentFeeConfig value) {
+        return new DiscountHistoryRow(value.getId(), value.getStudentId(), value.getFeeHead().getId(),
+                value.getFeeHead().getName(), value.getConfigType(), value.getValue(), value.getValidFrom(),
+                value.getValidUntil(), value.getReason(), value.getApprovedBy(), value.getCreatedAt(),
+                value.getRevokedAt(), value.getRevokedBy(), value.getRevokeReason());
+    }
+
+    private TransportHistoryRow toTransportHistory(StudentTransportFeeAssignment value) {
+        return new TransportHistoryRow(value.getId(), value.getStudentId(), value.isEnabled(), value.getDistance(),
+                value.getEffectiveFrom(), value.getEffectiveTo(), value.getReason(), value.getChangedBy(), value.getCreatedAt());
+    }
+
+    private LocalDate monthStart(LocalDate value) { return value == null ? null : value.withDayOfMonth(1); }
+    private LocalDate monthEnd(LocalDate value) { return value == null ? null : value.withDayOfMonth(value.lengthOfMonth()); }
 
     private StudentPreview previewStudent(Student student, String session, LocalDate requestedEffectiveDate,
                                           List<Integer> months, SchoolFeeSettings settings) {

@@ -50,6 +50,26 @@ public class FeeWorkflowController {
     @PostMapping("/discounts") public ResponseEntity<?> discounts(@RequestBody BulkDiscountRequest request, HttpServletRequest http) {
         return handle(() -> service.applyBulkDiscount(request, http.getRemoteAddr()));
     }
+    @GetMapping("/history/{studentId}") public ResponseEntity<?> history(@PathVariable String studentId,
+            @RequestParam String session) {
+        return handle(() -> service.lifecycleHistory(studentId, session));
+    }
+    @PutMapping("/discounts/{configId}/future") public ResponseEntity<?> updateFutureDiscount(
+            @PathVariable Long configId, @RequestBody DiscountUpdateRequest request, HttpServletRequest http) {
+        return handle(() -> service.updateFutureDiscount(configId, request, http.getRemoteAddr()));
+    }
+    @PostMapping("/discounts/{configId}/expire") public ResponseEntity<?> expireDiscount(
+            @PathVariable Long configId, @RequestBody DiscountExpireRequest request, HttpServletRequest http) {
+        return handle(() -> service.expireDiscount(configId, request, http.getRemoteAddr()));
+    }
+    @PostMapping("/discounts/{configId}/revoke-future") public ResponseEntity<?> revokeFutureDiscount(
+            @PathVariable Long configId, @RequestBody RevokeFutureRequest request, HttpServletRequest http) {
+        return handle(() -> service.revokeFutureDiscount(configId, request, http.getRemoteAddr()));
+    }
+    @PutMapping("/transport/{assignmentId}/future") public ResponseEntity<?> correctFutureTransport(
+            @PathVariable Long assignmentId, @RequestBody TransportCorrectionRequest request, HttpServletRequest http) {
+        return handle(() -> service.correctFutureTransport(assignmentId, request, http.getRemoteAddr()));
+    }
 
     private ResponseEntity<?> handle(Action action) {
         try { return ResponseEntity.ok(action.run()); }

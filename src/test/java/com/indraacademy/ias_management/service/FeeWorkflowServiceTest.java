@@ -6,12 +6,16 @@ import com.indraacademy.ias_management.dto.FeeWorkflowDtos.WorkflowChangeResult;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.AssignmentRequest;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.StudentPreview;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.GenerationResult;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.DiscountExpireRequest;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.RevokeFutureRequest;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.TransportCorrectionRequest;
 import com.indraacademy.ias_management.dto.RecalculationEntryDto;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.FeeConfigType;
 import com.indraacademy.ias_management.entity.FeeHead;
 import com.indraacademy.ias_management.entity.StudentFeeConfig;
+import com.indraacademy.ias_management.entity.StudentTransportFeeAssignment;
 import com.indraacademy.ias_management.entity.SchoolFeeSettings;
 import com.indraacademy.ias_management.entity.MidSessionFeePolicy;
 import com.indraacademy.ias_management.entity.SnapshotStatus;
@@ -172,6 +176,63 @@ class FeeWorkflowServiceTest {
     }
 
     @Test
+    void revokeFutureDiscount_preservesRecordAndAddsAuditMetadata() {
+        StudentFeeConfig config = discountConfig(LocalDate.now().plusMonths(2).withDayOfMonth(1));
+        when(feeConfigRepository.findById(31L)).thenReturn(Optional.of(config));
+
+        service.revokeFutureDiscount(31L, new RevokeFutureRequest("Award entered in error"), "127.0.0.1");
+
+        assertThat(config.getRevokedAt()).isNotNull();
+        assertThat(config.getRevokedBy()).isEqualTo("admin1");
+        assertThat(config.getRevokeReason()).isEqualTo("Award entered in error");
+        verify(feeConfigRepository).save(config);
+        verify(auditService).log(eq("admin1"), eq("ADMIN"), eq("REVOKE_FUTURE_STUDENT_DISCOUNT"),
+                eq("StudentFeeConfig"), eq("31"), isNull(), anyString(), eq("127.0.0.1"));
+    }
+
+    @Test
+    void revokeActiveDiscount_isRejectedWithoutChangingHistory() {
+        StudentFeeConfig config = discountConfig(LocalDate.now().minusMonths(1).withDayOfMonth(1));
+        when(feeConfigRepository.findById(31L)).thenReturn(Optional.of(config));
+
+        assertThatThrownBy(() -> service.revokeFutureDiscount(31L,
+                new RevokeFutureRequest("Wrong award"), "127.0.0.1"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("future discount");
+
+        verify(feeConfigRepository, never()).save(any());
+    }
+
+    @Test
+    void expireDiscount_closesRuleAtPriorMonthEnd() {
+        StudentFeeConfig config = discountConfig(LocalDate.of(2026, 8, 1));
+        when(feeConfigRepository.findById(31L)).thenReturn(Optional.of(config));
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
+                .thenReturn(List.of());
+
+        WorkflowChangeResult result = service.expireDiscount(31L,
+                new DiscountExpireRequest(LocalDate.of(2026, 10, 18), "Scholarship ended"), "127.0.0.1");
+
+        assertThat(config.getValidUntil()).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(result.savedStudents()).isEqualTo(1);
+        verify(feeConfigRepository).save(config);
+    }
+
+    @Test
+    void correctFutureTransport_updatesOnlyFutureEntry() {
+        StudentTransportFeeAssignment assignment = new StudentTransportFeeAssignment();
+        assignment.setId(41L); assignment.setSchoolId(1L); assignment.setStudentId("S1");
+        assignment.setAcademicSession("2026-2027"); assignment.setEffectiveFrom(LocalDate.now().plusMonths(1));
+        assignment.setEnabled(true); assignment.setDistance(5.0);
+        when(transportRepository.findByIdAndSchoolId(41L, 1L)).thenReturn(Optional.of(assignment));
+
+        service.correctFutureTransport(41L, new TransportCorrectionRequest(true, 8.5, "Route corrected"), "127.0.0.1");
+
+        assertThat(assignment.getDistance()).isEqualTo(8.5);
+        assertThat(assignment.getChangedBy()).isEqualTo("admin1");
+        verify(transportRepository).save(assignment);
+    }
+
+    @Test
     void preview_prorationPolicy_skipsEarlierMonthAndProratesEffectiveMonth() {
         Student student = student("S1");
         student.setName("Student One");
@@ -295,6 +356,15 @@ class FeeWorkflowServiceTest {
     private FeeHead feeHead() {
         FeeHead value = new FeeHead();
         value.setId(20L);
+        return value;
+    }
+
+    private StudentFeeConfig discountConfig(LocalDate validFrom) {
+        StudentFeeConfig value = new StudentFeeConfig();
+        value.setId(31L); value.setSchoolId(1L); value.setStudentId("S1");
+        value.setAcademicSession(session()); value.setFeeHead(feeHead());
+        value.setConfigType(FeeConfigType.DISCOUNT_PERCENT); value.setValue(BigDecimal.TEN);
+        value.setValidFrom(validFrom); value.setReason("Scholarship");
         return value;
     }
 
