@@ -10,6 +10,8 @@ import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
 import com.indraacademy.ias_management.entity.StudentOneTimeFeeCharged;
 import com.indraacademy.ias_management.repository.AllocationRefundRepository;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
+import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
@@ -36,9 +38,8 @@ import java.util.stream.Collectors;
 /**
  * Phase 5A — explicit, admin-only, audited recalculation of a single StudentFees row's
  * snapshot (and its StudentFeesLineItem breakdown), using the exact same canonical pipeline
- * generation uses (FeeCalculationService.computeMonthSnapshot). Recalculation is NEVER
- * triggered automatically by editing FeeStructureRule/FeeHead/bus pricing/StudentFeeConfig —
- * it only ever runs when an admin explicitly invokes {@link #recalculateOne} with a reason.
+ * generation uses (FeeCalculationService.computeMonthSnapshot). Recalculation only runs from
+ * an explicit admin action, including the fee-workflow's explicit discount/transport save.
  * <p>
  * <b>Safety invariant</b>: only a row with zero financial activity (never allocated to, never
  * refunded/reversed against, not paid/manually-paid, no recorded amountPaid) is eligible —
@@ -75,6 +76,8 @@ public class StudentFeesRecalculationService {
     @Autowired private StudentOneTimeFeeChargedRepository studentOneTimeFeeChargedRepository;
     @Autowired private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Autowired private AllocationRefundRepository allocationRefundRepository;
+    @Autowired private AcademicSessionRepository academicSessionRepository;
+    @Autowired private InvoiceRepository invoiceRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -140,6 +143,22 @@ public class StudentFeesRecalculationService {
      */
     @Transactional
     public RecalculationEntryDto recalculateOne(String studentId, String session, Integer month, String reason, String ip) {
+        return recalculateOneInternal(studentId, session, month, reason, ip, null, null);
+    }
+
+    /** Recalculates an eligible row using a new effective transport state. The transport
+     * fields are written only after the locked row passes every financial-activity guard. */
+    @Transactional
+    public RecalculationEntryDto recalculateOneWithTransport(String studentId, String session, Integer month,
+                                                              boolean takesBus, Double distance,
+                                                              String reason, String ip) {
+        return recalculateOneInternal(studentId, session, month, reason, ip, takesBus,
+                takesBus ? distance : null);
+    }
+
+    private RecalculationEntryDto recalculateOneInternal(String studentId, String session, Integer month,
+                                                          String reason, String ip,
+                                                          Boolean transportOverride, Double distanceOverride) {
         String actorUsername = securityUtil.getUsername();
         String actorRole = securityUtil.getRole();
         RecalculationEntryDto dto = new RecalculationEntryDto();
@@ -191,8 +210,13 @@ public class StudentFeesRecalculationService {
         SnapshotStatus oldStatus = fee.getSnapshotStatus();
         LocalDateTime oldComputedAt = fee.getAmountComputedAt();
 
-        FeeCalculationService.MonthSnapshot snapshot = computeSnapshotFor(fee, schoolId, session, month);
+        FeeCalculationService.MonthSnapshot snapshot = computeSnapshotFor(fee, schoolId, session, month,
+                transportOverride, distanceOverride);
 
+        if (transportOverride != null) {
+            fee.setTakesBus(transportOverride);
+            fee.setDistance(Boolean.TRUE.equals(transportOverride) && distanceOverride != null ? distanceOverride : 0.0);
+        }
         fee.setBaseAmountDue(snapshot.baseAmountDue());
         fee.setBusFeeDue(snapshot.busFeeDue());
         fee.setDiscountAmount(snapshot.discountAmount());
@@ -276,6 +300,12 @@ public class StudentFeesRecalculationService {
      * true by construction rather than by convention.
      */
     private FeeCalculationService.MonthSnapshot computeSnapshotFor(StudentFees fee, Long schoolId, String session, Integer month) {
+        return computeSnapshotFor(fee, schoolId, session, month, null, null);
+    }
+
+    private FeeCalculationService.MonthSnapshot computeSnapshotFor(StudentFees fee, Long schoolId, String session,
+                                                                     Integer month, Boolean transportOverride,
+                                                                     Double distanceOverride) {
         School school = schoolRepository.findById(schoolId).orElse(null);
         int startMonth = school != null ? school.getAcademicYearStartMonth() : 4;
         int[] years = feeCalculationService.parseSession(session);
@@ -288,7 +318,8 @@ public class StudentFeesRecalculationService {
 
         return feeCalculationService.computeMonthSnapshot(
                 schoolId, session, fee.getClassName(), fee.getStudentId(), month, isFirstRow, asOfDate,
-                fee.getTakesBus(), fee.getDistance(), alreadyChargedOneTimeFeeHeadIds);
+                transportOverride != null ? transportOverride : fee.getTakesBus(),
+                transportOverride != null ? distanceOverride : fee.getDistance(), alreadyChargedOneTimeFeeHeadIds);
     }
 
     /** True iff this row's month is the earliest month present for this student+session —
@@ -332,6 +363,14 @@ public class StudentFeesRecalculationService {
      * when eligible, otherwise a human-readable rejection reason.
      */
     private String ineligibilityReason(StudentFees fee) {
+        boolean finalizedInvoiceExists = academicSessionRepository
+                .findBySchoolIdAndLabel(fee.getSchoolId(), fee.getYear())
+                .map(session -> invoiceRepository.existsFinalizedForStudentMonth(
+                        fee.getSchoolId(), fee.getStudentId(), session.getId(), fee.getMonth()))
+                .orElse(false);
+        if (finalizedInvoiceExists) {
+            return "A finalized invoice already exists for this month.";
+        }
         if (fee.getPaid() == null) {
             return "Row's paid status is unknown — refusing to guess; not eligible for recalculation.";
         }

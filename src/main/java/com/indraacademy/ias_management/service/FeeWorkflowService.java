@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.*;
+import com.indraacademy.ias_management.dto.RecalculationEntryDto;
 import com.indraacademy.ias_management.entity.*;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -30,6 +31,7 @@ public class FeeWorkflowService {
     private final FeeHeadRepository feeHeadRepository;
     private final StudentFeeConfigRepository feeConfigRepository;
     private final FeeCalculationService calculationService;
+    private final StudentFeesRecalculationService recalculationService;
     private final AuditService auditService;
     private final SecurityUtil securityUtil;
     private final TransactionTemplate transactionTemplate;
@@ -46,6 +48,7 @@ public class FeeWorkflowService {
                               FeeHeadRepository feeHeadRepository,
                               StudentFeeConfigRepository feeConfigRepository,
                               FeeCalculationService calculationService,
+                              StudentFeesRecalculationService recalculationService,
                               AuditService auditService,
                               SecurityUtil securityUtil,
                               PlatformTransactionManager transactionManager) {
@@ -61,6 +64,7 @@ public class FeeWorkflowService {
         this.feeHeadRepository = feeHeadRepository;
         this.feeConfigRepository = feeConfigRepository;
         this.calculationService = calculationService;
+        this.recalculationService = recalculationService;
         this.auditService = auditService;
         this.securityUtil = securityUtil;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
@@ -202,8 +206,7 @@ public class FeeWorkflowService {
         return results;
     }
 
-    @Transactional
-    public List<StudentTransportFeeAssignment> changeTransport(TransportChangeRequest request, String ip) {
+    public WorkflowChangeResult changeTransport(TransportChangeRequest request, String ip) {
         if (request == null || request.studentIds() == null || request.studentIds().isEmpty()
                 || request.effectiveFrom() == null) throw new IllegalArgumentException("Students and effective date are required.");
         validateSession(request.academicSession());
@@ -213,27 +216,17 @@ public class FeeWorkflowService {
         String reason = requireReason(request.reason());
         Long schoolId = securityUtil.getSchoolId();
         List<Student> students = requireStudents(schoolId, request.studentIds());
-        List<StudentTransportFeeAssignment> saved = new ArrayList<>();
+        List<StudentRecalculationResult> results = new ArrayList<>();
         for (Student student : students) {
-            List<StudentTransportFeeAssignment> history = transportRepository
-                    .findBySchoolIdAndStudentIdAndAcademicSessionOrderByEffectiveFromDesc(schoolId, student.getStudentId(), request.academicSession());
-            history.stream().filter(h -> h.getEffectiveTo() == null && h.getEffectiveFrom().isBefore(request.effectiveFrom()))
-                    .forEach(h -> { h.setEffectiveTo(request.effectiveFrom().minusDays(1)); transportRepository.save(h); });
-            StudentTransportFeeAssignment change = new StudentTransportFeeAssignment();
-            change.setSchoolId(schoolId);
-            change.setStudentId(student.getStudentId());
-            change.setAcademicSession(request.academicSession());
-            change.setEnabled(request.enabled());
-            change.setDistance(request.enabled() ? request.distance() : null);
-            change.setEffectiveFrom(request.effectiveFrom());
-            change.setReason(reason);
-            change.setChangedBy(securityUtil.getUsername());
-            saved.add(transportRepository.save(change));
+            try {
+                StudentRecalculationResult result = transactionTemplate.execute(status ->
+                        applyTransportForStudent(student, request, reason, ip));
+                results.add(Objects.requireNonNull(result));
+            } catch (RuntimeException ex) {
+                results.add(new StudentRecalculationResult(student.getStudentId(), false, List.of(), safeMessage(ex)));
+            }
         }
-        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "CHANGE_STUDENT_TRANSPORT_FEES",
-                "StudentTransportFeeAssignment", request.academicSession(), null,
-                request.studentIds() + ", enabled=" + request.enabled() + ", effective=" + request.effectiveFrom(), ip);
-        return saved;
+        return summarizeChanges(students.size(), results);
     }
 
     @Transactional(readOnly = true)
@@ -244,8 +237,7 @@ public class FeeWorkflowService {
         return transportRepository.findBySchoolIdAndStudentIdAndAcademicSessionOrderByEffectiveFromDesc(schoolId, studentId, session);
     }
 
-    @Transactional
-    public List<StudentFeeConfig> applyBulkDiscount(BulkDiscountRequest request, String ip) {
+    public WorkflowChangeResult applyBulkDiscount(BulkDiscountRequest request, String ip) {
         validateBulkDiscount(request);
         Long schoolId = securityUtil.getSchoolId();
         List<Student> students = requireStudents(schoolId, request.studentIds());
@@ -254,31 +246,116 @@ public class FeeWorkflowService {
                 .orElseThrow(() -> new IllegalArgumentException("Academic session not found."));
         FeeHead feeHead = feeHeadRepository.findByIdAndSchoolId(request.feeHeadId(), schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Fee head not found."));
+        List<StudentRecalculationResult> results = new ArrayList<>();
         for (Student student : students) {
-            if (feeConfigRepository.existsOverlapping(schoolId, student.getStudentId(), session.getId(), feeHead.getId(),
-                    request.validFrom(), request.validUntil())) {
-                throw new IllegalArgumentException("An overlapping discount already exists for student " + student.getStudentId() + ".");
+            try {
+                StudentRecalculationResult result = transactionTemplate.execute(status ->
+                        applyDiscountForStudent(student, session, feeHead, request, ip));
+                results.add(Objects.requireNonNull(result));
+            } catch (RuntimeException ex) {
+                results.add(new StudentRecalculationResult(student.getStudentId(), false, List.of(), safeMessage(ex)));
             }
         }
-        List<StudentFeeConfig> saved = new ArrayList<>();
-        for (Student student : students) {
-            StudentFeeConfig config = new StudentFeeConfig();
-            config.setSchoolId(schoolId);
-            config.setStudentId(student.getStudentId());
-            config.setAcademicSession(session);
-            config.setFeeHead(feeHead);
-            config.setConfigType(request.configType());
-            config.setValue(request.value());
-            config.setValidFrom(request.validFrom());
-            config.setValidUntil(request.validUntil());
-            config.setReason(request.reason().trim());
-            config.setApprovedBy(securityUtil.getUsername());
-            saved.add(feeConfigRepository.save(config));
+        return summarizeChanges(students.size(), results);
+    }
+
+    private StudentRecalculationResult applyTransportForStudent(Student student, TransportChangeRequest request,
+                                                                 String reason, String ip) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<StudentTransportFeeAssignment> history = transportRepository
+                .findBySchoolIdAndStudentIdAndAcademicSessionOrderByEffectiveFromDesc(
+                        schoolId, student.getStudentId(), request.academicSession());
+        if (history.stream().anyMatch(value -> value.getEffectiveFrom().equals(request.effectiveFrom()))) {
+            throw new IllegalArgumentException("A transport change already exists on this effective date.");
         }
+        LocalDate effectiveUntil = history.stream()
+                .map(StudentTransportFeeAssignment::getEffectiveFrom)
+                .filter(value -> value.isAfter(request.effectiveFrom()))
+                .min(LocalDate::compareTo)
+                .map(value -> value.minusDays(1))
+                .orElse(null);
+        history.stream().filter(value -> value.getEffectiveTo() == null && value.getEffectiveFrom().isBefore(request.effectiveFrom()))
+                .forEach(value -> { value.setEffectiveTo(request.effectiveFrom().minusDays(1)); transportRepository.save(value); });
+
+        StudentTransportFeeAssignment change = new StudentTransportFeeAssignment();
+        change.setSchoolId(schoolId);
+        change.setStudentId(student.getStudentId());
+        change.setAcademicSession(request.academicSession());
+        change.setEnabled(request.enabled());
+        change.setDistance(request.enabled() ? request.distance() : null);
+        change.setEffectiveFrom(request.effectiveFrom());
+        change.setEffectiveTo(effectiveUntil);
+        change.setReason(reason);
+        change.setChangedBy(securityUtil.getUsername());
+        transportRepository.save(change);
+
+        List<Integer> months = generatedMonthsInRange(student.getStudentId(), request.academicSession(),
+                request.effectiveFrom(), effectiveUntil);
+        List<RecalculationEntryDto> recalculated = months.stream()
+                .map(month -> recalculationService.recalculateOneWithTransport(student.getStudentId(), request.academicSession(),
+                        month, request.enabled(), request.distance(), reason, ip))
+                .toList();
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "CHANGE_STUDENT_TRANSPORT_FEES",
+                "StudentTransportFeeAssignment", student.getStudentId(), null,
+                "enabled=" + request.enabled() + ", effective=" + request.effectiveFrom(), ip);
+        return new StudentRecalculationResult(student.getStudentId(), true, recalculated,
+                months.isEmpty() ? "Transport saved; no existing generated months were affected." : null);
+    }
+
+    private StudentRecalculationResult applyDiscountForStudent(Student student, AcademicSession session,
+                                                                FeeHead feeHead, BulkDiscountRequest request,
+                                                                String ip) {
+        Long schoolId = securityUtil.getSchoolId();
+        if (feeConfigRepository.existsOverlapping(schoolId, student.getStudentId(), session.getId(), feeHead.getId(),
+                request.validFrom(), request.validUntil())) {
+            throw new IllegalArgumentException("An overlapping discount already exists.");
+        }
+        StudentFeeConfig config = new StudentFeeConfig();
+        config.setSchoolId(schoolId);
+        config.setStudentId(student.getStudentId());
+        config.setAcademicSession(session);
+        config.setFeeHead(feeHead);
+        config.setConfigType(request.configType());
+        config.setValue(request.value());
+        config.setValidFrom(request.validFrom());
+        config.setValidUntil(request.validUntil());
+        config.setReason(request.reason().trim());
+        config.setApprovedBy(securityUtil.getUsername());
+        feeConfigRepository.save(config);
+
+        List<Integer> months = generatedMonthsInRange(student.getStudentId(), session.getLabel(),
+                request.validFrom(), request.validUntil());
+        List<RecalculationEntryDto> recalculated = months.stream()
+                .map(month -> recalculationService.recalculateOne(student.getStudentId(), session.getLabel(), month,
+                        request.reason(), ip))
+                .toList();
         auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "APPLY_BULK_STUDENT_DISCOUNT",
-                "StudentFeeConfig", String.valueOf(session.getId()), null,
-                request.studentIds() + ", feeHead=" + feeHead.getId() + ", type=" + request.configType(), ip);
-        return saved;
+                "StudentFeeConfig", student.getStudentId(), null,
+                "feeHead=" + feeHead.getId() + ", type=" + request.configType(), ip);
+        return new StudentRecalculationResult(student.getStudentId(), true, recalculated,
+                months.isEmpty() ? "Discount saved; no existing generated months were affected." : null);
+    }
+
+    private List<Integer> generatedMonthsInRange(String studentId, String session, LocalDate from, LocalDate until) {
+        Long schoolId = securityUtil.getSchoolId();
+        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
+        int[] years = calculationService.parseSession(session);
+        return studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, session).stream()
+                .map(StudentFees::getMonth)
+                .filter(Objects::nonNull)
+                .filter(month -> {
+                    LocalDate date = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
+                    return !date.withDayOfMonth(1).isBefore(from.withDayOfMonth(1))
+                            && (until == null || !date.withDayOfMonth(1).isAfter(until.withDayOfMonth(1)));
+                })
+                .distinct().sorted().toList();
+    }
+
+    private WorkflowChangeResult summarizeChanges(int requested, List<StudentRecalculationResult> students) {
+        int saved = (int) students.stream().filter(StudentRecalculationResult::changeSaved).count();
+        int recalculated = students.stream().flatMap(value -> value.months().stream()).mapToInt(value -> value.isOk() ? 1 : 0).sum();
+        int skipped = students.stream().flatMap(value -> value.months().stream()).mapToInt(value -> value.isOk() ? 0 : 1).sum();
+        return new WorkflowChangeResult(requested, saved, recalculated, skipped, students);
     }
 
     private void validateBulkDiscount(BulkDiscountRequest request) {

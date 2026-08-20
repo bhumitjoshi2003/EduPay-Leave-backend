@@ -89,4 +89,17 @@ public final class FeeWorkflowDtos {
             LocalDate validFrom,
             LocalDate validUntil,
             String reason) {}
+
+    public record StudentRecalculationResult(
+            String studentId,
+            boolean changeSaved,
+            List<RecalculationEntryDto> months,
+            String message) {}
+
+    public record WorkflowChangeResult(
+            int requestedStudents,
+            int savedStudents,
+            int recalculatedMonths,
+            int skippedMonths,
+            List<StudentRecalculationResult> students) {}
 }

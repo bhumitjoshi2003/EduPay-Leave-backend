@@ -8,6 +8,8 @@ import com.indraacademy.ias_management.entity.SnapshotStatus;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
 import com.indraacademy.ias_management.repository.AllocationRefundRepository;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
+import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
@@ -50,6 +52,8 @@ class StudentFeesRecalculationServiceTest {
     @Mock private StudentOneTimeFeeChargedRepository studentOneTimeFeeChargedRepository;
     @Mock private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Mock private AllocationRefundRepository allocationRefundRepository;
+    @Mock private AcademicSessionRepository academicSessionRepository;
+    @Mock private InvoiceRepository invoiceRepository;
     @Mock private AuditService auditService;
     @Mock private SecurityUtil securityUtil;
 
@@ -69,6 +73,8 @@ class StudentFeesRecalculationServiceTest {
         ReflectionTestUtils.setField(service, "studentOneTimeFeeChargedRepository", studentOneTimeFeeChargedRepository);
         ReflectionTestUtils.setField(service, "paymentAllocationRepository", paymentAllocationRepository);
         ReflectionTestUtils.setField(service, "allocationRefundRepository", allocationRefundRepository);
+        ReflectionTestUtils.setField(service, "academicSessionRepository", academicSessionRepository);
+        ReflectionTestUtils.setField(service, "invoiceRepository", invoiceRepository);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
@@ -79,6 +85,7 @@ class StudentFeesRecalculationServiceTest {
 
         lenient().when(paymentAllocationRepository.sumAmountPaiseByStudentFeesId(any())).thenReturn(0L);
         lenient().when(allocationRefundRepository.sumAmountPaiseByStudentFeesId(any())).thenReturn(0L);
+        lenient().when(academicSessionRepository.findBySchoolIdAndLabel(anyLong(), anyString())).thenReturn(java.util.Optional.empty());
         lenient().when(studentOneTimeFeeChargedRepository.findFeeHeadIdBySchoolIdAndStudentId(any(), any())).thenReturn(Set.of());
         lenient().when(studentFeesLineItemRepository.findByStudentFeesIdAndSupersededAtIsNullOrderById(any())).thenReturn(List.of());
         lenient().when(feeCalculationService.validateFeeConfiguration(any(), any(), any()))
@@ -173,6 +180,65 @@ class StudentFeesRecalculationServiceTest {
         long expectedTotalPaise = fee.getBaseAmountDue().movePointRight(2).longValueExact()
                 + fee.getBusFeeDue().movePointRight(2).longValueExact();
         assertThat(lineItemTotalPaise).isEqualTo(expectedTotalPaise); // SUM(active lineItem.net) == schoolFeeDue
+    }
+
+    @Test
+    void recalculateOneWithTransport_cleanRow_usesAndPersistsNewTransportState() {
+        StudentFees fee = unpaidRow(3, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
+        fee.setTakesBus(false);
+        fee.setDistance(0.0);
+        stubSnapshot(new FeeCalculationService.MonthSnapshot(
+                BigDecimal.valueOf(2000), BigDecimal.valueOf(700), BigDecimal.ZERO,
+                "{}", List.of(), SnapshotStatus.COMPUTED, List.of(busLine(70000L))));
+
+        RecalculationEntryDto result = service.recalculateOneWithTransport(
+                STUDENT_ID, SESSION, 3, true, 12.5, "Started transport", "127.0.0.1");
+
+        assertThat(result.isOk()).isTrue();
+        assertThat(fee.getTakesBus()).isTrue();
+        assertThat(fee.getDistance()).isEqualTo(12.5);
+        verify(feeCalculationService).computeMonthSnapshot(eq(SCHOOL_ID), eq(SESSION), eq("6A"),
+                eq(STUDENT_ID), eq(3), anyBoolean(), any(), eq(true), eq(12.5), any());
+    }
+
+    @Test
+    void recalculateOneWithTransport_paidRow_doesNotChangeTransportOrRecalculate() {
+        StudentFees fee = unpaidRow(3, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
+        fee.setPaid(true);
+        fee.setTakesBus(false);
+        fee.setDistance(0.0);
+
+        RecalculationEntryDto result = service.recalculateOneWithTransport(
+                STUDENT_ID, SESSION, 3, true, 12.5, "Started transport", "127.0.0.1");
+
+        assertThat(result.isOk()).isFalse();
+        assertThat(result.getMessage()).contains("marked paid");
+        assertThat(fee.getTakesBus()).isFalse();
+        assertThat(fee.getDistance()).isZero();
+        verify(feeCalculationService, never()).computeMonthSnapshot(any(), any(), any(), any(),
+                anyInt(), anyBoolean(), any(), any(), any(), any());
+        verify(studentFeesRepository, never()).save(fee);
+    }
+
+    @Test
+    void recalculateOneWithTransport_finalizedInvoice_doesNotChangeTransportOrRecalculate() {
+        StudentFees fee = unpaidRow(3, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
+        fee.setTakesBus(false);
+        fee.setDistance(0.0);
+        com.indraacademy.ias_management.entity.AcademicSession academicSession =
+                new com.indraacademy.ias_management.entity.AcademicSession();
+        academicSession.setId(10L);
+        when(academicSessionRepository.findBySchoolIdAndLabel(SCHOOL_ID, SESSION)).thenReturn(java.util.Optional.of(academicSession));
+        when(invoiceRepository.existsFinalizedForStudentMonth(SCHOOL_ID, STUDENT_ID, 10L, 3)).thenReturn(true);
+
+        RecalculationEntryDto result = service.recalculateOneWithTransport(
+                STUDENT_ID, SESSION, 3, true, 12.5, "Started transport", "127.0.0.1");
+
+        assertThat(result.isOk()).isFalse();
+        assertThat(result.getMessage()).contains("finalized invoice");
+        assertThat(fee.getTakesBus()).isFalse();
+        verify(feeCalculationService, never()).computeMonthSnapshot(any(), any(), any(), any(),
+                anyInt(), anyBoolean(), any(), any(), any(), any());
     }
 
     @Test
