@@ -55,6 +55,8 @@ public final class FeeWorkflowDtos {
             BigDecimal discountAmount,
             BigDecimal busFee,
             BigDecimal totalAmount,
+            LocalDate billingEffectiveDate,
+            BigDecimal prorationFactor,
             String message) {}
 
     public record StudentPreview(

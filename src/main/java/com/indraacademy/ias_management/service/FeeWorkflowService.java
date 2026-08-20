@@ -143,15 +143,17 @@ public class FeeWorkflowService {
         Long schoolId = securityUtil.getSchoolId();
         List<Student> students = requireStudents(schoolId, request.studentIds());
         List<Integer> months = normalizeMonths(request.months());
+        SchoolFeeSettings settings = getSettings();
         List<StudentFeeAssignment> saved = new ArrayList<>();
         for (Student student : students) {
+            PolicyContext policy = resolvePolicyContext(student, request.academicSession(), request.effectiveDate(), settings);
             StudentFeeAssignment assignment = assignmentRepository
                     .findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(), request.academicSession())
                     .orElseGet(StudentFeeAssignment::new);
             assignment.setSchoolId(schoolId);
             assignment.setStudentId(student.getStudentId());
             assignment.setAcademicSession(request.academicSession());
-            assignment.setEffectiveDate(request.effectiveDate());
+            assignment.setEffectiveDate(policy.effectiveDate());
             assignment.setSelectedMonths(joinMonths(months));
             assignment.setExcluded(excluded);
             assignment.setExclusionReason(excluded ? requireReason(request.reason()) : null);
@@ -173,7 +175,8 @@ public class FeeWorkflowService {
         Long schoolId = securityUtil.getSchoolId();
         List<Student> students = requireStudents(schoolId, request.studentIds());
         List<Integer> months = normalizeMonths(request.months());
-        return students.stream().map(s -> previewStudent(s, request.academicSession(), months)).toList();
+        SchoolFeeSettings settings = getSettings();
+        return students.stream().map(s -> previewStudent(s, request.academicSession(), request.effectiveDate(), months, settings)).toList();
     }
 
     public List<GenerationResult> generate(AssignmentRequest request, String ip) {
@@ -193,7 +196,7 @@ public class FeeWorkflowService {
         for (Student student : students) {
             try {
                 GenerationResult result = transactionTemplate.execute(status ->
-                        generateForStudent(student, request.academicSession(), months));
+                        generateForStudent(student, request.academicSession(), request.effectiveDate(), months, settings));
                 results.add(Objects.requireNonNull(result));
             } catch (RuntimeException ex) {
                 transactionTemplate.executeWithoutResult(status ->
@@ -379,7 +382,8 @@ public class FeeWorkflowService {
         }
     }
 
-    private StudentPreview previewStudent(Student student, String session, List<Integer> months) {
+    private StudentPreview previewStudent(Student student, String session, LocalDate requestedEffectiveDate,
+                                          List<Integer> months, SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
         FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, student.getClassName());
         if (!config.valid()) return new StudentPreview(student.getStudentId(), student.getName(), false, BigDecimal.ZERO, List.of(), config.reason());
@@ -389,27 +393,39 @@ public class FeeWorkflowService {
         List<MonthPreview> rows = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
         boolean first = true;
+        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, settings);
         for (int month : months) {
+            MonthDecision decision = monthDecision(month, session, policy, startMonth);
+            if (!decision.eligible()) {
+                rows.add(new MonthPreview(month, false, false, BigDecimal.ZERO, BigDecimal.ZERO,
+                        BigDecimal.ZERO, BigDecimal.ZERO, policy.effectiveDate(), null, decision.message()));
+                continue;
+            }
             StudentFees existing = studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(student.getStudentId(), schoolId, session, month);
             if (existing != null) {
                 rows.add(new MonthPreview(month, true, false, existing.getBaseAmountDue(), existing.getDiscountAmount(),
-                        existing.getBusFeeDue(), safe(existing.getBaseAmountDue()).add(safe(existing.getBusFeeDue())), "Already generated"));
+                        existing.getBusFeeDue(), safe(existing.getBaseAmountDue()).add(safe(existing.getBusFeeDue())),
+                        policy.effectiveDate(), existing.getProrationFactor(), "Already generated"));
                 continue;
             }
             LocalDate asOf = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
             TransportState transport = transportState(student, session, asOf);
             FeeCalculationService.MonthSnapshot snapshot = calculationService.computeMonthSnapshot(schoolId, session,
                     student.getClassName(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
+            if (decision.prorated()) snapshot = calculationService.prorateRecurringSnapshot(snapshot, policy.effectiveDate());
             BigDecimal amount = safe(snapshot.baseAmountDue()).add(safe(snapshot.busFeeDue()));
             total = total.add(amount);
-            rows.add(new MonthPreview(month, false, true, snapshot.baseAmountDue(), snapshot.discountAmount(), snapshot.busFeeDue(), amount, null));
+            rows.add(new MonthPreview(month, false, true, snapshot.baseAmountDue(), snapshot.discountAmount(), snapshot.busFeeDue(), amount,
+                    policy.effectiveDate(), decision.prorated() ? calculationService.prorationFactor(policy.effectiveDate()) : BigDecimal.ONE,
+                    decision.message()));
             charged.addAll(snapshot.newlyChargedOneTimeFeeHeadIds());
             first = false;
         }
         return new StudentPreview(student.getStudentId(), student.getName(), true, total, rows, null);
     }
 
-    private GenerationResult generateForStudent(Student student, String session, List<Integer> months) {
+    private GenerationResult generateForStudent(Student student, String session, LocalDate requestedEffectiveDate,
+                                                List<Integer> months, SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
         StudentFeeAssignment assignment = assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(), session)
                 .orElse(null);
@@ -423,14 +439,18 @@ public class FeeWorkflowService {
         if (!config.valid()) throw new IllegalStateException(config.reason());
         int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
         int[] years = calculationService.parseSession(session);
+        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, settings);
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         boolean first = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session).isEmpty();
         for (int month : months) {
+            MonthDecision decision = monthDecision(month, session, policy, startMonth);
+            if (!decision.eligible()) { skipped++; continue; }
             if (studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(student.getStudentId(), schoolId, session, month) != null) { skipped++; continue; }
             LocalDate asOf = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
             TransportState transport = transportState(student, session, asOf);
             FeeCalculationService.MonthSnapshot snapshot = calculationService.computeMonthSnapshot(schoolId, session,
                     student.getClassName(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
+            if (decision.prorated()) snapshot = calculationService.prorateRecurringSnapshot(snapshot, policy.effectiveDate());
             StudentFees fee = new StudentFees();
             fee.setSchoolId(schoolId); fee.setStudentId(student.getStudentId()); fee.setClassName(student.getClassName());
             fee.setMonth(month); fee.setYear(session); fee.setPaid(false); fee.setTakesBus(transport.enabled());
@@ -438,6 +458,8 @@ public class FeeWorkflowService {
             fee.setBaseAmountDue(snapshot.baseAmountDue()); fee.setBusFeeDue(snapshot.busFeeDue());
             fee.setDiscountAmount(snapshot.discountAmount()); fee.setAmountComputedAt(LocalDateTime.now());
             fee.setAmountRuleSnapshot(snapshot.ruleSnapshotJson()); fee.setSnapshotStatus(snapshot.status());
+            fee.setBillingEffectiveDate(policy.effectiveDate()); fee.setMidSessionFeePolicy(policy.policy());
+            fee.setProrationFactor(decision.prorated() ? calculationService.prorationFactor(policy.effectiveDate()) : BigDecimal.ONE);
             studentFeesRepository.save(fee);
             for (FeeCalculationService.LineItemSnapshot li : snapshot.lineItems()) {
                 StudentFeesLineItem item = new StudentFeesLineItem();
@@ -483,6 +505,52 @@ public class FeeWorkflowService {
     }
 
     private record TransportState(boolean enabled, Double distance) {}
+    private record PolicyContext(LocalDate effectiveDate, MidSessionFeePolicy policy,
+                                 LocalDate sessionStart, LocalDate sessionEnd, boolean midSession) {}
+    private record MonthDecision(boolean eligible, boolean prorated, String message) {}
+
+    private PolicyContext resolvePolicyContext(Student student, String session, LocalDate requestedEffectiveDate,
+                                               SchoolFeeSettings settings) {
+        Long schoolId = securityUtil.getSchoolId();
+        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
+        int[] years = calculationService.parseSession(session);
+        LocalDate sessionStart = calculationService.academicMonthStart(1, years[0], years[1], startMonth);
+        LocalDate sessionEnd = calculationService.academicMonthStart(12, years[0], years[1], startMonth).withDayOfMonth(
+                calculationService.academicMonthStart(12, years[0], years[1], startMonth).lengthOfMonth());
+        LocalDate effective = latest(requestedEffectiveDate, student.getJoiningDate(), settings.getActivationDate(), sessionStart);
+        MidSessionFeePolicy policy = settings.getMidSessionPolicy() != null
+                ? settings.getMidSessionPolicy() : MidSessionFeePolicy.FROM_EFFECTIVE_MONTH;
+        return new PolicyContext(effective, policy, sessionStart, sessionEnd, effective.isAfter(sessionStart));
+    }
+
+    private MonthDecision monthDecision(int month, String session, PolicyContext context, int startMonth) {
+        int[] years = calculationService.parseSession(session);
+        LocalDate monthStart = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
+        if (context.effectiveDate().isAfter(context.sessionEnd())) {
+            return new MonthDecision(false, false, "Effective billing date is after this academic session.");
+        }
+        LocalDate eligibleStart = context.midSession() && context.policy() == MidSessionFeePolicy.NEXT_MONTH
+                ? context.effectiveDate().withDayOfMonth(1).plusMonths(1)
+                : context.effectiveDate().withDayOfMonth(1);
+        if (monthStart.isBefore(eligibleStart)) {
+            String reason = context.policy() == MidSessionFeePolicy.NEXT_MONTH
+                    ? "Skipped by next-month admission policy."
+                    : "Before the student's effective billing month.";
+            return new MonthDecision(false, false, reason);
+        }
+        boolean prorated = context.midSession() && context.policy() == MidSessionFeePolicy.PRORATE_JOINING_MONTH
+                && monthStart.getYear() == context.effectiveDate().getYear()
+                && monthStart.getMonth() == context.effectiveDate().getMonth()
+                && context.effectiveDate().getDayOfMonth() > 1;
+        return new MonthDecision(true, prorated, prorated
+                ? "Recurring monthly and transport charges are prorated from " + context.effectiveDate() + "."
+                : null);
+    }
+
+    private LocalDate latest(LocalDate... values) {
+        return Arrays.stream(values).filter(Objects::nonNull).max(LocalDate::compareTo)
+                .orElseThrow(() -> new IllegalArgumentException("An effective billing date is required."));
+    }
     private long count(List<AssignmentRow> rows, StudentFeeAssignmentStatus status) { return rows.stream().filter(r -> r.status() == status).count(); }
     private StudentFeeAssignmentStatus deriveStatus(String studentId, Long schoolId, String session) {
         int count = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, session).size();

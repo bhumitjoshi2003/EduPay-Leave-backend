@@ -316,10 +316,17 @@ public class StudentFeesRecalculationService {
                 studentFeesLineItemRepository.findByStudentFeesIdAndSupersededAtIsNullOrderById(fee.getId());
         Set<Long> alreadyChargedOneTimeFeeHeadIds = buildAlreadyChargedOneTimeFeeHeadIds(fee, schoolId, currentActive);
 
-        return feeCalculationService.computeMonthSnapshot(
+        FeeCalculationService.MonthSnapshot snapshot = feeCalculationService.computeMonthSnapshot(
                 schoolId, session, fee.getClassName(), fee.getStudentId(), month, isFirstRow, asOfDate,
                 transportOverride != null ? transportOverride : fee.getTakesBus(),
                 transportOverride != null ? distanceOverride : fee.getDistance(), alreadyChargedOneTimeFeeHeadIds);
+        if (fee.getMidSessionFeePolicy() == com.indraacademy.ias_management.entity.MidSessionFeePolicy.PRORATE_JOINING_MONTH
+                && fee.getBillingEffectiveDate() != null
+                && fee.getBillingEffectiveDate().getYear() == asOfDate.getYear()
+                && fee.getBillingEffectiveDate().getMonth() == asOfDate.getMonth()) {
+            snapshot = feeCalculationService.prorateRecurringSnapshot(snapshot, fee.getBillingEffectiveDate());
+        }
+        return snapshot;
     }
 
     /** True iff this row's month is the earliest month present for this student+session —

@@ -3,12 +3,21 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.TransportChangeRequest;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.BulkDiscountRequest;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.WorkflowChangeResult;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.AssignmentRequest;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.StudentPreview;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.GenerationResult;
 import com.indraacademy.ias_management.dto.RecalculationEntryDto;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.FeeConfigType;
 import com.indraacademy.ias_management.entity.FeeHead;
 import com.indraacademy.ias_management.entity.StudentFeeConfig;
+import com.indraacademy.ias_management.entity.SchoolFeeSettings;
+import com.indraacademy.ias_management.entity.MidSessionFeePolicy;
+import com.indraacademy.ias_management.entity.SnapshotStatus;
+import com.indraacademy.ias_management.entity.FeeOperationalStatus;
+import com.indraacademy.ias_management.entity.StudentFeeAssignment;
+import com.indraacademy.ias_management.entity.StudentFeeAssignmentStatus;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.*;
@@ -25,6 +34,7 @@ import java.time.LocalDate;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -159,6 +169,113 @@ class FeeWorkflowServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not found in this school");
         verifyNoInteractions(transportRepository);
+    }
+
+    @Test
+    void preview_prorationPolicy_skipsEarlierMonthAndProratesEffectiveMonth() {
+        Student student = student("S1");
+        student.setName("Student One");
+        student.setClassName("6A");
+        student.setJoiningDate(LocalDate.of(2026, 8, 16));
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        SchoolFeeSettings settings = settings(MidSessionFeePolicy.PRORATE_JOINING_MONTH);
+        settings.setActivationDate(LocalDate.of(2026, 8, 10));
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+        when(calculationService.validateFeeConfiguration(1L, "2026-2027", "6A"))
+                .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
+        when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
+        when(transportRepository.effectiveOn(eq(1L), eq("S1"), eq("2026-2027"), any())).thenReturn(Optional.empty());
+        FeeCalculationService.MonthSnapshot full = snapshot("1000.00");
+        FeeCalculationService.MonthSnapshot prorated = snapshot("516.13");
+        when(calculationService.computeMonthSnapshot(eq(1L), eq("2026-2027"), eq("6A"), eq("S1"),
+                eq(5), eq(true), any(), eq(false), anyDouble(), any())).thenReturn(full);
+        when(calculationService.prorateRecurringSnapshot(full, LocalDate.of(2026, 8, 16))).thenReturn(prorated);
+        when(calculationService.prorationFactor(LocalDate.of(2026, 8, 16))).thenReturn(new BigDecimal("0.51612903"));
+
+        List<StudentPreview> preview = service.preview(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 8, 1), List.of(4, 5), null));
+
+        assertThat(preview.getFirst().months().get(0).eligible()).isFalse();
+        assertThat(preview.getFirst().months().get(0).message()).contains("Before");
+        assertThat(preview.getFirst().months().get(1).eligible()).isTrue();
+        assertThat(preview.getFirst().months().get(1).totalAmount()).isEqualByComparingTo("516.13");
+        assertThat(preview.getFirst().months().get(1).prorationFactor()).isEqualByComparingTo("0.51612903");
+    }
+
+    @Test
+    void preview_nextMonthPolicy_startsAfterEffectiveCalendarMonth() {
+        Student student = student("S1");
+        student.setName("Student One");
+        student.setClassName("6A");
+        student.setJoiningDate(LocalDate.of(2026, 8, 16));
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings(MidSessionFeePolicy.NEXT_MONTH)));
+        when(calculationService.validateFeeConfiguration(1L, "2026-2027", "6A"))
+                .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
+        when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
+        when(transportRepository.effectiveOn(eq(1L), eq("S1"), eq("2026-2027"), any())).thenReturn(Optional.empty());
+        when(calculationService.computeMonthSnapshot(eq(1L), eq("2026-2027"), eq("6A"), eq("S1"),
+                eq(6), eq(true), any(), eq(false), anyDouble(), any())).thenReturn(snapshot("1000.00"));
+
+        List<StudentPreview> preview = service.preview(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 8, 1), List.of(5, 6), null));
+
+        assertThat(preview.getFirst().months().get(0).eligible()).isFalse();
+        assertThat(preview.getFirst().months().get(0).message()).contains("next-month");
+        assertThat(preview.getFirst().months().get(1).eligible()).isTrue();
+    }
+
+    @Test
+    void generate_prorationPolicy_persistsEffectiveDatePolicyAndFactor() {
+        Student student = student("S1");
+        student.setName("Student One");
+        student.setClassName("6A");
+        student.setJoiningDate(LocalDate.of(2026, 8, 16));
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        SchoolFeeSettings settings = settings(MidSessionFeePolicy.PRORATE_JOINING_MONTH);
+        settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
+        settings.setActivationDate(LocalDate.of(2026, 8, 1));
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
+        assignment.setStatus(StudentFeeAssignmentStatus.READY);
+        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
+                .thenReturn(Optional.of(assignment));
+        when(calculationService.validateFeeConfiguration(1L, "2026-2027", "6A"))
+                .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
+        when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
+                .thenReturn(List.of());
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", 1L, "2026-2027", 5))
+                .thenReturn(null);
+        when(transportRepository.effectiveOn(eq(1L), eq("S1"), eq("2026-2027"), any())).thenReturn(Optional.empty());
+        FeeCalculationService.MonthSnapshot full = snapshot("1000.00");
+        FeeCalculationService.MonthSnapshot prorated = snapshot("516.13");
+        when(calculationService.computeMonthSnapshot(eq(1L), eq("2026-2027"), eq("6A"), eq("S1"),
+                eq(5), eq(true), any(), eq(false), anyDouble(), any())).thenReturn(full);
+        when(calculationService.prorateRecurringSnapshot(full, LocalDate.of(2026, 8, 16))).thenReturn(prorated);
+        when(calculationService.prorationFactor(LocalDate.of(2026, 8, 16))).thenReturn(new BigDecimal("0.51612903"));
+
+        List<GenerationResult> results = service.generate(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 8, 1), List.of(5), null), "127.0.0.1");
+
+        assertThat(results.getFirst().successful()).isTrue();
+        verify(studentFeesRepository).save(argThat(value -> value.getBillingEffectiveDate().equals(LocalDate.of(2026, 8, 16))
+                && value.getMidSessionFeePolicy() == MidSessionFeePolicy.PRORATE_JOINING_MONTH
+                && value.getProrationFactor().compareTo(new BigDecimal("0.51612903")) == 0
+                && value.getBaseAmountDue().compareTo(new BigDecimal("516.13")) == 0));
+    }
+
+    private SchoolFeeSettings settings(MidSessionFeePolicy policy) {
+        SchoolFeeSettings value = new SchoolFeeSettings();
+        value.setSchoolId(1L);
+        value.setMidSessionPolicy(policy);
+        return value;
+    }
+
+    private FeeCalculationService.MonthSnapshot snapshot(String baseAmount) {
+        return new FeeCalculationService.MonthSnapshot(new BigDecimal(baseAmount), BigDecimal.ZERO,
+                BigDecimal.ZERO, "{}", List.of(), SnapshotStatus.COMPUTED, List.of());
     }
 
     private Student student(String id) {
