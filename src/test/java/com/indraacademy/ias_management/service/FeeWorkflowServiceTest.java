@@ -415,6 +415,28 @@ class FeeWorkflowServiceTest {
     }
 
     @Test
+    void reconciliation_treatsLegacyBackfillWithoutSelectedMonthsAsAnnualAssignment() {
+        Student student = student("S1"); student.setName("Legacy Student"); student.setClassName("6A");
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
+        assignment.setSelectedMonths(null); assignment.setStatus(StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
+        when(studentRepository.findBySchoolId(1L)).thenReturn(List.of(student));
+        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027")).thenReturn(List.of(assignment));
+        List<StudentFees> generated = java.util.stream.IntStream.rangeClosed(1, 11)
+                .mapToObj(month -> { StudentFees fee = fee(month); fee.setStudentId("S1"); return fee; })
+                .toList();
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(generated);
+
+        var result = service.reconciliation("2026-2027");
+
+        assertThat(result.partiallyGenerated()).isEqualTo(1);
+        assertThat(result.missingMonthCount()).isEqualTo(1);
+        assertThat(result.students().getFirst().assignedMonths()).containsExactlyElementsOf(
+                java.util.stream.IntStream.rangeClosed(1, 12).boxed().toList());
+        assertThat(result.students().getFirst().missingMonths()).containsExactly(12);
+    }
+
+    @Test
     void retryGenerationBatch_withoutFailures_isRejected() {
         com.indraacademy.ias_management.entity.FeeGenerationBatch batch = new com.indraacademy.ias_management.entity.FeeGenerationBatch();
         batch.setId(700L); batch.setSchoolId(1L); batch.setFailedStudentIds(null);

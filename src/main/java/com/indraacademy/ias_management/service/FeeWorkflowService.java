@@ -275,6 +275,16 @@ public class FeeWorkflowService {
             StudentFeeAssignment assignment = assignments.get(student.getStudentId());
             List<Integer> generated = generatedByStudent.getOrDefault(student.getStudentId(), List.of());
             List<Integer> assigned = assignment == null ? List.of() : parseMonths(assignment.getSelectedMonths());
+            // V22 classified pre-workflow fee rows as GENERATED/PARTIALLY_GENERATED but did
+            // not persist selected_months. Those legacy assignments represented the old
+            // annual (12-month) workflow, so an empty selection must mean all academic
+            // months were expected—not that no months were assigned. Without this fallback,
+            // genuinely missing legacy months disappear from reconciliation.
+            if (assignment != null && assigned.isEmpty()
+                    && (assignment.getStatus() == StudentFeeAssignmentStatus.GENERATED
+                    || assignment.getStatus() == StudentFeeAssignmentStatus.PARTIALLY_GENERATED)) {
+                assigned = java.util.stream.IntStream.rangeClosed(1, 12).boxed().toList();
+            }
             List<Integer> missing = assigned.stream().filter(month -> !generated.contains(month)).toList();
             StudentFeeAssignmentStatus status = assignment == null ? deriveStatus(student.getStudentId(), schoolId, session) : assignment.getStatus();
             if (assignment == null || status == StudentFeeAssignmentStatus.NOT_ASSIGNED) unassigned++;
