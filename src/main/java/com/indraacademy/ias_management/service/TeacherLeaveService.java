@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -64,6 +65,8 @@ public class TeacherLeaveService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private AuditService auditService;
     @Autowired private NotificationService notificationService;
+    @Autowired private TeacherAttendanceScheduleService teacherAttendanceScheduleService;
+    @Autowired private Clock clock;
 
     @Transactional
     public TeacherLeaveResponse applyLeave(TeacherLeaveApplyRequest req, HttpServletRequest request) {
@@ -80,13 +83,14 @@ public class TeacherLeaveService {
         Long schoolId = securityUtil.getSchoolId();
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
-        LocalDate today = LocalDate.now(SchoolTimeUtil.zoneId(school));
+        LocalDate today = LocalDate.now(clock.withZone(SchoolTimeUtil.zoneId(school)));
         if (req.getStartDate().isBefore(today)) {
             throw new IllegalArgumentException("Leave cannot be applied for a past date.");
         }
         List<SchoolHoliday> holidays = schoolHolidayRepository.findOverlapping(
                 schoolId, req.getStartDate(), req.getEndDate());
-        long workingLeaveDays = countWorkingLeaveDays(
+        String teacherId = securityUtil.getUsername();
+        long workingLeaveDays = countWorkingLeaveDays(teacherId, schoolId,
                 req.getStartDate(), req.getEndDate(), school.getWorkingDays(), holidays);
         if (workingLeaveDays == 0) {
             throw new IllegalArgumentException(
@@ -94,8 +98,6 @@ public class TeacherLeaveService {
         }
         // teacherId is NEVER taken from the request body — always the authenticated caller,
         // the same principle applyLeave (student) already enforces for studentId.
-        String teacherId = securityUtil.getUsername();
-
         Teacher teacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + teacherId));
 
@@ -261,13 +263,17 @@ public class TeacherLeaveService {
         List<SchoolHoliday> holidays = schoolHolidayRepository.findOverlapping(
                 leave.getSchoolId(), leave.getStartDate(), leave.getEndDate());
         return TeacherLeaveResponse.from(leave, countWorkingLeaveDays(
-                leave.getStartDate(), leave.getEndDate(), school.getWorkingDays(), holidays));
+                leave.getTeacherId(), leave.getSchoolId(), leave.getStartDate(), leave.getEndDate(),
+                school.getWorkingDays(), holidays));
     }
 
-    private long countWorkingLeaveDays(LocalDate start, LocalDate end, String workingDays, List<SchoolHoliday> holidays) {
-        Set<String> configuredDays = parseConfiguredWorkingDays(workingDays);
+    private long countWorkingLeaveDays(String teacherId, Long schoolId, LocalDate start, LocalDate end,
+                                       String schoolWorkingDays, List<SchoolHoliday> holidays) {
+        Map<String, List<com.indraacademy.ias_management.entity.TeacherAttendanceSchedule>> schedules =
+                teacherAttendanceScheduleService.schedulesByTeacher(schoolId, start, end);
         return start.datesUntil(end.plusDays(1))
-                .filter(date -> configuredDays.contains(date.getDayOfWeek().name()))
+                .filter(date -> parseConfiguredWorkingDays(teacherAttendanceScheduleService.workingDaysFor(
+                        teacherId, date, schoolWorkingDays, schedules)).contains(date.getDayOfWeek().name()))
                 .filter(date -> holidays.stream().noneMatch(holiday ->
                         !date.isBefore(holiday.getStartDate()) && !date.isAfter(holiday.getEndDate())))
                 .count();

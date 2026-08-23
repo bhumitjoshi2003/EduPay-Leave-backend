@@ -2,10 +2,14 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.BulkImportResultDTO;
+import com.indraacademy.ias_management.dto.TeacherAttendanceScheduleRequest;
+import com.indraacademy.ias_management.dto.TeacherAttendanceScheduleResponse;
+import com.indraacademy.ias_management.dto.TeacherExitRequest;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.TeacherBulkImportService;
+import com.indraacademy.ias_management.service.TeacherAttendanceScheduleService;
 import com.indraacademy.ias_management.service.TeacherService;
 import com.indraacademy.ias_management.service.UserDetailsServiceImpl;
 import jakarta.servlet.http.HttpServletRequest;
@@ -35,6 +39,7 @@ public class TeacherController {
 
     @Autowired private TeacherService teacherService;
     @Autowired private TeacherBulkImportService teacherBulkImportService;
+    @Autowired private TeacherAttendanceScheduleService teacherAttendanceScheduleService;
     @Autowired private UserDetailsServiceImpl userDetailsService;
     @Autowired private AuthService authService;
 
@@ -163,5 +168,49 @@ public class TeacherController {
 
         String photoUrl = teacherService.uploadPhoto(teacherId, file);
         return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/{teacherId}/attendance-schedules")
+    public ResponseEntity<List<TeacherAttendanceScheduleResponse>> getAttendanceSchedules(
+            @PathVariable String teacherId) {
+        return ResponseEntity.ok(teacherAttendanceScheduleService.history(teacherId));
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{teacherId}/attendance-schedules")
+    public ResponseEntity<?> changeAttendanceSchedule(@PathVariable String teacherId,
+            @Valid @RequestBody TeacherAttendanceScheduleRequest schedule,
+            HttpServletRequest request) {
+        try {
+            return ResponseEntity.ok(teacherAttendanceScheduleService.change(teacherId, schedule, request));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{teacherId}/exit")
+    public ResponseEntity<?> exitTeacher(@PathVariable String teacherId,
+            @Valid @RequestBody TeacherExitRequest exitRequest, HttpServletRequest request) {
+        try {
+            return ResponseEntity.ok(teacherService.exitTeacher(teacherId, exitRequest, request));
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{teacherId}/reactivate")
+    public ResponseEntity<?> reactivateTeacher(@PathVariable String teacherId, HttpServletRequest request) {
+        try {
+            return ResponseEntity.ok(teacherService.reactivateTeacher(teacherId, request));
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 }

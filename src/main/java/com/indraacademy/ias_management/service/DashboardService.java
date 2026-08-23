@@ -51,7 +51,8 @@ public class DashboardService {
         int academicStartMonth = school != null ? school.getAcademicYearStartMonth() : 4;
 
         long totalStudents = studentRepository.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
-        long totalTeachers = teacherRepository.countBySchoolId(schoolId);
+        long totalTeachers = teacherRepository.countBySchoolIdAndStatus(
+                schoolId, com.indraacademy.ias_management.entity.TeacherStatus.ACTIVE);
 
         // Net fees collected this month: gross captured payments (amountPaid − platformFee)
         // minus refunds actually processed this month — each on its own period, matching how

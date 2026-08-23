@@ -32,6 +32,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,6 +61,7 @@ class TeacherAttendanceServiceTest {
     @Mock private TeacherLeaveRepository teacherLeaveRepository;
     @Mock private SecurityUtil securityUtil;
     @Mock private AuditService auditService;
+    @Mock private TeacherAttendanceScheduleService teacherAttendanceScheduleService;
     @Mock private HttpServletRequest request;
 
     private TeacherAttendanceService service;
@@ -76,9 +78,14 @@ class TeacherAttendanceServiceTest {
         ReflectionTestUtils.setField(service, "teacherLeaveRepository", teacherLeaveRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "auditService", auditService);
+        ReflectionTestUtils.setField(service, "teacherAttendanceScheduleService", teacherAttendanceScheduleService);
         // Default: no approved leave in play. Individual tests override this where the leave
         // integration itself is under test.
         lenient().when(teacherLeaveRepository.findApprovedOverlapping(any(), any(), any())).thenReturn(List.of());
+        lenient().when(teacherAttendanceScheduleService.schedulesByTeacher(any(), any(), any()))
+                .thenReturn(Map.of());
+        lenient().when(teacherAttendanceScheduleService.workingDaysFor(any(), any(), any(), any()))
+                .thenAnswer(invocation -> invocation.getArgument(2));
     }
 
     private TeacherLeave approvedLeave(String teacherId, LocalDate start, LocalDate end) {
@@ -148,7 +155,8 @@ class TeacherAttendanceServiceTest {
         when(teacherAttendanceRepository.findByTeacherIdAndDateAndSchoolId("T1", LocalDate.of(2026, 8, 18), SCHOOL_ID))
                 .thenReturn(Optional.empty());
         when(teacherAttendanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID)).thenReturn(Optional.empty());
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Teacher One", LocalDate.of(2026, 1, 1))));
 
         TeacherAttendanceResponse resp = service.checkIn(12.9716, 77.5946, request);
 
@@ -169,7 +177,8 @@ class TeacherAttendanceServiceTest {
         when(teacherAttendanceRepository.findByTeacherIdAndDateAndSchoolId("T1", LocalDate.of(2026, 8, 17), SCHOOL_ID))
                 .thenReturn(Optional.empty());
         when(teacherAttendanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID)).thenReturn(Optional.empty());
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Teacher One", LocalDate.of(2026, 1, 1))));
 
         TeacherAttendanceResponse resp = service.checkIn(12.9716, 77.5946, request);
 
@@ -192,7 +201,8 @@ class TeacherAttendanceServiceTest {
         when(teacherAttendanceRepository.findByTeacherIdAndDateAndSchoolId(eq("T1"), any(), eq(SCHOOL_ID)))
                 .thenReturn(Optional.empty());
         when(teacherAttendanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID)).thenReturn(Optional.empty());
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Teacher One", LocalDate.of(2026, 1, 1))));
 
         TeacherAttendanceResponse resp = service.checkIn(12.9716, 77.5946, request);
 
@@ -212,7 +222,8 @@ class TeacherAttendanceServiceTest {
         when(teacherAttendanceRepository.findByTeacherIdAndDateAndSchoolId(eq("T1"), any(), eq(SCHOOL_ID)))
                 .thenReturn(Optional.empty());
         when(teacherAttendanceRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID)).thenReturn(Optional.empty());
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Teacher One", LocalDate.of(2026, 1, 1))));
 
         TeacherAttendanceResponse resp = service.checkIn(12.9716, 77.5946, request);
 
@@ -229,6 +240,8 @@ class TeacherAttendanceServiceTest {
 
         when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         when(securityUtil.getUsername()).thenReturn("T1");
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID))
+                .thenReturn(Optional.of(teacher("T1", "Teacher One", LocalDate.of(2026, 1, 1))));
         when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school("Asia/Kolkata")));
         when(schoolHolidayRepository.existsBySchoolIdAndDateInRange(SCHOOL_ID, LocalDate.of(2026, 8, 17))).thenReturn(true);
 

@@ -134,6 +134,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             try {
                 UserDetails userDetails = userDetailsService.loadUserByUsername(userId);
 
+                if (!userDetails.isEnabled()) {
+                    log.warn("Blocked request to {} for inactive userId={}", path, userId);
+                    SecurityContextHolder.clearContext();
+                    response.setStatus(HttpStatus.FORBIDDEN.value());
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\"message\": \"Your account is inactive. Please contact your school administrator.\"}");
+                    return;
+                }
+
                 if (jwtUtil.validateToken(token, userDetails)) {
                     // Build authorities: ROLE_ + permission keys
                     List<GrantedAuthority> authorities = new ArrayList<>();

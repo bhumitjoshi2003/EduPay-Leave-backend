@@ -47,7 +47,8 @@ public class UserDetailsServiceImpl implements UserDetailsService {
         List<GrantedAuthority> authorities = new ArrayList<>();
         authorities.add(new SimpleGrantedAuthority("ROLE_" + user.getRole()));
 
-        return new org.springframework.security.core.userdetails.User(user.getUserId(), user.getPassword(), authorities);
+        return new org.springframework.security.core.userdetails.User(
+                user.getUserId(), user.getPassword(), user.isActive(), true, true, true, authorities);
     }
 
     @Transactional(readOnly = true)
