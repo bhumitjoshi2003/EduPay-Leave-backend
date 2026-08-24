@@ -2,7 +2,10 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.LimitType;
 import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.TeacherStatus;
+import com.indraacademy.ias_management.dto.TeacherExitRequest;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +28,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Optional;
+import java.time.LocalDate;
 
 @Service
 public class TeacherService {
@@ -37,6 +41,9 @@ public class TeacherService {
 
     @Autowired
     private TeacherRepository teacherRepository;
+
+    @Autowired
+    private UserRepository userRepository;
 
     @Autowired
     private AuditService auditService;
@@ -92,6 +99,11 @@ public class TeacherService {
             String oldValue = null;
             if(existingTeacher.isPresent()){
                 oldValue = objectMapper.writeValueAsString(existingTeacher.get());
+                // Lifecycle fields are changed only through the audited exit/reactivate endpoints.
+                teacher.setStatus(existingTeacher.get().getStatus());
+                teacher.setLeavingDate(existingTeacher.get().getLeavingDate());
+                teacher.setReasonForLeaving(existingTeacher.get().getReasonForLeaving());
+                teacher.setExitRemarks(existingTeacher.get().getExitRemarks());
             }
 
             teacher.setSchoolId(schoolId);
@@ -153,6 +165,10 @@ public class TeacherService {
                 throw new IllegalArgumentException("Teacher ID " + teacher.getTeacherId() + " is already in use. Teacher IDs must be unique across the entire platform.");
             }
             teacher.setSchoolId(schoolId);
+            teacher.setStatus(TeacherStatus.ACTIVE);
+            teacher.setLeavingDate(null);
+            teacher.setReasonForLeaving(null);
+            teacher.setExitRemarks(null);
             Teacher savedTeacher = teacherRepository.save(teacher);
 
             auditService.log(
@@ -176,6 +192,55 @@ public class TeacherService {
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Transactional
+    public Teacher exitTeacher(String teacherId, TeacherExitRequest request, HttpServletRequest httpRequest) {
+        Teacher teacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, securityUtil.getSchoolId())
+                .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + teacherId));
+        if (teacher.getStatus() == TeacherStatus.LEFT) {
+            throw new IllegalStateException("Teacher is already marked as left.");
+        }
+        if (request.getLeavingDate().isAfter(LocalDate.now())) {
+            throw new IllegalArgumentException("Leaving date cannot be in the future.");
+        }
+
+        teacher.setStatus(TeacherStatus.LEFT);
+        teacher.setLeavingDate(request.getLeavingDate());
+        teacher.setReasonForLeaving(request.getReasonForLeaving().trim());
+        teacher.setExitRemarks(request.getExitRemarks());
+        teacher.setClassTeacher(null);
+        userRepository.findByUserId(teacherId).ifPresent(user -> {
+            user.setActive(false);
+            user.setRefreshTokenId(null);
+            userRepository.save(user);
+        });
+        Teacher saved = teacherRepository.save(teacher);
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "EXIT_TEACHER", "Teacher",
+                teacherId, "ACTIVE", "LEFT", httpRequest.getRemoteAddr());
+        return saved;
+    }
+
+    @Transactional
+    public Teacher reactivateTeacher(String teacherId, HttpServletRequest httpRequest) {
+        Teacher teacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, securityUtil.getSchoolId())
+                .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + teacherId));
+        if (teacher.getStatus() != TeacherStatus.LEFT) {
+            throw new IllegalStateException("Only teachers marked as left can be re-activated.");
+        }
+        teacher.setStatus(TeacherStatus.ACTIVE);
+        teacher.setLeavingDate(null);
+        teacher.setReasonForLeaving(null);
+        teacher.setExitRemarks(null);
+        userRepository.findByUserId(teacherId).ifPresent(user -> {
+            user.setActive(true);
+            user.setRefreshTokenId(null);
+            userRepository.save(user);
+        });
+        Teacher saved = teacherRepository.save(teacher);
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "REACTIVATE_TEACHER", "Teacher",
+                teacherId, "LEFT", "ACTIVE", httpRequest.getRemoteAddr());
+        return saved;
     }
 
     @Transactional

@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,7 +73,7 @@ class DashboardServiceTest {
         school.setAcademicYearStartMonth(4);
         lenient().when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
         lenient().when(studentRepository.countByStatusAndSchoolId(StudentStatus.ACTIVE, SCHOOL_ID)).thenReturn(10L);
-        lenient().when(teacherRepository.countBySchoolId(SCHOOL_ID)).thenReturn(2L);
+        lenient().when(teacherRepository.countBySchoolIdAndStatus(SCHOOL_ID, TeacherStatus.ACTIVE)).thenReturn(2L);
         lenient().when(studentFeesRepository.countDistinctOverdueStudents(any(), any(), anyInt())).thenReturn(0L);
         lenient().when(attendanceRepository.findByDateAndSchoolId(any(), any())).thenReturn(List.of());
         lenient().when(leaveRepository.countByStatusAndSchoolId(LeaveStatus.PENDING, SCHOOL_ID)).thenReturn(0L);

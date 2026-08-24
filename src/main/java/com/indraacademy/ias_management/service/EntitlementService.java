@@ -152,7 +152,8 @@ public class EntitlementService {
     private int getCurrentCount(Long schoolId, LimitType type) {
         return switch (type) {
             case STUDENTS   -> (int) studentRepository.countByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
-            case STAFF      -> (int) (teacherRepository.countBySchoolId(schoolId)
+            case STAFF      -> (int) (teacherRepository.countBySchoolIdAndStatus(
+                                            schoolId, com.indraacademy.ias_management.entity.TeacherStatus.ACTIVE)
                                      + adminRepository.countBySchoolId(schoolId));
             case STORAGE_GB -> 0; // File storage tracking is event-driven — placeholder for now
         };

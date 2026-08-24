@@ -82,6 +82,7 @@ public class TeacherAttendanceService {
     @Autowired private SchoolHolidayRepository schoolHolidayRepository;
     @Autowired private TeacherLeaveRepository teacherLeaveRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private TeacherAttendanceScheduleService teacherAttendanceScheduleService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private AuditService auditService;
     @Autowired private Clock clock;
@@ -90,6 +91,12 @@ public class TeacherAttendanceService {
     public TeacherAttendanceResponse checkIn(Double latitude, Double longitude, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         String teacherId = securityUtil.getUsername();
+
+        Teacher currentTeacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Teacher not found"));
+        if (currentTeacher.getStatus() == com.indraacademy.ias_management.entity.TeacherStatus.LEFT) {
+            throw new IllegalStateException("Your teacher profile is no longer active. Please contact your admin.");
+        }
 
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found"));
@@ -111,8 +118,12 @@ public class TeacherAttendanceService {
         // Validate working day — weekly pattern AND the holiday calendar. Previously only the
         // weekly pattern was checked, so a teacher could self-check-in on a declared holiday.
         boolean isHolidayToday = schoolHolidayRepository.existsBySchoolIdAndDateInRange(schoolId, today);
-        if (isHolidayToday || !isWorkingDayOfWeek(today, school.getWorkingDays())) {
-            throw new IllegalStateException("Today is not a working day.");
+        Map<String, List<com.indraacademy.ias_management.entity.TeacherAttendanceSchedule>> schedules =
+                teacherAttendanceScheduleService.schedulesByTeacher(schoolId, today, today);
+        String teacherWorkingDays = teacherAttendanceScheduleService
+                .workingDaysFor(teacherId, today, school.getWorkingDays(), schedules);
+        if (isHolidayToday || !isWorkingDayOfWeek(today, teacherWorkingDays)) {
+            throw new IllegalStateException("Today is not a working day in your attendance schedule.");
         }
 
         // Validate check-in window
@@ -188,6 +199,12 @@ public class TeacherAttendanceService {
     public TeacherAttendanceResponse checkOut(Double latitude, Double longitude, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         String teacherId = securityUtil.getUsername();
+
+        Teacher currentTeacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Teacher not found"));
+        if (currentTeacher.getStatus() == com.indraacademy.ias_management.entity.TeacherStatus.LEFT) {
+            throw new IllegalStateException("Your teacher profile is no longer active. Please contact your admin.");
+        }
 
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found"));
@@ -332,14 +349,20 @@ public class TeacherAttendanceService {
         if (school != null && (school.getStaffAttendanceTrackingStartDate() == null
                 || !date.isBefore(school.getStaffAttendanceTrackingStartDate()))) {
             List<SchoolHoliday> holidaysOnDate = schoolHolidayRepository.findOverlapping(schoolId, date, date);
-            if (isWorkingDay(date, school.getWorkingDays(), holidaysOnDate)) {
+            if (!isHolidayDate(date, holidaysOnDate)) {
                 boolean pastDay = date.isBefore(today);
                 List<TeacherLeave> approvedLeavesOnDate = teacherLeaveRepository.findApprovedOverlapping(schoolId, date, date);
+                Map<String, List<com.indraacademy.ias_management.entity.TeacherAttendanceSchedule>> schedules =
+                        teacherAttendanceScheduleService.schedulesByTeacher(schoolId, date, date);
                 Set<String> recorded = records.stream().map(TeacherAttendance::getTeacherId).collect(Collectors.toSet());
                 long syntheticSeq = -1;
                 for (Teacher teacher : teachers) {
                     if (recorded.contains(teacher.getTeacherId())) continue;
                     if (teacher.getJoiningDate() != null && date.isBefore(teacher.getJoiningDate())) continue;
+                    if (teacher.getLeavingDate() != null && date.isAfter(teacher.getLeavingDate())) continue;
+                    String workingDays = teacherAttendanceScheduleService.workingDaysFor(
+                            teacher.getTeacherId(), date, school.getWorkingDays(), schedules);
+                    if (!isWorkingDayOfWeek(date, workingDays)) continue;
                     if (isCoveredByApprovedLeave(teacher.getTeacherId(), date, approvedLeavesOnDate)) {
                         result.add(TeacherAttendanceResponse.onLeave(
                                 syntheticSeq--, teacher.getTeacherId(), teacher.getName(), schoolId, date));
@@ -495,6 +518,8 @@ public class TeacherAttendanceService {
         List<LocalDate> settledWorkingDays = hasSettledDays
                 ? computeWorkingDays(calculationStart, settledEnd, school.getWorkingDays(), holidays)
                 : List.of();
+        Map<String, List<com.indraacademy.ias_management.entity.TeacherAttendanceSchedule>> schedules =
+                teacherAttendanceScheduleService.schedulesByTeacher(schoolId, monthStart, monthEnd);
 
         List<Teacher> teachers;
         if (teacherIdFilter != null) {
@@ -529,10 +554,15 @@ public class TeacherAttendanceService {
             String tid = teacher.getTeacherId();
             String tname = teacher.getName();
             LocalDate joinDate = teacher.getJoiningDate();
+            LocalDate leavingDate = teacher.getLeavingDate();
             Map<LocalDate, TeacherAttendance> rowsForTeacher = rowsByTeacherThenDate.getOrDefault(tid, Map.of());
 
-            for (LocalDate day : settledWorkingDays) {
+            for (LocalDate day = calculationStart; hasSettledDays && !day.isAfter(settledEnd); day = day.plusDays(1)) {
                 if (joinDate != null && day.isBefore(joinDate)) continue;
+                if (leavingDate != null && day.isAfter(leavingDate)) continue;
+                String workingDays = teacherAttendanceScheduleService.workingDaysFor(
+                        tid, day, school.getWorkingDays(), schedules);
+                if (!isWorkingDay(day, workingDays, holidays)) continue;
                 if (teacherIdFilter != null) totalWorkingDaysForFilter++;
                 TeacherAttendance existing = rowsForTeacher.get(day);
                 if (existing != null) {
@@ -544,8 +574,11 @@ public class TeacherAttendanceService {
                 }
             }
 
+            String todayWorkingDays = teacherAttendanceScheduleService.workingDaysFor(
+                    tid, today, school.getWorkingDays(), schedules);
             if (todayInRange && (joinDate == null || !today.isBefore(joinDate))
-                    && isWorkingDay(today, school.getWorkingDays(), holidays)) {
+                    && (leavingDate == null || !today.isAfter(leavingDate))
+                    && isWorkingDay(today, todayWorkingDays, holidays)) {
                 TeacherAttendance todayRow = rowsForTeacher.get(today);
                 if (todayRow != null) {
                     merged.add(TeacherAttendanceResponse.from(todayRow, tname));

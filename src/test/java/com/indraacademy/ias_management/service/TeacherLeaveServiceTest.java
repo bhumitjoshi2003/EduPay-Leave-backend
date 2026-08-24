@@ -22,9 +22,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,6 +50,7 @@ class TeacherLeaveServiceTest {
     @Mock private SecurityUtil securityUtil;
     @Mock private AuditService auditService;
     @Mock private NotificationService notificationService;
+    @Mock private TeacherAttendanceScheduleService teacherAttendanceScheduleService;
     @Mock private HttpServletRequest request;
 
     private TeacherLeaveService service;
@@ -64,6 +69,9 @@ class TeacherLeaveServiceTest {
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "notificationService", notificationService);
+        ReflectionTestUtils.setField(service, "teacherAttendanceScheduleService", teacherAttendanceScheduleService);
+        ReflectionTestUtils.setField(service, "clock",
+                Clock.fixed(Instant.parse("2026-08-19T04:00:00Z"), ZoneOffset.UTC));
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         lenient().when(securityUtil.getUsername()).thenReturn(TEACHER_ID);
         lenient().when(securityUtil.getRole()).thenReturn("TEACHER");
@@ -73,6 +81,10 @@ class TeacherLeaveServiceTest {
         school.setWorkingDays("MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY");
         lenient().when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
         lenient().when(schoolHolidayRepository.findOverlapping(eq(SCHOOL_ID), any(), any())).thenReturn(List.of());
+        lenient().when(teacherAttendanceScheduleService.schedulesByTeacher(any(), any(), any()))
+                .thenReturn(Map.of());
+        lenient().when(teacherAttendanceScheduleService.workingDaysFor(any(), any(), any(), any()))
+                .thenAnswer(invocation -> invocation.getArgument(2));
     }
 
     private TeacherLeave leave(LeaveStatus status) {
