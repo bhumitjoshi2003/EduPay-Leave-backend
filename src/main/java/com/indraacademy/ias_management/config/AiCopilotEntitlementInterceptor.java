@@ -56,7 +56,7 @@ public class AiCopilotEntitlementInterceptor implements HandlerInterceptor {
 
         if (path.startsWith("/api/student-fees/reminders/")) return "FEE_REMINDERS";
         if (path.startsWith("/api/payments")) return "PAYMENT_COLLECTION";
-        if (path.startsWith("/api/student-fees") || path.startsWith("/api/fee-structure")
+        if (path.startsWith("/api/student-fees") || path.startsWith("/api/fee-workflow") || path.startsWith("/api/fee-structure")
                 || path.startsWith("/api/bus-fees") || path.startsWith("/api/invoices")
                 || path.startsWith("/api/fee-heads") || path.startsWith("/api/fee-payments")
                 || path.startsWith("/api/credit-notes") || path.startsWith("/api/fee-rules")

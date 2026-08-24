@@ -27,6 +27,15 @@ public interface InvoiceRepository extends JpaRepository<Invoice, Long> {
     boolean existsBySchoolIdAndStudentIdAndAcademicSessionIdAndBillingMonth(
             Long schoolId, String studentId, Long academicSessionId, int billingMonth);
 
+    @Query("SELECT CASE WHEN COUNT(i) > 0 THEN true ELSE false END FROM Invoice i " +
+            "WHERE i.schoolId = :schoolId AND i.studentId = :studentId " +
+            "AND i.academicSession.id = :sessionId AND i.billingMonth = :billingMonth " +
+            "AND i.status NOT IN ('DRAFT', 'CANCELLED')")
+    boolean existsFinalizedForStudentMonth(@Param("schoolId") Long schoolId,
+                                           @Param("studentId") String studentId,
+                                           @Param("sessionId") Long sessionId,
+                                           @Param("billingMonth") int billingMonth);
+
     /** All unpaid/overdue invoices for a student */
     @Query("SELECT i FROM Invoice i WHERE i.schoolId = :schoolId AND i.studentId = :studentId " +
             "AND i.status IN ('ISSUED', 'PARTIALLY_PAID', 'OVERDUE') " +

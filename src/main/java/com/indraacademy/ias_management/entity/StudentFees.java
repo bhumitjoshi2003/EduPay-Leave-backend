@@ -4,6 +4,7 @@ import lombok.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 
 @Entity
 @Table(name = "student_fees", indexes = {
@@ -91,6 +92,16 @@ public class StudentFees {
     @Enumerated(EnumType.STRING)
     @Column(name = "snapshot_status", length = 30)
     private SnapshotStatus snapshotStatus;
+
+    @Column(name = "billing_effective_date")
+    private LocalDate billingEffectiveDate;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "mid_session_fee_policy", length = 30)
+    private MidSessionFeePolicy midSessionFeePolicy;
+
+    @Column(name = "proration_factor", precision = 10, scale = 8)
+    private BigDecimal prorationFactor;
 
     /** Not persisted — populated per-request by StudentFeesService.getStudentFees from the
      * allocation ledger (payment_student_fees_allocation joined to payment), the same source
@@ -222,4 +233,11 @@ public class StudentFees {
 
     public String getAmountRuleSnapshot() { return amountRuleSnapshot; }
     public void setAmountRuleSnapshot(String amountRuleSnapshot) { this.amountRuleSnapshot = amountRuleSnapshot; }
+
+    public LocalDate getBillingEffectiveDate() { return billingEffectiveDate; }
+    public void setBillingEffectiveDate(LocalDate billingEffectiveDate) { this.billingEffectiveDate = billingEffectiveDate; }
+    public MidSessionFeePolicy getMidSessionFeePolicy() { return midSessionFeePolicy; }
+    public void setMidSessionFeePolicy(MidSessionFeePolicy midSessionFeePolicy) { this.midSessionFeePolicy = midSessionFeePolicy; }
+    public BigDecimal getProrationFactor() { return prorationFactor; }
+    public void setProrationFactor(BigDecimal prorationFactor) { this.prorationFactor = prorationFactor; }
 }

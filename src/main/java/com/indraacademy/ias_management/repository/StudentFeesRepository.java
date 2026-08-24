@@ -14,6 +14,7 @@ import java.util.List;
 public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> {
 
     List<StudentFees> findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(String studentId, Long schoolId, String year);
+    List<StudentFees> findBySchoolIdAndYear(Long schoolId, String year);
 
     @org.springframework.transaction.annotation.Transactional
     void deleteByStudentIdAndSchoolId(String studentId, Long schoolId);

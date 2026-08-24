@@ -59,6 +59,15 @@ public class StudentFeeConfig {
     @Column(name = "valid_until")
     private LocalDate validUntil;
 
+    @Column(name = "revoked_at")
+    private LocalDateTime revokedAt;
+
+    @Column(name = "revoked_by", length = 100)
+    private String revokedBy;
+
+    @Column(name = "revoke_reason", length = 500)
+    private String revokeReason;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -98,6 +107,12 @@ public class StudentFeeConfig {
 
     public LocalDate getValidUntil() { return validUntil; }
     public void setValidUntil(LocalDate validUntil) { this.validUntil = validUntil; }
+    public LocalDateTime getRevokedAt() { return revokedAt; }
+    public void setRevokedAt(LocalDateTime revokedAt) { this.revokedAt = revokedAt; }
+    public String getRevokedBy() { return revokedBy; }
+    public void setRevokedBy(String revokedBy) { this.revokedBy = revokedBy; }
+    public String getRevokeReason() { return revokeReason; }
+    public void setRevokeReason(String revokeReason) { this.revokeReason = revokeReason; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
