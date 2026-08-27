@@ -257,6 +257,31 @@ class FeeCalculationServiceTest {
     }
 
     @Test
+    void prorateRecurringSnapshot_proratesMonthlyAndBusButKeepsQuarterlyChargeWhole() {
+        FeeCalculationService.MonthSnapshot source = new FeeCalculationService.MonthSnapshot(
+                new BigDecimal("1179.00"), new BigDecimal("310.00"), new BigDecimal("31.00"),
+                "{}", List.of(), SnapshotStatus.COMPUTED,
+                List.of(
+                        new FeeCalculationService.LineItemSnapshot("FEE_HEAD", 1L, "TUITION", "Tuition",
+                                "MONTHLY", 31000L, 3100L, null),
+                        new FeeCalculationService.LineItemSnapshot("FEE_HEAD", 2L, "TERM", "Term Fee",
+                                "QUARTERLY", 90000L, 0L, null),
+                        new FeeCalculationService.LineItemSnapshot("BUS", null, null, "Bus Fee",
+                                null, 31000L, 0L, null)));
+
+        FeeCalculationService.MonthSnapshot result = service.prorateRecurringSnapshot(
+                source, LocalDate.of(2026, 8, 16));
+
+        assertThat(result.baseAmountDue()).isEqualByComparingTo("1044.00");
+        assertThat(result.busFeeDue()).isEqualByComparingTo("160.00");
+        assertThat(result.discountAmount()).isEqualByComparingTo("16.00");
+        assertThat(result.lineItems()).extracting(FeeCalculationService.LineItemSnapshot::grossPaise)
+                .containsExactly(16000L, 90000L, 16000L);
+        assertThat(service.prorationFactor(LocalDate.of(2026, 8, 16)))
+                .isEqualByComparingTo("0.51612903");
+    }
+
+    @Test
     void parseSessionSplitsLabelIntoStartAndEndYear() {
         assertThat(service.parseSession("2025-2026")).containsExactly(2025, 2026);
     }

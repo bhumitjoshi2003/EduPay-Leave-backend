@@ -184,6 +184,8 @@ public class AuthController {
         }
 
         boolean isStudentOrTeacher = Role.STUDENT.equals(user.getRole()) || Role.TEACHER.equals(user.getRole());
+        // Account lifecycle is server-controlled; clients cannot register an inactive account.
+        user.setActive(true);
 
         if (isStudentOrTeacher) {
             LocalDate dob = resolveDob(user.getUserId(), user.getRole(), user.getSchoolId());
@@ -237,6 +239,13 @@ public class AuthController {
         }
 
         User loggedIn = found.get();
+
+        if (!loggedIn.isActive()) {
+            log.warn("Login rejected for inactive userId={}", loggedIn.getUserId());
+            clearCookies(response);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Your account is inactive. Please contact your school administrator.");
+        }
 
         // Reject login if the school has been deactivated (SUPER_ADMIN has no schoolId — skip for them)
         if (loggedIn.getSchoolId() != null) {
@@ -515,6 +524,13 @@ public class AuthController {
             }
 
             User loggedIn = userOptional.get();
+
+            if (!loggedIn.isActive()) {
+                log.warn("Token refresh rejected for inactive userId={}", userId);
+                clearCookies(response);
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body("Your account is inactive. Please contact your school administrator.");
+            }
 
             // Verify the JTI matches the stored value — rejects any token issued before the last logout
             if (tokenJti == null || !tokenJti.equals(loggedIn.getRefreshTokenId())) {

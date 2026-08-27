@@ -459,6 +459,58 @@ public class FeeCalculationService {
         );
     }
 
+    /** Prorates only genuinely recurring monthly charges and bus service for the remaining
+     * calendar days, inclusive of the effective date. Fixed periodic and one-time charges
+     * remain whole. Every line is rounded independently to the nearest paise (HALF_UP), then
+     * parent totals are derived from those exact line values so reconciliation is exact. */
+    public MonthSnapshot prorateRecurringSnapshot(MonthSnapshot source, LocalDate effectiveDate) {
+        if (source == null || effectiveDate == null || effectiveDate.getDayOfMonth() <= 1) return source;
+        int daysInMonth = effectiveDate.lengthOfMonth();
+        int billableDays = daysInMonth - effectiveDate.getDayOfMonth() + 1;
+        BigDecimal factor = BigDecimal.valueOf(billableDays)
+                .divide(BigDecimal.valueOf(daysInMonth), 8, RoundingMode.HALF_UP);
+        List<LineItemSnapshot> adjusted = new ArrayList<>();
+        long baseNetPaise = 0L;
+        long discountPaise = 0L;
+        long busNetPaise = 0L;
+        for (LineItemSnapshot line : source.lineItems()) {
+            boolean recurring = LineItemType.BUS.name().equals(line.lineItemType())
+                    || FeeFrequency.MONTHLY.name().equals(line.frequency());
+            long gross = recurring ? proratePaise(line.grossPaise(), billableDays, daysInMonth) : line.grossPaise();
+            long discount = recurring ? proratePaise(line.discountPaise(), billableDays, daysInMonth) : line.discountPaise();
+            LineItemSnapshot value = new LineItemSnapshot(line.lineItemType(), line.feeHeadId(), line.feeHeadCode(),
+                    line.feeHeadName(), line.frequency(), gross, discount, line.discountConfigType());
+            adjusted.add(value);
+            if (LineItemType.BUS.name().equals(value.lineItemType())) busNetPaise += value.netPaise();
+            else { baseNetPaise += value.netPaise(); discountPaise += value.discountPaise(); }
+        }
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("status", source.status().name());
+        context.put("sourceSnapshot", source.ruleSnapshotJson());
+        context.put("prorationPolicy", "PRORATE_JOINING_MONTH");
+        context.put("effectiveDate", effectiveDate.toString());
+        context.put("billableDays", billableDays);
+        context.put("daysInMonth", daysInMonth);
+        context.put("factor", factor);
+        String json;
+        try { json = objectMapper.writeValueAsString(context); }
+        catch (JsonProcessingException ex) { json = source.ruleSnapshotJson(); }
+        return new MonthSnapshot(BigDecimal.valueOf(baseNetPaise, 2), BigDecimal.valueOf(busNetPaise, 2),
+                BigDecimal.valueOf(discountPaise, 2), json, source.newlyChargedOneTimeFeeHeadIds(),
+                source.status(), adjusted);
+    }
+
+    public BigDecimal prorationFactor(LocalDate effectiveDate) {
+        if (effectiveDate == null || effectiveDate.getDayOfMonth() <= 1) return BigDecimal.ONE;
+        return BigDecimal.valueOf(effectiveDate.lengthOfMonth() - effectiveDate.getDayOfMonth() + 1L)
+                .divide(BigDecimal.valueOf(effectiveDate.lengthOfMonth()), 8, RoundingMode.HALF_UP);
+    }
+
+    private long proratePaise(long amount, int billableDays, int daysInMonth) {
+        return BigDecimal.valueOf(amount).multiply(BigDecimal.valueOf(billableDays))
+                .divide(BigDecimal.valueOf(daysInMonth), 0, RoundingMode.HALF_UP).longValueExact();
+    }
+
     /**
      * Whether a StudentFees row's stored snapshot can be trusted as-is by a READING consumer
      * (payment validation, reminders, checkout) without recomputing anything. Requires BOTH a

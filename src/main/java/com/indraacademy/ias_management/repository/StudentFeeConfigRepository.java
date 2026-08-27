@@ -21,6 +21,7 @@ public interface StudentFeeConfigRepository extends JpaRepository<StudentFeeConf
      */
     @Query("SELECT c FROM StudentFeeConfig c WHERE c.schoolId = :schoolId " +
             "AND c.studentId = :studentId AND c.academicSession.id = :sessionId " +
+            "AND c.revokedAt IS NULL " +
             "AND (c.validFrom IS NULL OR c.validFrom <= :asOfDate) " +
             "AND (c.validUntil IS NULL OR c.validUntil >= :asOfDate)")
     List<StudentFeeConfig> findActiveConfigs(
@@ -28,6 +29,35 @@ public interface StudentFeeConfigRepository extends JpaRepository<StudentFeeConf
             @Param("studentId") String studentId,
             @Param("sessionId") Long sessionId,
             @Param("asOfDate") LocalDate asOfDate);
+
+    @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END FROM StudentFeeConfig c " +
+            "WHERE c.schoolId = :schoolId AND c.studentId = :studentId " +
+            "AND c.academicSession.id = :sessionId AND c.feeHead.id = :feeHeadId " +
+            "AND c.revokedAt IS NULL " +
+            "AND (c.validUntil IS NULL OR c.validUntil >= :validFrom) " +
+            "AND (CAST(:validUntil AS date) IS NULL OR c.validFrom IS NULL OR c.validFrom <= :validUntil)")
+    boolean existsOverlapping(@Param("schoolId") Long schoolId,
+                              @Param("studentId") String studentId,
+                              @Param("sessionId") Long sessionId,
+                              @Param("feeHeadId") Long feeHeadId,
+                              @Param("validFrom") LocalDate validFrom,
+                              @Param("validUntil") LocalDate validUntil);
+
+    @Query("SELECT CASE WHEN COUNT(c) > 0 THEN true ELSE false END FROM StudentFeeConfig c " +
+            "WHERE c.id <> :configId AND c.schoolId = :schoolId AND c.studentId = :studentId " +
+            "AND c.academicSession.id = :sessionId AND c.feeHead.id = :feeHeadId AND c.revokedAt IS NULL " +
+            "AND (c.validUntil IS NULL OR c.validUntil >= :validFrom) " +
+            "AND (CAST(:validUntil AS date) IS NULL OR c.validFrom IS NULL OR c.validFrom <= :validUntil)")
+    boolean existsOverlappingExcluding(@Param("configId") Long configId,
+                                       @Param("schoolId") Long schoolId,
+                                       @Param("studentId") String studentId,
+                                       @Param("sessionId") Long sessionId,
+                                       @Param("feeHeadId") Long feeHeadId,
+                                       @Param("validFrom") LocalDate validFrom,
+                                       @Param("validUntil") LocalDate validUntil);
+
+    List<StudentFeeConfig> findBySchoolIdAndStudentIdAndAcademicSessionIdOrderByValidFromDescIdDesc(
+            Long schoolId, String studentId, Long academicSessionId);
 
     @Modifying
     @Query("DELETE FROM StudentFeeConfig c WHERE c.schoolId = :schoolId AND c.studentId = :studentId AND c.academicSession.id = :sessionId")

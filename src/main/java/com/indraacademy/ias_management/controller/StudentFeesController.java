@@ -63,7 +63,9 @@ public class StudentFeesController {
         List<StudentFees> fees = studentFeesService.getStudentFees(resolvedStudentId, year);
         if (fees.isEmpty()) {
             log.warn("No fees found for student {} in year {}", resolvedStudentId, year);
-            return ResponseEntity.notFound().build();
+            // Empty is normal for a newly registered student because admission and fee
+            // generation are deliberately decoupled.
+            return ResponseEntity.ok(List.of());
         }
         return ResponseEntity.ok(fees);
     }

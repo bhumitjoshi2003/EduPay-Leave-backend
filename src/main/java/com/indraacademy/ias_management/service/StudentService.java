@@ -178,18 +178,13 @@ public class StudentService {
 
             log.info("Successfully saved new student with ID: {}", savedStudent.getStudentId());
 
-            String academicYear = getAcademicYear(savedStudent.getJoiningDate());
-
-            // After successfully saving the student, create the default fees entries
-            studentFeesService.createDefaultStudentFees(
-                    savedStudent.getStudentId(),
-                    savedStudent.getClassName(),
-                    academicYear,
-                    savedStudent.getTakesBus(),
-                    savedStudent.getDistance(),
-                    savedStudent.getJoiningDate()
-            );
-            log.info("Created default fee entries for student ID: {}", savedStudent.getStudentId());
+            // Admission and billing are deliberately separate lifecycles. A newly admitted
+            // student starts as NOT_ASSIGNED in the fee workflow and receives no financial
+            // rows until an admin explicitly assigns months, previews them and confirms
+            // generation. This also keeps registration available while a school's fee module
+            // is disabled, in draft, or not yet configured.
+            log.info("Student {} registered without automatic fee generation; fee assignment is pending.",
+                    savedStudent.getStudentId());
 
             return savedStudent;
         } catch (DataAccessException e) {

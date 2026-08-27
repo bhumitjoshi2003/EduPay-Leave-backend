@@ -47,6 +47,19 @@ public class Teacher implements Persistable<String> {
     @Column(name = "joining_date")
     private LocalDate joiningDate;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    private TeacherStatus status = TeacherStatus.ACTIVE;
+
+    @Column(name = "leaving_date")
+    private LocalDate leavingDate;
+
+    @Column(name = "reason_for_leaving")
+    private String reasonForLeaving;
+
+    @Column(name = "exit_remarks", columnDefinition = "TEXT")
+    private String exitRemarks;
+
     @Column(name = "photo_url")
     private String photoUrl;
 
@@ -159,6 +172,15 @@ public class Teacher implements Persistable<String> {
     public void setJoiningDate(LocalDate joiningDate) {
         this.joiningDate = joiningDate;
     }
+
+    public TeacherStatus getStatus() { return status; }
+    public void setStatus(TeacherStatus status) { this.status = status; }
+    public LocalDate getLeavingDate() { return leavingDate; }
+    public void setLeavingDate(LocalDate leavingDate) { this.leavingDate = leavingDate; }
+    public String getReasonForLeaving() { return reasonForLeaving; }
+    public void setReasonForLeaving(String reasonForLeaving) { this.reasonForLeaving = reasonForLeaving; }
+    public String getExitRemarks() { return exitRemarks; }
+    public void setExitRemarks(String exitRemarks) { this.exitRemarks = exitRemarks; }
 
     public String getPhotoUrl() { return photoUrl; }
 
