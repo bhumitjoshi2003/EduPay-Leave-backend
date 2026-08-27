@@ -25,7 +25,8 @@ public final class FeeWorkflowDtos {
             String academicSession,
             LocalDate effectiveDate,
             List<Integer> months,
-            String reason) {}
+            String reason,
+            MidSessionFeePolicy midSessionPolicy) {}
 
     public record AssignmentRow(
             String studentId,
@@ -91,6 +92,7 @@ public final class FeeWorkflowDtos {
             BigDecimal value,
             LocalDate validFrom,
             LocalDate validUntil,
+            List<Integer> months,
             String reason) {}
 
     public record StudentRecalculationResult(
@@ -122,8 +124,7 @@ public final class FeeWorkflowDtos {
 
     public record DiscountUpdateRequest(FeeConfigType configType, BigDecimal value,
                                         LocalDate validFrom, LocalDate validUntil, String reason) {}
-    public record DiscountExpireRequest(LocalDate effectiveFrom, String reason) {}
-    public record RevokeFutureRequest(String reason) {}
+    public record EndDiscountRequest(String reason) {}
     public record TransportCorrectionRequest(boolean enabled, Double distance, String reason) {}
 
     public record GenerationBatchRow(Long id, String academicSession, LocalDate effectiveDate,
@@ -142,17 +143,11 @@ public final class FeeWorkflowDtos {
                                         int notAssigned, int failed, int missingMonthCount,
                                         List<ReconciliationRow> students) {}
 
-    public record LegacyFeeCandidate(String studentId, String studentName, String className,
-                                     List<Integer> existingMonths, LocalDate earliestBillingDate) {}
-    public record LegacyAdoptionRequest(String academicSession, List<String> studentIds, String reason) {}
-    public record LegacyAdoptionResult(int requestedStudents, int adoptedStudents,
-                                       List<String> skippedStudentIds) {}
-
     public record ReadinessIssue(String severity, String code, String message,
                                  String className, Integer affectedStudents) {}
     public record FeeReadinessReport(String academicSession, boolean readyToGenerate,
                                      int blockerCount, int warningCount, int configuredClasses,
                                      int missingConfigurationClasses, int unassignedStudents,
-                                     int failedStudents, int legacyStudents,
+                                     int failedStudents,
                                      List<ReadinessIssue> issues) {}
 }

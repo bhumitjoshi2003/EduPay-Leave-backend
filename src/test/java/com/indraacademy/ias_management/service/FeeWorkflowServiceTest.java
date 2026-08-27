@@ -6,10 +6,8 @@ import com.indraacademy.ias_management.dto.FeeWorkflowDtos.WorkflowChangeResult;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.AssignmentRequest;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.StudentPreview;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.GenerationResult;
-import com.indraacademy.ias_management.dto.FeeWorkflowDtos.DiscountExpireRequest;
-import com.indraacademy.ias_management.dto.FeeWorkflowDtos.RevokeFutureRequest;
+import com.indraacademy.ias_management.dto.FeeWorkflowDtos.EndDiscountRequest;
 import com.indraacademy.ias_management.dto.FeeWorkflowDtos.TransportCorrectionRequest;
-import com.indraacademy.ias_management.dto.FeeWorkflowDtos.LegacyAdoptionRequest;
 import com.indraacademy.ias_management.dto.RecalculationEntryDto;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.AcademicSession;
@@ -36,6 +34,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
@@ -85,9 +84,9 @@ class FeeWorkflowServiceTest {
         var report = service.readiness("2026-2027");
 
         assertThat(report.readyToGenerate()).isFalse();
-        assertThat(report.blockerCount()).isEqualTo(3);
+        assertThat(report.blockerCount()).isEqualTo(2);
         assertThat(report.warningCount()).isEqualTo(1);
-        assertThat(report.issues()).extracting("code").contains("ACTIVATION_DATE_MISSING", "FEES_NOT_ACTIVE",
+        assertThat(report.issues()).extracting("code").contains("FEES_NOT_ACTIVE",
                 "FEE_STRUCTURE_MISSING", "STUDENTS_NOT_ASSIGNED");
     }
 
@@ -126,6 +125,46 @@ class FeeWorkflowServiceTest {
         var rows = service.listAssignments("2026-2027", null, null);
 
         assertThat(rows).extracting("studentId").containsExactly("S1");
+    }
+
+    @Test
+    void assignments_useGeneratedRowsAsTheVisibleSourceOfTruth() {
+        Student student = student("S1");
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setStudentId("S1");
+        assignment.setSelectedMonths("1,2,3");
+        assignment.setStatus(StudentFeeAssignmentStatus.READY);
+        when(studentRepository.findBySchoolId(1L)).thenReturn(List.of(student));
+        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027"))
+                .thenReturn(List.of(assignment));
+        List<StudentFees> fees = List.of(fee(1), fee(2), fee(3));
+        fees.forEach(value -> value.setStudentId("S1"));
+        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(fees);
+
+        var rows = service.listAssignments("2026-2027", null, null);
+
+        assertThat(rows.getFirst().status()).isEqualTo(StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
+        assertThat(rows.getFirst().generatedMonths()).isEqualTo(3);
+    }
+
+    @Test
+    void assigningAgain_keepsExistingGeneratedMonthsAsPartialUntilAllTwelveExist() {
+        Student student = student("S1");
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setStudentId("S1");
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH)));
+        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
+                .thenReturn(Optional.of(assignment));
+        List<StudentFees> fees = List.of(fee(1), fee(2), fee(3));
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
+                .thenReturn(fees);
+        when(assignmentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var result = service.assign(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 4, 1), List.of(1, 2, 3), null, null), false, "127.0.0.1");
+
+        assertThat(result.getFirst().getStatus()).isEqualTo(StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
     }
 
     @BeforeEach
@@ -189,7 +228,7 @@ class FeeWorkflowServiceTest {
         when(academicSessionRepository.findById(10L)).thenReturn(Optional.of(session));
         when(feeHeadRepository.findByIdAndSchoolId(20L, 1L)).thenReturn(Optional.of(feeHead));
         when(feeConfigRepository.existsOverlapping(1L, "S1", 10L, 20L,
-                LocalDate.of(2026, 8, 1), null)).thenReturn(false);
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31))).thenReturn(false);
         when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
                 .thenReturn(List.of(fee(5)));
         when(recalculationService.recalculateOne(eq("S1"), eq("2026-2027"), eq(5), anyString(), anyString()))
@@ -197,7 +236,7 @@ class FeeWorkflowServiceTest {
 
         WorkflowChangeResult response = service.applyBulkDiscount(new BulkDiscountRequest(
                 List.of("S1"), 10L, 20L, FeeConfigType.DISCOUNT_PERCENT, BigDecimal.TEN,
-                LocalDate.of(2026, 8, 1), null, "Scholarship"), "127.0.0.1");
+                LocalDate.of(2026, 8, 1), null, List.of(5), null), "127.0.0.1");
 
         assertThat(response.savedStudents()).isEqualTo(1);
         assertThat(response.recalculatedMonths()).isEqualTo(1);
@@ -214,14 +253,14 @@ class FeeWorkflowServiceTest {
         when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1", "S2"), 1L)).thenReturn(List.of(first, second));
         when(academicSessionRepository.findById(10L)).thenReturn(Optional.of(session));
         when(feeHeadRepository.findByIdAndSchoolId(20L, 1L)).thenReturn(Optional.of(feeHead));
-        when(feeConfigRepository.existsOverlapping(eq(1L), eq("S1"), eq(10L), eq(20L), any(), isNull())).thenReturn(true);
-        when(feeConfigRepository.existsOverlapping(eq(1L), eq("S2"), eq(10L), eq(20L), any(), isNull())).thenReturn(false);
+        when(feeConfigRepository.existsOverlapping(eq(1L), eq("S1"), eq(10L), eq(20L), any(), any())).thenReturn(true);
+        when(feeConfigRepository.existsOverlapping(eq(1L), eq("S2"), eq(10L), eq(20L), any(), any())).thenReturn(false);
         when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S2", 1L, "2026-2027"))
                 .thenReturn(List.of());
 
         WorkflowChangeResult response = service.applyBulkDiscount(new BulkDiscountRequest(
                 List.of("S1", "S2"), 10L, 20L, FeeConfigType.WAIVER, null,
-                LocalDate.of(2026, 8, 1), null, "Scholarship"), "127.0.0.1");
+                LocalDate.of(2026, 8, 1), null, List.of(5), "Scholarship"), "127.0.0.1");
 
         assertThat(response.savedStudents()).isEqualTo(1);
         assertThat(response.students()).extracting(value -> value.changeSaved()).containsExactly(false, true);
@@ -242,43 +281,48 @@ class FeeWorkflowServiceTest {
     }
 
     @Test
-    void revokeFutureDiscount_preservesRecordAndAddsAuditMetadata() {
+    void endDiscount_futureDiscount_revokesWithoutRecalculation() {
         StudentFeeConfig config = discountConfig(LocalDate.now().plusMonths(2).withDayOfMonth(1));
         when(feeConfigRepository.findById(31L)).thenReturn(Optional.of(config));
 
-        service.revokeFutureDiscount(31L, new RevokeFutureRequest("Award entered in error"), "127.0.0.1");
+        WorkflowChangeResult result = service.endDiscount(31L,
+                new EndDiscountRequest("Award entered in error"), "127.0.0.1");
 
         assertThat(config.getRevokedAt()).isNotNull();
         assertThat(config.getRevokedBy()).isEqualTo("admin1");
         assertThat(config.getRevokeReason()).isEqualTo("Award entered in error");
+        assertThat(result.savedStudents()).isEqualTo(1);
         verify(feeConfigRepository).save(config);
-        verify(auditService).log(eq("admin1"), eq("ADMIN"), eq("REVOKE_FUTURE_STUDENT_DISCOUNT"),
+        verify(auditService).log(eq("admin1"), eq("ADMIN"), eq("REMOVE_STUDENT_FEE_ADJUSTMENT"),
                 eq("StudentFeeConfig"), eq("31"), isNull(), anyString(), eq("127.0.0.1"));
     }
 
     @Test
-    void revokeActiveDiscount_isRejectedWithoutChangingHistory() {
+    void endDiscount_alreadyEnded_isRejectedWithoutChangingHistory() {
         StudentFeeConfig config = discountConfig(LocalDate.now().minusMonths(1).withDayOfMonth(1));
+        config.setRevokedAt(LocalDateTime.now());
         when(feeConfigRepository.findById(31L)).thenReturn(Optional.of(config));
 
-        assertThatThrownBy(() -> service.revokeFutureDiscount(31L,
-                new RevokeFutureRequest("Wrong award"), "127.0.0.1"))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("future discount");
+        assertThatThrownBy(() -> service.endDiscount(31L,
+                new EndDiscountRequest("Wrong award"), "127.0.0.1"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("already ended");
 
         verify(feeConfigRepository, never()).save(any());
     }
 
     @Test
-    void expireDiscount_closesRuleAtPriorMonthEnd() {
+    void endDiscount_activeDiscount_revokesAndRecalculatesFullRange() {
         StudentFeeConfig config = discountConfig(LocalDate.of(2026, 8, 1));
         when(feeConfigRepository.findById(31L)).thenReturn(Optional.of(config));
         when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
                 .thenReturn(List.of());
 
-        WorkflowChangeResult result = service.expireDiscount(31L,
-                new DiscountExpireRequest(LocalDate.of(2026, 10, 18), "Scholarship ended"), "127.0.0.1");
+        WorkflowChangeResult result = service.endDiscount(31L,
+                new EndDiscountRequest("Scholarship ended"), "127.0.0.1");
 
-        assertThat(config.getValidUntil()).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(config.getRevokedAt()).isNotNull();
+        assertThat(config.getRevokedBy()).isEqualTo("admin1");
+        assertThat(config.getRevokeReason()).isEqualTo("Scholarship ended");
         assertThat(result.savedStudents()).isEqualTo(1);
         verify(feeConfigRepository).save(config);
     }
@@ -320,7 +364,7 @@ class FeeWorkflowServiceTest {
         when(calculationService.prorationFactor(LocalDate.of(2026, 8, 16))).thenReturn(new BigDecimal("0.51612903"));
 
         List<StudentPreview> preview = service.preview(new AssignmentRequest(List.of("S1"), "2026-2027",
-                LocalDate.of(2026, 8, 1), List.of(4, 5), null));
+                LocalDate.of(2026, 8, 1), List.of(4, 5), null, null));
 
         assertThat(preview.getFirst().months().get(0).eligible()).isFalse();
         assertThat(preview.getFirst().months().get(0).message()).contains("Before");
@@ -345,7 +389,7 @@ class FeeWorkflowServiceTest {
                 eq(6), eq(true), any(), eq(false), anyDouble(), any())).thenReturn(snapshot("1000.00"));
 
         List<StudentPreview> preview = service.preview(new AssignmentRequest(List.of("S1"), "2026-2027",
-                LocalDate.of(2026, 8, 1), List.of(5, 6), null));
+                LocalDate.of(2026, 8, 1), List.of(5, 6), null, null));
 
         assertThat(preview.getFirst().months().get(0).eligible()).isFalse();
         assertThat(preview.getFirst().months().get(0).message()).contains("next-month");
@@ -384,7 +428,7 @@ class FeeWorkflowServiceTest {
         when(calculationService.prorationFactor(LocalDate.of(2026, 8, 16))).thenReturn(new BigDecimal("0.51612903"));
 
         List<GenerationResult> results = service.generate(new AssignmentRequest(List.of("S1"), "2026-2027",
-                LocalDate.of(2026, 8, 1), List.of(5), null), "127.0.0.1");
+                LocalDate.of(2026, 8, 1), List.of(5), null, null), "127.0.0.1");
 
         assertThat(results.getFirst().successful()).isTrue();
         verify(studentFeesRepository).save(argThat(value -> value.getBillingEffectiveDate().equals(LocalDate.of(2026, 8, 16))
@@ -415,7 +459,7 @@ class FeeWorkflowServiceTest {
     }
 
     @Test
-    void reconciliation_treatsLegacyBackfillWithoutSelectedMonthsAsAnnualAssignment() {
+    void reconciliation_rowWithoutSelectedMonths_reportsNoAssignedOrMissingMonths() {
         Student student = student("S1"); student.setName("Legacy Student"); student.setClassName("6A");
         StudentFeeAssignment assignment = new StudentFeeAssignment();
         assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
@@ -430,10 +474,9 @@ class FeeWorkflowServiceTest {
         var result = service.reconciliation("2026-2027");
 
         assertThat(result.partiallyGenerated()).isEqualTo(1);
-        assertThat(result.missingMonthCount()).isEqualTo(1);
-        assertThat(result.students().getFirst().assignedMonths()).containsExactlyElementsOf(
-                java.util.stream.IntStream.rangeClosed(1, 12).boxed().toList());
-        assertThat(result.students().getFirst().missingMonths()).containsExactly(12);
+        assertThat(result.missingMonthCount()).isEqualTo(0);
+        assertThat(result.students().getFirst().assignedMonths()).isEmpty();
+        assertThat(result.students().getFirst().missingMonths()).isEmpty();
     }
 
     @Test
@@ -444,41 +487,6 @@ class FeeWorkflowServiceTest {
 
         assertThatThrownBy(() -> service.retryGenerationBatch(700L, "127.0.0.1"))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("no failed students");
-    }
-
-    @Test
-    void legacyCandidates_onlyReturnsStudentsWithFeesAndNoAssignment() {
-        Student student = student("S1"); student.setName("Legacy Student"); student.setClassName("7A");
-        StudentFees fee = fee(5); fee.setStudentId("S1"); fee.setBillingEffectiveDate(LocalDate.of(2026, 8, 1));
-        when(assignmentRepository.findBySchoolIdAndAcademicSession(1L, "2026-2027")).thenReturn(List.of());
-        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of(fee));
-        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
-
-        var result = service.legacyFeeCandidates("2026-2027");
-
-        assertThat(result).hasSize(1);
-        assertThat(result.getFirst().existingMonths()).containsExactly(5);
-        assertThat(result.getFirst().earliestBillingDate()).isEqualTo(LocalDate.of(2026, 8, 1));
-    }
-
-    @Test
-    void adoptLegacyFees_createsAssignmentWithoutChangingFinancialRows() {
-        Student student = student("S1");
-        StudentFees first = fee(5); first.setStudentId("S1"); first.setBillingEffectiveDate(LocalDate.of(2026, 8, 1));
-        StudentFees second = fee(6); second.setStudentId("S1");
-        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
-        when(studentFeesRepository.findBySchoolIdAndYear(1L, "2026-2027")).thenReturn(List.of(first, second));
-        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
-                .thenReturn(Optional.empty());
-
-        var result = service.adoptLegacyFees(new LegacyAdoptionRequest("2026-2027", List.of("S1"),
-                "Phase 6 migration"), "127.0.0.1");
-
-        assertThat(result.adoptedStudents()).isEqualTo(1);
-        verify(assignmentRepository).save(argThat(value -> value.getSelectedMonths().equals("5,6")
-                && value.getEffectiveDate().equals(LocalDate.of(2026, 8, 1))
-                && value.getStatus() == StudentFeeAssignmentStatus.PARTIALLY_GENERATED));
-        verify(studentFeesRepository, never()).save(any(StudentFees.class));
     }
 
     private SchoolFeeSettings settings(MidSessionFeePolicy policy) {

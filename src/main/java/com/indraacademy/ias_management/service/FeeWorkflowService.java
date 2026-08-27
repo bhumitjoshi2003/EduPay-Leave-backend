@@ -79,22 +79,19 @@ public class FeeWorkflowService {
         return settingsRepository.findBySchoolId(schoolId).orElseGet(() -> {
             SchoolFeeSettings settings = new SchoolFeeSettings();
             settings.setSchoolId(schoolId);
+            settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
             return settingsRepository.save(settings);
         });
     }
 
     @Transactional
     public SchoolFeeSettings updateSettings(SettingsUpdate request, String ip) {
-        if (request == null || request.operationalStatus() == null) {
-            throw new IllegalArgumentException("Operational status is required.");
-        }
+        if (request == null) throw new IllegalArgumentException("Fee policy is required.");
         SchoolFeeSettings settings = getSettings();
         FeeOperationalStatus old = settings.getOperationalStatus();
-        if (request.operationalStatus() == FeeOperationalStatus.ACTIVE && request.activationDate() == null
-                && settings.getActivationDate() == null) {
-            throw new IllegalArgumentException("An activation date is required before fees can be activated.");
-        }
-        settings.setOperationalStatus(request.operationalStatus());
+        // The simplified workflow is always admin-triggered and active. School admins
+        // only choose how a mid-month effective date should be billed.
+        settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
         if (request.activationDate() != null) settings.setActivationDate(request.activationDate());
         if (request.midSessionPolicy() != null) settings.setMidSessionPolicy(request.midSessionPolicy());
         if (request.allowRetroactiveGeneration() != null) settings.setAllowRetroactiveGeneration(request.allowRetroactiveGeneration());
@@ -127,9 +124,8 @@ public class FeeWorkflowService {
         for (Student student : students) {
             StudentFeeAssignment assignment = assignments.get(student.getStudentId());
             int generated = generatedByStudent.getOrDefault(student.getStudentId(), List.of()).size();
-            StudentFeeAssignmentStatus resolved = assignment != null ? assignment.getStatus()
-                    : generated == 0 ? StudentFeeAssignmentStatus.NOT_ASSIGNED
-                    : generated == 12 ? StudentFeeAssignmentStatus.GENERATED : StudentFeeAssignmentStatus.PARTIALLY_GENERATED;
+            List<Integer> generatedMonths = generatedByStudent.getOrDefault(student.getStudentId(), List.of());
+            StudentFeeAssignmentStatus resolved = resolveAssignmentStatus(assignment, generatedMonths);
             if (status != null && resolved != status) continue;
             rows.add(new AssignmentRow(student.getStudentId(), student.getName(), student.getClassName(),
                     student.getSectionName(), student.getJoiningDate(), resolved,
@@ -158,7 +154,8 @@ public class FeeWorkflowService {
         SchoolFeeSettings settings = getSettings();
         List<StudentFeeAssignment> saved = new ArrayList<>();
         for (Student student : students) {
-            PolicyContext policy = resolvePolicyContext(student, request.academicSession(), request.effectiveDate(), settings);
+            PolicyContext policy = resolvePolicyContext(student, request.academicSession(), request.effectiveDate(),
+                    request.midSessionPolicy(), settings);
             StudentFeeAssignment assignment = assignmentRepository
                     .findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(), request.academicSession())
                     .orElseGet(StudentFeeAssignment::new);
@@ -170,7 +167,12 @@ public class FeeWorkflowService {
             assignment.setExcluded(excluded);
             assignment.setExclusionReason(excluded ? requireReason(request.reason()) : null);
             assignment.setFailureReason(null);
-            assignment.setStatus(excluded ? StudentFeeAssignmentStatus.EXCLUDED : StudentFeeAssignmentStatus.READY);
+            List<Integer> generatedMonths = studentFeesRepository
+                    .findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId,
+                            request.academicSession())
+                    .stream().map(StudentFees::getMonth).distinct().toList();
+            assignment.setStatus(excluded ? StudentFeeAssignmentStatus.EXCLUDED
+                    : statusForMonths(months, generatedMonths, true));
             assignment.setAssignedBy(securityUtil.getUsername());
             assignment.setAssignedAt(LocalDateTime.now());
             saved.add(assignmentRepository.save(assignment));
@@ -188,7 +190,8 @@ public class FeeWorkflowService {
         List<Student> students = requireStudents(schoolId, request.studentIds());
         List<Integer> months = normalizeMonths(request.months());
         SchoolFeeSettings settings = getSettings();
-        return students.stream().map(s -> previewStudent(s, request.academicSession(), request.effectiveDate(), months, settings)).toList();
+        return students.stream().map(s -> previewStudent(s, request.academicSession(), request.effectiveDate(),
+                months, request.midSessionPolicy(), settings)).toList();
     }
 
     public List<GenerationResult> generate(AssignmentRequest request, String ip) {
@@ -220,7 +223,8 @@ public class FeeWorkflowService {
         for (Student student : students) {
             try {
                 GenerationResult result = transactionTemplate.execute(status ->
-                        generateForStudent(student, request.academicSession(), request.effectiveDate(), months, settings));
+                        generateForStudent(student, request.academicSession(), request.effectiveDate(), months,
+                                request.midSessionPolicy(), settings));
                 results.add(Objects.requireNonNull(result));
             } catch (RuntimeException ex) {
                 transactionTemplate.executeWithoutResult(status ->
@@ -255,7 +259,7 @@ public class FeeWorkflowService {
         List<String> failed = parseCsv(batch.getFailedStudentIds());
         if (failed.isEmpty()) throw new IllegalStateException("This batch has no failed students to retry.");
         AssignmentRequest request = new AssignmentRequest(failed, batch.getAcademicSession(),
-                batch.getEffectiveDate(), parseMonths(batch.getSelectedMonths()), "Retry of batch " + batchId);
+                batch.getEffectiveDate(), parseMonths(batch.getSelectedMonths()), "Retry of batch " + batchId, null);
         return generate(request, ip, batchId);
     }
 
@@ -275,16 +279,6 @@ public class FeeWorkflowService {
             StudentFeeAssignment assignment = assignments.get(student.getStudentId());
             List<Integer> generated = generatedByStudent.getOrDefault(student.getStudentId(), List.of());
             List<Integer> assigned = assignment == null ? List.of() : parseMonths(assignment.getSelectedMonths());
-            // V22 classified pre-workflow fee rows as GENERATED/PARTIALLY_GENERATED but did
-            // not persist selected_months. Those legacy assignments represented the old
-            // annual (12-month) workflow, so an empty selection must mean all academic
-            // months were expected—not that no months were assigned. Without this fallback,
-            // genuinely missing legacy months disappear from reconciliation.
-            if (assignment != null && assigned.isEmpty()
-                    && (assignment.getStatus() == StudentFeeAssignmentStatus.GENERATED
-                    || assignment.getStatus() == StudentFeeAssignmentStatus.PARTIALLY_GENERATED)) {
-                assigned = java.util.stream.IntStream.rangeClosed(1, 12).boxed().toList();
-            }
             List<Integer> missing = assigned.stream().filter(month -> !generated.contains(month)).toList();
             StudentFeeAssignmentStatus status = assignment == null ? deriveStatus(student.getStudentId(), schoolId, session) : assignment.getStatus();
             if (assignment == null || status == StudentFeeAssignmentStatus.NOT_ASSIGNED) unassigned++;
@@ -300,74 +294,11 @@ public class FeeWorkflowService {
     }
 
     @Transactional(readOnly = true)
-    public List<LegacyFeeCandidate> legacyFeeCandidates(String session) {
-        validateSession(session);
-        Long schoolId = securityUtil.getSchoolId();
-        Set<String> assignedIds = assignmentRepository.findBySchoolIdAndAcademicSession(schoolId, session).stream()
-                .map(StudentFeeAssignment::getStudentId).collect(Collectors.toSet());
-        Map<String, List<StudentFees>> feesByStudent = studentFeesRepository.findBySchoolIdAndYear(schoolId, session)
-                .stream().collect(Collectors.groupingBy(StudentFees::getStudentId));
-        if (feesByStudent.isEmpty()) return List.of();
-        Map<String, Student> students = studentRepository.findByStudentIdInAndSchoolId(
-                feesByStudent.keySet().stream().toList(), schoolId).stream()
-                .collect(Collectors.toMap(Student::getStudentId, Function.identity()));
-        return feesByStudent.entrySet().stream()
-                .filter(entry -> !assignedIds.contains(entry.getKey()) && students.containsKey(entry.getKey()))
-                .map(entry -> {
-                    Student student = students.get(entry.getKey());
-                    List<Integer> months = entry.getValue().stream().map(StudentFees::getMonth).distinct().sorted().toList();
-                    LocalDate earliest = entry.getValue().stream().map(StudentFees::getBillingEffectiveDate)
-                            .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
-                    return new LegacyFeeCandidate(student.getStudentId(), student.getName(), student.getClassName(), months, earliest);
-                }).sorted(Comparator.comparing(LegacyFeeCandidate::studentName,
-                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))).toList();
-    }
-
-    @Transactional
-    public LegacyAdoptionResult adoptLegacyFees(LegacyAdoptionRequest request, String ip) {
-        if (request == null || request.studentIds() == null || request.studentIds().isEmpty())
-            throw new IllegalArgumentException("Select at least one legacy student.");
-        validateSession(request.academicSession());
-        String reason = requireReason(request.reason());
-        Long schoolId = securityUtil.getSchoolId();
-        List<Student> students = requireStudents(schoolId, request.studentIds());
-        Map<String, List<StudentFees>> feesByStudent = studentFeesRepository.findBySchoolIdAndYear(schoolId,
-                request.academicSession()).stream().collect(Collectors.groupingBy(StudentFees::getStudentId));
-        List<String> skipped = new ArrayList<>();
-        int adopted = 0;
-        for (Student student : students) {
-            if (assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(),
-                    request.academicSession()).isPresent()) { skipped.add(student.getStudentId()); continue; }
-            List<StudentFees> fees = feesByStudent.getOrDefault(student.getStudentId(), List.of());
-            if (fees.isEmpty()) { skipped.add(student.getStudentId()); continue; }
-            List<Integer> months = fees.stream().map(StudentFees::getMonth).distinct().sorted().toList();
-            LocalDate effective = fees.stream().map(StudentFees::getBillingEffectiveDate).filter(Objects::nonNull)
-                    .min(LocalDate::compareTo).orElseGet(() -> sessionStart(request.academicSession(), schoolId));
-            StudentFeeAssignment assignment = new StudentFeeAssignment();
-            assignment.setSchoolId(schoolId); assignment.setStudentId(student.getStudentId());
-            assignment.setAcademicSession(request.academicSession()); assignment.setEffectiveDate(effective);
-            assignment.setSelectedMonths(joinMonths(months)); assignment.setExcluded(false);
-            assignment.setStatus(months.size() >= 12 ? StudentFeeAssignmentStatus.GENERATED
-                    : StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
-            assignment.setAssignedBy(securityUtil.getUsername()); assignment.setAssignedAt(LocalDateTime.now());
-            assignment.setGeneratedAt(LocalDateTime.now()); assignmentRepository.save(assignment); adopted++;
-        }
-        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "ADOPT_LEGACY_STUDENT_FEES",
-                "StudentFeeAssignment", request.academicSession(), null,
-                "students=" + request.studentIds() + ", adopted=" + adopted + ", reason=" + reason, ip);
-        return new LegacyAdoptionResult(students.size(), adopted, skipped);
-    }
-
-    @Transactional(readOnly = true)
     public FeeReadinessReport readiness(String session) {
         validateSession(session);
         Long schoolId = securityUtil.getSchoolId();
         List<ReadinessIssue> issues = new ArrayList<>();
         SchoolFeeSettings settings = settingsRepository.findBySchoolId(schoolId).orElse(null);
-        if (settings == null || settings.getActivationDate() == null) {
-            issues.add(new ReadinessIssue("BLOCKER", "ACTIVATION_DATE_MISSING",
-                    "Set the fee activation date before generating charges.", null, null));
-        }
         if (settings == null || settings.getOperationalStatus() != FeeOperationalStatus.ACTIVE) {
             issues.add(new ReadinessIssue("BLOCKER", "FEES_NOT_ACTIVE",
                     "Fee operations must be ACTIVE before charges can be generated.", null, null));
@@ -396,17 +327,14 @@ public class FeeWorkflowService {
         }
         int unassigned = Math.toIntExact(rows.stream().filter(row -> row.status() == StudentFeeAssignmentStatus.NOT_ASSIGNED).count());
         int failed = Math.toIntExact(rows.stream().filter(row -> row.status() == StudentFeeAssignmentStatus.GENERATION_FAILED).count());
-        int legacy = legacyFeeCandidates(session).size();
         if (unassigned > 0) issues.add(new ReadinessIssue("WARNING", "STUDENTS_NOT_ASSIGNED",
                 "Students remain unassigned. Assign or explicitly exclude them before rollout.", null, unassigned));
         if (failed > 0) issues.add(new ReadinessIssue("BLOCKER", "GENERATION_FAILURES",
                 "Resolve or retry failed fee-generation students.", null, failed));
-        if (legacy > 0) issues.add(new ReadinessIssue("WARNING", "LEGACY_RECORDS_UNADOPTED",
-                "Existing fee records still need explicit workflow adoption.", null, legacy));
         int blockers = Math.toIntExact(issues.stream().filter(issue -> "BLOCKER".equals(issue.severity())).count());
         int warnings = issues.size() - blockers;
         return new FeeReadinessReport(session, blockers == 0, blockers, warnings, configuredClasses,
-                missingClasses, unassigned, failed, legacy, issues);
+                missingClasses, unassigned, failed, issues);
     }
 
     public WorkflowChangeResult changeTransport(TransportChangeRequest request, String ip) {
@@ -482,49 +410,38 @@ public class FeeWorkflowService {
         return toDiscountHistory(config);
     }
 
-    public WorkflowChangeResult expireDiscount(Long configId, DiscountExpireRequest request, String ip) {
-        if (request == null || request.effectiveFrom() == null) throw new IllegalArgumentException("Effective month is required.");
-        String reason = requireReason(request.reason());
+    public WorkflowChangeResult endDiscount(Long configId, EndDiscountRequest request, String ip) {
         Long schoolId = securityUtil.getSchoolId();
+        String suppliedReason = request == null || request.reason() == null ? "" : request.reason().trim();
+        String auditReason = suppliedReason.isBlank() ? "Removed from fee assignment." : suppliedReason;
         return Objects.requireNonNull(transactionTemplate.execute(status -> {
             StudentFeeConfig config = feeConfigRepository.findById(configId)
                     .filter(value -> Objects.equals(value.getSchoolId(), schoolId))
-                    .orElseThrow(() -> new IllegalArgumentException("Discount configuration not found."));
-            if (config.getRevokedAt() != null) throw new IllegalStateException("This discount has already been revoked.");
-            LocalDate effectiveMonth = monthStart(request.effectiveFrom());
-            if (config.getValidFrom() == null || !effectiveMonth.isAfter(config.getValidFrom())) {
-                throw new IllegalArgumentException("Use remove-future for a discount that has not started; expiry must follow its start month.");
+                    .orElseThrow(() -> new IllegalArgumentException("Discount or waiver not found."));
+            if (config.getRevokedAt() != null) {
+                throw new IllegalStateException("This discount or waiver has already ended.");
             }
-            LocalDate oldUntil = config.getValidUntil();
-            config.setValidUntil(effectiveMonth.minusDays(1));
-            config.setRevokeReason(reason);
+            config.setRevokedAt(LocalDateTime.now());
             config.setRevokedBy(securityUtil.getUsername());
+            config.setRevokeReason(auditReason);
             feeConfigRepository.save(config);
-            String session = config.getAcademicSession().getLabel();
-            List<RecalculationEntryDto> months = generatedMonthsInRange(config.getStudentId(), session, effectiveMonth, oldUntil)
-                    .stream().map(month -> recalculationService.recalculateOne(config.getStudentId(), session, month, reason, ip)).toList();
-            auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "EXPIRE_STUDENT_DISCOUNT",
-                    "StudentFeeConfig", String.valueOf(configId), null, "effectiveMonth=" + effectiveMonth, ip);
-            return summarizeChanges(1, List.of(new StudentRecalculationResult(config.getStudentId(), true, months, null)));
-        }));
-    }
 
-    @Transactional
-    public DiscountHistoryRow revokeFutureDiscount(Long configId, RevokeFutureRequest request, String ip) {
-        String reason = requireReason(request == null ? null : request.reason());
-        Long schoolId = securityUtil.getSchoolId();
-        StudentFeeConfig config = feeConfigRepository.findById(configId)
-                .filter(value -> Objects.equals(value.getSchoolId(), schoolId))
-                .orElseThrow(() -> new IllegalArgumentException("Discount configuration not found."));
-        if (config.getRevokedAt() != null) throw new IllegalStateException("This discount has already been revoked.");
-        if (config.getValidFrom() == null || !config.getValidFrom().isAfter(LocalDate.now())) {
-            throw new IllegalStateException("Only a future discount can be removed. Expire an active discount instead.");
-        }
-        config.setRevokedAt(LocalDateTime.now()); config.setRevokedBy(securityUtil.getUsername()); config.setRevokeReason(reason);
-        feeConfigRepository.save(config);
-        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "REVOKE_FUTURE_STUDENT_DISCOUNT",
-                "StudentFeeConfig", String.valueOf(configId), null, reason, ip);
-        return toDiscountHistory(config);
+            String session = config.getAcademicSession().getLabel();
+            LocalDate adjustmentStart = config.getValidFrom() == null
+                    ? sessionStart(session, schoolId)
+                    : config.getValidFrom();
+            List<Integer> affectedMonths = generatedMonthsInRange(config.getStudentId(), session,
+                    adjustmentStart, config.getValidUntil());
+            List<RecalculationEntryDto> recalculated = affectedMonths.stream()
+                    .map(month -> recalculationService.recalculateOne(config.getStudentId(), session, month,
+                            auditReason, ip))
+                    .toList();
+            auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "REMOVE_STUDENT_FEE_ADJUSTMENT",
+                    "StudentFeeConfig", String.valueOf(configId), null, auditReason, ip);
+            return summarizeChanges(1, List.of(new StudentRecalculationResult(config.getStudentId(), true,
+                    recalculated, affectedMonths.isEmpty()
+                    ? "Adjustment removed; no generated fee records required recalculation." : null)));
+        }));
     }
 
     @Transactional
@@ -616,35 +533,58 @@ public class FeeWorkflowService {
                                                                 FeeHead feeHead, BulkDiscountRequest request,
                                                                 String ip) {
         Long schoolId = securityUtil.getSchoolId();
-        LocalDate validFrom = monthStart(request.validFrom());
-        LocalDate validUntil = monthEnd(request.validUntil());
-        if (feeConfigRepository.existsOverlapping(schoolId, student.getStudentId(), session.getId(), feeHead.getId(),
-                validFrom, validUntil)) {
-            throw new IllegalArgumentException("An overlapping discount already exists.");
-        }
-        StudentFeeConfig config = new StudentFeeConfig();
-        config.setSchoolId(schoolId);
-        config.setStudentId(student.getStudentId());
-        config.setAcademicSession(session);
-        config.setFeeHead(feeHead);
-        config.setConfigType(request.configType());
-        config.setValue(request.value());
-        config.setValidFrom(validFrom);
-        config.setValidUntil(validUntil);
-        config.setReason(request.reason().trim());
-        config.setApprovedBy(securityUtil.getUsername());
-        feeConfigRepository.save(config);
+        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
+        int[] years = calculationService.parseSession(session.getLabel());
+        String suppliedReason = request.reason() == null ? "" : request.reason().trim();
+        String auditReason = suppliedReason.isBlank()
+                ? "Discount or waiver applied from fee assignment."
+                : suppliedReason;
+        List<Integer> selectedMonths = request.months().stream().distinct().sorted().toList();
+        List<LocalDate> monthStarts = selectedMonths.stream()
+                .map(month -> calculationService.academicMonthStart(month, years[0], years[1], startMonth))
+                .toList();
 
-        List<Integer> months = generatedMonthsInRange(student.getStudentId(), session.getLabel(), validFrom, validUntil);
-        List<RecalculationEntryDto> recalculated = months.stream()
+        for (LocalDate selectedMonth : monthStarts) {
+            LocalDate from = selectedMonth.withDayOfMonth(1);
+            LocalDate until = from.withDayOfMonth(from.lengthOfMonth());
+            if (feeConfigRepository.existsOverlapping(schoolId, student.getStudentId(), session.getId(), feeHead.getId(),
+                    from, until)) {
+                throw new IllegalArgumentException("A discount or waiver already exists for "
+                        + from.getMonth() + " " + from.getYear() + ".");
+            }
+        }
+
+        for (LocalDate selectedMonth : monthStarts) {
+            LocalDate from = selectedMonth.withDayOfMonth(1);
+            StudentFeeConfig config = new StudentFeeConfig();
+            config.setSchoolId(schoolId);
+            config.setStudentId(student.getStudentId());
+            config.setAcademicSession(session);
+            config.setFeeHead(feeHead);
+            config.setConfigType(request.configType());
+            config.setValue(request.value());
+            config.setValidFrom(from);
+            config.setValidUntil(from.withDayOfMonth(from.lengthOfMonth()));
+            config.setReason(suppliedReason.isBlank() ? null : suppliedReason);
+            config.setApprovedBy(securityUtil.getUsername());
+            feeConfigRepository.save(config);
+        }
+
+        Set<Integer> generatedMonths = new HashSet<>(generatedMonthsInRange(
+                student.getStudentId(), session.getLabel(), monthStarts.getFirst(), monthStarts.getLast()));
+        List<Integer> monthsToRecalculate = selectedMonths.stream().filter(generatedMonths::contains).toList();
+        List<RecalculationEntryDto> recalculated = monthsToRecalculate.stream()
                 .map(month -> recalculationService.recalculateOne(student.getStudentId(), session.getLabel(), month,
-                        request.reason(), ip))
+                        auditReason, ip))
                 .toList();
         auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "APPLY_BULK_STUDENT_DISCOUNT",
                 "StudentFeeConfig", student.getStudentId(), null,
-                "feeHead=" + feeHead.getId() + ", type=" + request.configType(), ip);
+                "feeHead=" + feeHead.getId() + ", type=" + request.configType()
+                        + ", months=" + selectedMonths, ip);
         return new StudentRecalculationResult(student.getStudentId(), true, recalculated,
-                months.isEmpty() ? "Discount saved; no existing generated months were affected." : null);
+                monthsToRecalculate.isEmpty()
+                        ? "Discount saved for the selected months; no existing generated months were affected."
+                        : null);
     }
 
     private List<Integer> generatedMonthsInRange(String studentId, String session, LocalDate from, LocalDate until) {
@@ -673,8 +613,11 @@ public class FeeWorkflowService {
         if (request == null || request.studentIds() == null || request.studentIds().isEmpty()
                 || request.academicSessionId() == null || request.feeHeadId() == null
                 || request.configType() == null || request.validFrom() == null
-                || request.reason() == null || request.reason().isBlank()) {
-            throw new IllegalArgumentException("Students, session, fee head, type, start date and reason are required.");
+                || request.months() == null || request.months().isEmpty()) {
+            throw new IllegalArgumentException("Students, session, fee head, type, selected months and start date are required.");
+        }
+        if (request.months().stream().anyMatch(month -> month == null || month < 1 || month > 12)) {
+            throw new IllegalArgumentException("Selected academic months must be between 1 and 12.");
         }
         if (request.validUntil() != null && request.validUntil().isBefore(request.validFrom())) {
             throw new IllegalArgumentException("Discount end date cannot be before its start date.");
@@ -727,7 +670,8 @@ public class FeeWorkflowService {
     private LocalDate monthEnd(LocalDate value) { return value == null ? null : value.withDayOfMonth(value.lengthOfMonth()); }
 
     private StudentPreview previewStudent(Student student, String session, LocalDate requestedEffectiveDate,
-                                          List<Integer> months, SchoolFeeSettings settings) {
+                                          List<Integer> months, MidSessionFeePolicy requestPolicy,
+                                          SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
         FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, student.getClassName());
         if (!config.valid()) return new StudentPreview(student.getStudentId(), student.getName(), false, BigDecimal.ZERO, List.of(), config.reason());
@@ -737,7 +681,7 @@ public class FeeWorkflowService {
         List<MonthPreview> rows = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
         boolean first = true;
-        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, settings);
+        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
         for (int month : months) {
             MonthDecision decision = monthDecision(month, session, policy, startMonth);
             if (!decision.eligible()) {
@@ -769,21 +713,20 @@ public class FeeWorkflowService {
     }
 
     private GenerationResult generateForStudent(Student student, String session, LocalDate requestedEffectiveDate,
-                                                List<Integer> months, SchoolFeeSettings settings) {
+                                                List<Integer> months, MidSessionFeePolicy requestPolicy,
+                                                SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
         StudentFeeAssignment assignment = assignmentRepository.findForGenerationUpdate(schoolId, student.getStudentId(), session)
                 .orElse(null);
         if (assignment == null || assignment.isExcluded() || assignment.getStatus() == StudentFeeAssignmentStatus.NOT_ASSIGNED) {
             return new GenerationResult(student.getStudentId(), 0, months.size(), false, "Student is not assigned for fees.");
         }
-        assignment.setStatus(StudentFeeAssignmentStatus.GENERATING);
-        assignmentRepository.save(assignment);
         int generated = 0, skipped = 0;
         FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, student.getClassName());
         if (!config.valid()) throw new IllegalStateException(config.reason());
         int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
         int[] years = calculationService.parseSession(session);
-        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, settings);
+        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         boolean first = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session).isEmpty();
         for (int month : months) {
@@ -821,11 +764,10 @@ public class FeeWorkflowService {
             }
             generated++; first = false;
         }
-        int totalGeneratedMonths = studentFeesRepository
-                .findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session).size();
-        assignment.setStatus(totalGeneratedMonths >= 12
-                ? StudentFeeAssignmentStatus.GENERATED
-                : StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
+        List<Integer> totalGeneratedMonths = studentFeesRepository
+                .findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session)
+                .stream().map(StudentFees::getMonth).distinct().toList();
+        assignment.setStatus(statusForMonths(parseMonths(assignment.getSelectedMonths()), totalGeneratedMonths, true));
         assignment.setGeneratedAt(LocalDateTime.now()); assignment.setFailureReason(null); assignmentRepository.save(assignment);
         return new GenerationResult(student.getStudentId(), generated, skipped, true, "Generation completed.");
     }
@@ -854,7 +796,7 @@ public class FeeWorkflowService {
     private record MonthDecision(boolean eligible, boolean prorated, String message) {}
 
     private PolicyContext resolvePolicyContext(Student student, String session, LocalDate requestedEffectiveDate,
-                                               SchoolFeeSettings settings) {
+                                               MidSessionFeePolicy requestPolicy, SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
         int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
         int[] years = calculationService.parseSession(session);
@@ -862,7 +804,7 @@ public class FeeWorkflowService {
         LocalDate sessionEnd = calculationService.academicMonthStart(12, years[0], years[1], startMonth).withDayOfMonth(
                 calculationService.academicMonthStart(12, years[0], years[1], startMonth).lengthOfMonth());
         LocalDate effective = latest(requestedEffectiveDate, student.getJoiningDate(), settings.getActivationDate(), sessionStart);
-        MidSessionFeePolicy policy = settings.getMidSessionPolicy() != null
+        MidSessionFeePolicy policy = requestPolicy != null ? requestPolicy : settings.getMidSessionPolicy() != null
                 ? settings.getMidSessionPolicy() : MidSessionFeePolicy.FROM_EFFECTIVE_MONTH;
         return new PolicyContext(effective, policy, sessionStart, sessionEnd, effective.isAfter(sessionStart));
     }
@@ -901,6 +843,31 @@ public class FeeWorkflowService {
         return calculationService.academicMonthStart(1, years[0], years[1], startMonth);
     }
     private long count(List<AssignmentRow> rows, StudentFeeAssignmentStatus status) { return rows.stream().filter(r -> r.status() == status).count(); }
+    private StudentFeeAssignmentStatus resolveAssignmentStatus(StudentFeeAssignment assignment,
+                                                               List<Integer> generatedMonths) {
+        if (assignment != null && (assignment.isExcluded()
+                || assignment.getStatus() == StudentFeeAssignmentStatus.EXCLUDED)) {
+            return StudentFeeAssignmentStatus.EXCLUDED;
+        }
+        if (assignment != null && assignment.getStatus() == StudentFeeAssignmentStatus.GENERATION_FAILED) {
+            return StudentFeeAssignmentStatus.GENERATION_FAILED;
+        }
+        List<Integer> assignedMonths = assignment == null ? List.of() : parseMonths(assignment.getSelectedMonths());
+        return statusForMonths(assignedMonths, generatedMonths, assignment != null);
+    }
+    private StudentFeeAssignmentStatus statusForMonths(List<Integer> assignedMonths,
+                                                       List<Integer> generatedMonths,
+                                                       boolean assigned) {
+        Set<Integer> generated = new HashSet<>(generatedMonths);
+        if (generated.isEmpty()) {
+            return assigned ? StudentFeeAssignmentStatus.READY
+                    : StudentFeeAssignmentStatus.NOT_ASSIGNED;
+        }
+        // The visible status represents completion of the full academic session,
+        // not merely completion of the months selected in the latest request.
+        return generated.size() >= 12 ? StudentFeeAssignmentStatus.GENERATED
+                : StudentFeeAssignmentStatus.PARTIALLY_GENERATED;
+    }
     private StudentFeeAssignmentStatus deriveStatus(String studentId, Long schoolId, String session) {
         int count = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, session).size();
         return count == 0 ? StudentFeeAssignmentStatus.NOT_ASSIGNED : count == 12 ? StudentFeeAssignmentStatus.GENERATED : StudentFeeAssignmentStatus.PARTIALLY_GENERATED;

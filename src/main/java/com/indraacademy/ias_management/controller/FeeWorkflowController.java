@@ -51,13 +51,6 @@ public class FeeWorkflowController {
     @GetMapping("/reconciliation") public ResponseEntity<?> reconciliation(@RequestParam String session) {
         return handle(() -> service.reconciliation(session));
     }
-    @GetMapping("/legacy-candidates") public ResponseEntity<?> legacyCandidates(@RequestParam String session) {
-        return handle(() -> service.legacyFeeCandidates(session));
-    }
-    @PostMapping("/legacy-adoptions") public ResponseEntity<?> adoptLegacyFees(
-            @RequestBody LegacyAdoptionRequest request, HttpServletRequest http) {
-        return handle(() -> service.adoptLegacyFees(request, http.getRemoteAddr()));
-    }
     @GetMapping("/readiness") public ResponseEntity<?> readiness(@RequestParam String session) {
         return handle(() -> service.readiness(session));
     }
@@ -78,13 +71,10 @@ public class FeeWorkflowController {
             @PathVariable Long configId, @RequestBody DiscountUpdateRequest request, HttpServletRequest http) {
         return handle(() -> service.updateFutureDiscount(configId, request, http.getRemoteAddr()));
     }
-    @PostMapping("/discounts/{configId}/expire") public ResponseEntity<?> expireDiscount(
-            @PathVariable Long configId, @RequestBody DiscountExpireRequest request, HttpServletRequest http) {
-        return handle(() -> service.expireDiscount(configId, request, http.getRemoteAddr()));
-    }
-    @PostMapping("/discounts/{configId}/revoke-future") public ResponseEntity<?> revokeFutureDiscount(
-            @PathVariable Long configId, @RequestBody RevokeFutureRequest request, HttpServletRequest http) {
-        return handle(() -> service.revokeFutureDiscount(configId, request, http.getRemoteAddr()));
+    @PostMapping("/discounts/{configId}/end") public ResponseEntity<?> endDiscount(
+            @PathVariable Long configId, @RequestBody(required = false) EndDiscountRequest request,
+            HttpServletRequest http) {
+        return handle(() -> service.endDiscount(configId, request, http.getRemoteAddr()));
     }
     @PutMapping("/transport/{assignmentId}/future") public ResponseEntity<?> correctFutureTransport(
             @PathVariable Long assignmentId, @RequestBody TransportCorrectionRequest request, HttpServletRequest http) {

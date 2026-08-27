@@ -35,7 +35,7 @@ public interface StudentFeeConfigRepository extends JpaRepository<StudentFeeConf
             "AND c.academicSession.id = :sessionId AND c.feeHead.id = :feeHeadId " +
             "AND c.revokedAt IS NULL " +
             "AND (c.validUntil IS NULL OR c.validUntil >= :validFrom) " +
-            "AND (:validUntil IS NULL OR c.validFrom IS NULL OR c.validFrom <= :validUntil)")
+            "AND (CAST(:validUntil AS date) IS NULL OR c.validFrom IS NULL OR c.validFrom <= :validUntil)")
     boolean existsOverlapping(@Param("schoolId") Long schoolId,
                               @Param("studentId") String studentId,
                               @Param("sessionId") Long sessionId,
@@ -47,7 +47,7 @@ public interface StudentFeeConfigRepository extends JpaRepository<StudentFeeConf
             "WHERE c.id <> :configId AND c.schoolId = :schoolId AND c.studentId = :studentId " +
             "AND c.academicSession.id = :sessionId AND c.feeHead.id = :feeHeadId AND c.revokedAt IS NULL " +
             "AND (c.validUntil IS NULL OR c.validUntil >= :validFrom) " +
-            "AND (:validUntil IS NULL OR c.validFrom IS NULL OR c.validFrom <= :validUntil)")
+            "AND (CAST(:validUntil AS date) IS NULL OR c.validFrom IS NULL OR c.validFrom <= :validUntil)")
     boolean existsOverlappingExcluding(@Param("configId") Long configId,
                                        @Param("schoolId") Long schoolId,
                                        @Param("studentId") String studentId,

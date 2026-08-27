@@ -18,7 +18,7 @@ public class SchoolFeeSettings {
     private Long schoolId;
     @Enumerated(EnumType.STRING)
     @Column(name = "operational_status", nullable = false, length = 20)
-    private FeeOperationalStatus operationalStatus = FeeOperationalStatus.DISABLED;
+    private FeeOperationalStatus operationalStatus = FeeOperationalStatus.ACTIVE;
     @Column(name = "activation_date")
     private LocalDate activationDate;
     @Enumerated(EnumType.STRING)
@@ -33,4 +33,3 @@ public class SchoolFeeSettings {
     @UpdateTimestamp @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 }
-
