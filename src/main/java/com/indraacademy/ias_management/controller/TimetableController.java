@@ -1,9 +1,13 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.TimetableEntry;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.service.TimetableService;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -25,6 +29,9 @@ public class TimetableController {
 
     @Autowired private TimetableService timetableService;
     @Autowired private AuthService authService;
+    @Autowired private ParentPortalService parentPortalService;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private SecurityUtil securityUtil;
 
     /**
      * GET /api/timetable/class/{className}?sectionId={id}
@@ -34,7 +41,21 @@ public class TimetableController {
     @GetMapping("/class/{className}")
     public ResponseEntity<List<TimetableEntry>> getByClass(
             @PathVariable String className,
-            @RequestParam(required = false) Long sectionId) {
+            @RequestParam(required = false) Long sectionId,
+            @RequestParam(required = false) String studentId) {
+        if (Role.PARENT.equals(authService.getRole())) {
+            if (studentId == null || studentId.isBlank()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+            parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.TIMETABLE);
+            Student child = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
+                    .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                            HttpStatus.NOT_FOUND, "Linked student not found"));
+            if (!className.equals(child.getClassName())) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+            sectionId = child.getSectionId();
+        }
         log.info("GET timetable for class: {}, sectionId: {}", className, sectionId);
         return ResponseEntity.ok(timetableService.getByClass(className, sectionId));
     }

@@ -2,11 +2,15 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.UserNotificationDTO;
 import com.indraacademy.ias_management.entity.Notification;
+import com.indraacademy.ias_management.entity.Parent;
+import com.indraacademy.ias_management.entity.ParentStudentRelationship;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
+import com.indraacademy.ias_management.repository.ParentRepository;
+import com.indraacademy.ias_management.repository.ParentStudentRelationshipRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
@@ -27,11 +31,13 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.Period;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -43,6 +49,8 @@ public class NotificationService {
     @Autowired private UserNotificationRepository userNotificationRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private ParentStudentRelationshipRepository parentStudentRelationshipRepository;
+    @Autowired private ParentRepository parentRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -147,6 +155,7 @@ public class NotificationService {
         // Resolve extra context needed for audience matching
         String studentClassName = null;
         String teacherAssignedClass = null;
+        Set<String> parentStudentClasses = Collections.emptySet();
 
         if ("STUDENT".equalsIgnoreCase(userRole)) {
             try {
@@ -164,9 +173,28 @@ public class NotificationService {
             } catch (DataAccessException e) {
                 log.warn("Could not resolve assigned class for teacher: {}", userId, e);
             }
+        } else if ("PARENT".equalsIgnoreCase(userRole)) {
+            try {
+                LocalDate today = LocalDate.now();
+                Long schoolId = securityUtil.getSchoolId();
+                parentStudentClasses = parentStudentRelationshipRepository
+                        .findBySchoolIdAndParentIdOrderByPrimaryGuardianDescStudentIdAsc(schoolId, userId).stream()
+                        .filter(ParentStudentRelationship::isActive)
+                        .filter(link -> !link.getEffectiveFrom().isAfter(today))
+                        .filter(link -> link.getEffectiveUntil() == null || !link.getEffectiveUntil().isBefore(today))
+                        .map(ParentStudentRelationship::getStudentId)
+                        .map(studentId -> studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null))
+                        .filter(java.util.Objects::nonNull)
+                        .map(Student::getClassName)
+                        .filter(java.util.Objects::nonNull)
+                        .collect(Collectors.toSet());
+            } catch (DataAccessException e) {
+                log.warn("Could not resolve linked classes for parent: {}", userId, e);
+            }
         }
         final String resolvedClassName = studentClassName;
         final String resolvedTeacherClass = teacherAssignedClass;
+        final Set<String> resolvedParentClasses = parentStudentClasses;
 
         List<UserNotification> userNotifications;
         List<Notification> broadNotifications;
@@ -194,6 +222,13 @@ public class NotificationService {
                                     || "TEACHERS".equalsIgnoreCase(audience)
                                     || userId.equals(audience)
                                     || (resolvedTeacherClass != null && audience.equalsIgnoreCase("CLASS_WITH_TEACHER:" + resolvedTeacherClass));
+                        } else if ("PARENT".equalsIgnoreCase(userRole)) {
+                            return "ALL".equalsIgnoreCase(audience)
+                                    || "STUDENTS".equalsIgnoreCase(audience)
+                                    || userId.equals(audience)
+                                    || resolvedParentClasses.stream().anyMatch(className ->
+                                            audience.equalsIgnoreCase("CLASS:" + className)
+                                                    || audience.equalsIgnoreCase("CLASS_WITH_TEACHER:" + className));
                         }
                         return false;
                     })
@@ -408,8 +443,8 @@ public class NotificationService {
     /**
      * Resolves the audience string to a list of userIds and dispatches FCM pushes.
      * Audience values mirror the frontend convention:
-     *   "ALL"                   → every active student + every teacher
-     *   "STUDENTS"              → every active student
+     *   "ALL"                   → every active student, linked parent and teacher
+     *   "STUDENTS"              → every active student and their linked parents
      *   "TEACHERS"              → every teacher
      *   "CLASS:X"               → active students in class X
      *   "CLASS_WITH_TEACHER:X"  → active students in class X + class teacher of X
@@ -427,11 +462,13 @@ public class NotificationService {
                         .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
                 fcmService.sendToUsers(studentIds, schoolId, title, body);
                 fcmService.sendToUsers(teacherIds, schoolId, title, body);
+                fcmService.sendToUsers(activeParentIdsForStudents(studentIds, schoolId), schoolId, title, body);
 
             } else if ("STUDENTS".equalsIgnoreCase(audience)) {
                 List<String> ids = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 fcmService.sendToUsers(ids, schoolId, title, body);
+                fcmService.sendToUsers(activeParentIdsForStudents(ids, schoolId), schoolId, title, body);
 
             } else if ("TEACHERS".equalsIgnoreCase(audience)) {
                 List<String> ids = teacherRepository.findBySchoolId(schoolId)
@@ -444,6 +481,7 @@ public class NotificationService {
                         .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 fcmService.sendToUsers(ids, schoolId, title, body);
+                fcmService.sendToUsers(activeParentIdsForStudents(ids, schoolId), schoolId, title, body);
 
             } else if (audience.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
                 String className = audience.substring("CLASS_WITH_TEACHER:".length());
@@ -451,6 +489,7 @@ public class NotificationService {
                         .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 fcmService.sendToUsers(studentIds, schoolId, title, body);
+                fcmService.sendToUsers(activeParentIdsForStudents(studentIds, schoolId), schoolId, title, body);
                 teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
                         .ifPresent(t -> fcmService.sendToUser(t.getTeacherId(), schoolId, title, body));
 
@@ -461,6 +500,21 @@ public class NotificationService {
         } catch (Exception e) {
             log.warn("FCM audience dispatch failed for audience '{}': {}", audience, e.getMessage());
         }
+    }
+
+    private List<String> activeParentIdsForStudents(List<String> studentIds, Long schoolId) {
+        LocalDate today = LocalDate.now();
+        return studentIds.stream()
+                .flatMap(studentId -> parentStudentRelationshipRepository
+                        .findBySchoolIdAndStudentIdOrderByPrimaryGuardianDesc(schoolId, studentId).stream())
+                .filter(ParentStudentRelationship::isActive)
+                .filter(link -> !link.getEffectiveFrom().isAfter(today))
+                .filter(link -> link.getEffectiveUntil() == null || !link.getEffectiveUntil().isBefore(today))
+                .map(ParentStudentRelationship::getParentId)
+                .filter(parentId -> parentRepository.findByParentIdAndSchoolId(parentId, schoolId)
+                        .map(Parent::isActive).orElse(false))
+                .distinct()
+                .toList();
     }
 
     @Scheduled(cron = "0 0 2 * * ?")

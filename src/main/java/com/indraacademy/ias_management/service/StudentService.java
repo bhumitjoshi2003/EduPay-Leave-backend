@@ -63,6 +63,7 @@ public class StudentService {
     @Autowired private UserRepository userRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private SectionRepository sectionRepository;
+    @Autowired private ParentPortalService parentPortalService;
 
     private String getAcademicYear(LocalDate date) {
         int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
@@ -301,6 +302,8 @@ public class StudentService {
         student.setExitRemarks(request.getExitRemarks());
 
         Student saved = studentRepository.save(student);
+        parentPortalService.endRelationshipsForExitedStudent(
+                schoolId, studentId, request.getLeavingDate());
         auditService.log(
                 securityUtil.getUsername(), securityUtil.getRole(),
                 "EXIT_STUDENT", "Student", studentId,

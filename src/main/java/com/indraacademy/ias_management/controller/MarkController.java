@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.dto.*;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.service.ExamConfigService;
 import com.indraacademy.ias_management.service.MarkService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -28,6 +29,7 @@ public class MarkController {
     @Autowired private ExamConfigService examConfigService;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ParentPortalService parentPortalService;
 
     // ─── Mark Entry Mode A: by subject ───────────────────────────────────────
 
@@ -108,7 +110,7 @@ public class MarkController {
      * STUDENT: can only view their own results.
      * TEACHER + ADMIN: can view any student.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/student/{studentId}/results")
     public ResponseEntity<?> getStudentResults(
             @PathVariable String studentId,
@@ -121,6 +123,9 @@ public class MarkController {
         if (Role.STUDENT.equals(callerRole) && !callerUserId.equals(studentId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Students can only view their own results.");
+        }
+        if (Role.PARENT.equals(callerRole)) {
+            parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.RESULTS);
         }
 
         List<ExamResultDTO> results = markService.getStudentResults(studentId, session);

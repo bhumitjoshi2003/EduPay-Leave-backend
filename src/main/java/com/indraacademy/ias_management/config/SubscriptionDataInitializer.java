@@ -151,20 +151,24 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
             new FeatureCatalog("AUDIT_LOGS",
                     "Audit Logs",
                     "Paginated audit log of all write operations in the school.",
-                    "ADMIN", false)
+                    "ADMIN", false),
+            new FeatureCatalog("PARENT_PORTAL",
+                    "Parent Portal",
+                    "Secure guardian accounts with multi-child access to attendance, fees, results, leave and school communication.",
+                    "COMMUNICATION", false)
     );
 
     /** Which tiered keys each plan grants, by tier name. Core keys are handled separately and apply to all three. */
     private static final Map<String, List<String>> TIERED_PLAN_FEATURES = Map.of(
-            "CAMPUS", List.of("FEE_MANAGEMENT", "PAYMENT_COLLECTION", "EXAM_MARKS"),
+            "CAMPUS", List.of("FEE_MANAGEMENT", "PAYMENT_COLLECTION", "EXAM_MARKS", "PARENT_PORTAL"),
             "ACADEMY", List.of(
                     "FEE_MANAGEMENT", "PAYMENT_COLLECTION", "EXAM_MARKS",
-                    "FEE_REMINDERS", "REPORT_CARD", "BULK_COMMUNICATIONS", "BULK_IMPORT", "ANALYTICS", "AI_COPILOT"
+                    "FEE_REMINDERS", "REPORT_CARD", "BULK_COMMUNICATIONS", "BULK_IMPORT", "ANALYTICS", "AI_COPILOT", "PARENT_PORTAL"
             ),
             "INSTITUTE", List.of(
                     "FEE_MANAGEMENT", "PAYMENT_COLLECTION", "EXAM_MARKS",
                     "FEE_REMINDERS", "REPORT_CARD", "BULK_COMMUNICATIONS", "BULK_IMPORT", "ANALYTICS", "AI_COPILOT",
-                    "AUDIT_LOGS"
+                    "AUDIT_LOGS", "PARENT_PORTAL"
             )
     );
 

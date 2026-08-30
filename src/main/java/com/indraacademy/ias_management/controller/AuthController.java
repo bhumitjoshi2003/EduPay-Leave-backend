@@ -14,6 +14,7 @@ import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.ParentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
@@ -57,7 +58,7 @@ public class AuthController {
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     private static final Set<String> VALID_ROLES = Set.of(
-            Role.SUPER_ADMIN, Role.ADMIN, Role.SUB_ADMIN, Role.TEACHER, Role.STUDENT);
+            Role.SUPER_ADMIN, Role.ADMIN, Role.SUB_ADMIN, Role.TEACHER, Role.STUDENT, Role.PARENT);
 
     @Autowired private UserRepository userRepository;
     @Autowired private SchoolRepository schoolRepository;
@@ -69,6 +70,7 @@ public class AuthController {
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private AdminRepository adminRepository;
+    @Autowired private ParentRepository parentRepository;
     @Autowired private com.indraacademy.ias_management.service.EntitlementService entitlementService;
     @Autowired private com.indraacademy.ias_management.repository.SchoolEffectiveEntitlementRepository entitlementRepo;
     @Autowired private RateLimiter rateLimiter;
@@ -452,6 +454,9 @@ public class AuthController {
             } else if (Role.TEACHER.equals(role)) {
                 return teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
                         .map(Teacher::getName).orElse(null);
+            } else if (Role.PARENT.equals(role)) {
+                return parentRepository.findByParentIdAndSchoolId(userId, schoolId)
+                        .map(com.indraacademy.ias_management.entity.Parent::getName).orElse(null);
             } else {
                 // ADMIN, SUB_ADMIN: scope to school; SUPER_ADMIN has null schoolId so fall back to findById
                 if (schoolId != null) {
@@ -549,10 +554,12 @@ public class AuthController {
                             .body("Your school account has been deactivated. Please contact Edunexify support.");
                 }
 
-                // Block token refresh for STUDENT/TEACHER when subscription is EXPIRED.
+                // Block token refresh for school end-users when subscription is EXPIRED.
                 // ADMIN/SUB_ADMIN are allowed to keep their session so they can renew.
                 String refreshRole = loggedIn.getRole();
-                if (Role.STUDENT.equals(refreshRole) || Role.TEACHER.equals(refreshRole)) {
+                if (Role.STUDENT.equals(refreshRole)
+                        || Role.TEACHER.equals(refreshRole)
+                        || Role.PARENT.equals(refreshRole)) {
                     var ent = entitlementRepo.findById(loggedIn.getSchoolId()).orElse(null);
                     if (ent != null && "EXPIRED".equals(ent.getSubscriptionStatus())) {
                         log.warn("Token refresh rejected for userId={} ({}): school {} subscription is EXPIRED",

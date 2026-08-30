@@ -18,6 +18,7 @@ import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentBulkImportService;
 import com.indraacademy.ias_management.service.StudentPromotionService;
 import com.indraacademy.ias_management.service.StudentService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,6 +57,7 @@ public class StudentController {
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private AuthService authService;
+    @Autowired private ParentPortalService parentPortalService;
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/search")
@@ -97,6 +99,10 @@ public class StudentController {
         if(Role.STUDENT.equals(role)){
             resolvedStudentId = authService.getUserId();
             log.info("Student accessing their own record with ID: {}", resolvedStudentId);
+        } else if (Role.PARENT.equals(role)) {
+            parentPortalService.assertChildAccess(studentId);
+            resolvedStudentId = studentId;
+            log.info("Parent accessing linked student record with ID: {}", resolvedStudentId);
         } else {
             resolvedStudentId = studentId;
             log.info("Admin/Teacher accessing student record with ID: {}", resolvedStudentId);
