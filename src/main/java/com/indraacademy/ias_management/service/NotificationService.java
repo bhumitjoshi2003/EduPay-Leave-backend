@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.entity.ParentStudentRelationship;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
 import com.indraacademy.ias_management.repository.ParentRepository;
@@ -458,7 +459,7 @@ public class NotificationService {
             if ("ALL".equalsIgnoreCase(audience)) {
                 List<String> studentIds = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId)
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
-                List<String> teacherIds = teacherRepository.findBySchoolId(schoolId)
+                List<String> teacherIds = teacherRepository.findByStatusAndSchoolId(TeacherStatus.ACTIVE, schoolId)
                         .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
                 fcmService.sendToUsers(studentIds, schoolId, title, body);
                 fcmService.sendToUsers(teacherIds, schoolId, title, body);
@@ -471,7 +472,7 @@ public class NotificationService {
                 fcmService.sendToUsers(activeParentIdsForStudents(ids, schoolId), schoolId, title, body);
 
             } else if ("TEACHERS".equalsIgnoreCase(audience)) {
-                List<String> ids = teacherRepository.findBySchoolId(schoolId)
+                List<String> ids = teacherRepository.findByStatusAndSchoolId(TeacherStatus.ACTIVE, schoolId)
                         .stream().map(Teacher::getTeacherId).collect(Collectors.toList());
                 fcmService.sendToUsers(ids, schoolId, title, body);
 
@@ -491,6 +492,7 @@ public class NotificationService {
                 fcmService.sendToUsers(studentIds, schoolId, title, body);
                 fcmService.sendToUsers(activeParentIdsForStudents(studentIds, schoolId), schoolId, title, body);
                 teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
+                        .filter(t -> t.getStatus() == TeacherStatus.ACTIVE)
                         .ifPresent(t -> fcmService.sendToUser(t.getTeacherId(), schoolId, title, body));
 
             } else {

@@ -80,6 +80,10 @@ public class FeeReminderService {
 
     private void processScheduledReminder(StudentFees fee, int startMonth) {
         studentRepository.findByStudentIdAndSchoolId(fee.getStudentId(), fee.getSchoolId()).ifPresentOrElse(student -> {
+            if (student.getStatus() != StudentStatus.ACTIVE) {
+                log.debug("Skipping scheduled fee reminder for non-active student {}", student.getStudentId());
+                return;
+            }
             String email = student.getEmail();
             if (email == null || email.isEmpty()) {
                 log.warn("Skipping: Student {} has no email address.", student.getStudentId());

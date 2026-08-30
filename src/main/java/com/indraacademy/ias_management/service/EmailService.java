@@ -1,7 +1,9 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import jakarta.mail.MessagingException;
@@ -310,11 +312,11 @@ public class EmailService {
         List<Student> students = Collections.emptyList();
         try {
             if ("All".equalsIgnoreCase(selectedClass)) {
-                students = studentRepository.findBySchoolId(schoolId);
-                log.debug("Fetched {} students for school {} bulk email.", students.size(), schoolId);
+                students = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, schoolId);
+                log.debug("Fetched {} active students for school {} bulk email.", students.size(), schoolId);
             } else {
-                students = studentRepository.findByClassNameAndSchoolId(selectedClass, schoolId);
-                log.debug("Fetched {} students for class: {} (schoolId: {})", students.size(), selectedClass, schoolId);
+                students = studentRepository.findByClassNameAndStatusAndSchoolId(selectedClass, StudentStatus.ACTIVE, schoolId);
+                log.debug("Fetched {} active students for class: {} (schoolId: {})", students.size(), selectedClass, schoolId);
             }
         } catch (DataAccessException e) {
             log.error("Data access error occurred while fetching students for class: {}. Aborting email send.", selectedClass, e);
@@ -344,13 +346,13 @@ public class EmailService {
         }
         log.info("Fetching teachers for school {} for bulk email with subject: {}", schoolId, subject);
         try {
-            List<String> emails = teacherRepository.findBySchoolId(schoolId).stream()
+            List<String> emails = teacherRepository.findByStatusAndSchoolId(TeacherStatus.ACTIVE, schoolId).stream()
                     .map(Teacher::getEmail)
                     .filter(email -> email != null && !email.trim().isEmpty())
                     .distinct()
                     .toList();
             if (emails.isEmpty()) {
-                log.warn("No teacher emails found. Aborting.");
+                log.warn("No active teacher emails found. Aborting.");
                 return;
             }
             log.info("Sending bulk email to {} teachers.", emails.size());
@@ -369,12 +371,13 @@ public class EmailService {
         log.info("Sending bulk email to students of class {} (schoolId: {}) and their class teacher.", className, schoolId);
         try {
             List<String> emails = new java.util.ArrayList<>(
-                    studentRepository.findByClassNameAndSchoolId(className, schoolId).stream()
+                    studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId).stream()
                             .map(Student::getEmail)
                             .filter(email -> email != null && !email.trim().isEmpty())
                             .toList()
             );
             teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
+                    .filter(teacher -> teacher.getStatus() == TeacherStatus.ACTIVE)
                     .map(Teacher::getEmail)
                     .filter(email -> email != null && !email.trim().isEmpty())
                     .ifPresent(emails::add);
