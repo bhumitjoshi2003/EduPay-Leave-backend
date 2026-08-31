@@ -12,6 +12,7 @@ import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -50,6 +52,9 @@ class FeeReminderServiceTest {
     @Mock private StudentFeesService studentFeesService;
     @Mock private PaymentRepository paymentRepository;
     @Mock private SecurityUtil securityUtil;
+    @Mock private EmailService emailService;
+    @Mock private AuditService auditService;
+    @Mock private HttpServletRequest request;
 
     private FeeReminderService service;
 
@@ -66,6 +71,8 @@ class FeeReminderServiceTest {
         ReflectionTestUtils.setField(service, "studentFeesService", studentFeesService);
         ReflectionTestUtils.setField(service, "paymentRepository", paymentRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
+        ReflectionTestUtils.setField(service, "emailService", emailService);
+        ReflectionTestUtils.setField(service, "auditService", auditService);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         School school = new School();
@@ -96,6 +103,16 @@ class FeeReminderServiceTest {
         s.setClassName(className);
         s.setStatus(StudentStatus.ACTIVE);
         s.setName("Test Student");
+        return s;
+    }
+
+    private Student studentWithStatus(String studentId, StudentStatus status) {
+        Student s = new Student();
+        s.setStudentId(studentId);
+        s.setClassName("5A");
+        s.setStatus(status);
+        s.setName("Test Student");
+        s.setEmail("parent@example.com");
         return s;
     }
 
@@ -218,5 +235,95 @@ class FeeReminderServiceTest {
         List<OverdueStudentDto> result = service.getOverdueStudents(SESSION, null);
 
         assertThat(result).isEmpty();
+    }
+
+    // ─── Send-boundary status enforcement (defense in depth: not just candidate-list filtering) ───
+
+    @Test
+    void sendReminder_skipsTransferredStudent() {
+        when(studentRepository.findByStudentIdAndSchoolId("S3", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("S3", StudentStatus.TRANSFERRED)));
+
+        FeeReminderService.ReminderOutcome outcome = service.sendReminder("S3", SESSION, request);
+
+        assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
+        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void sendReminder_skipsWithdrawnStudent() {
+        when(studentRepository.findByStudentIdAndSchoolId("S4", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("S4", StudentStatus.WITHDRAWN)));
+
+        FeeReminderService.ReminderOutcome outcome = service.sendReminder("S4", SESSION, request);
+
+        assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
+        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
+    }
+
+    @Test
+    void sendReminder_skipsGraduatedStudent() {
+        when(studentRepository.findByStudentIdAndSchoolId("S5", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("S5", StudentStatus.GRADUATED)));
+
+        FeeReminderService.ReminderOutcome outcome = service.sendReminder("S5", SESSION, request);
+
+        assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
+        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
+    }
+
+    @Test
+    void sendReminder_skipsInactiveStudent() {
+        when(studentRepository.findByStudentIdAndSchoolId("S6", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("S6", StudentStatus.INACTIVE)));
+
+        FeeReminderService.ReminderOutcome outcome = service.sendReminder("S6", SESSION, request);
+
+        assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
+        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
+    }
+
+    @Test
+    void sendReminder_activeStudentStillReceivesReminder() {
+        when(studentRepository.findByStudentIdAndSchoolId("S7", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("S7", StudentStatus.ACTIVE)));
+        when(studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(SCHOOL_ID, SESSION, "5A"))
+                .thenReturn(List.of());
+
+        FeeReminderService.ReminderOutcome outcome = service.sendReminder("S7", SESSION, request);
+
+        assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SENT);
+        verify(emailService).sendHtmlEmail(eq("parent@example.com"), any(), any());
+        verify(auditService).log(any(), any(), eq("SEND_FEE_REMINDER"), any(), eq("S7"), any(), any(), any());
+    }
+
+    @Test
+    void sendBulkReminders_aStaleExitedStudentIdIsSkippedNotSilentlySent_activeStudentInSameBatchStillSent() {
+        when(studentRepository.findByStudentIdAndSchoolId("EXITED", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("EXITED", StudentStatus.WITHDRAWN)));
+        when(studentRepository.findByStudentIdAndSchoolId("S7", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("S7", StudentStatus.ACTIVE)));
+        when(studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(SCHOOL_ID, SESSION, "5A"))
+                .thenReturn(List.of());
+
+        FeeReminderService.BulkReminderResult result =
+                service.sendBulkReminders(List.of("EXITED", "S7"), SESSION, request);
+
+        assertThat(result.sent()).isEqualTo(1);
+        assertThat(result.skipped()).containsExactly(Map.of("studentId", "EXITED", "reason", "skipped_not_active"));
+        // Exactly one email — the exited student's stale ID must never reach the mail system.
+        verify(emailService, times(1)).sendHtmlEmail(any(), any(), any());
+    }
+
+    @Test
+    void aiWorkflowDispatch_exitedStudentIsSkippedNotSilentlySent() {
+        when(studentRepository.findByStudentIdAndSchoolId("EXITED", SCHOOL_ID))
+                .thenReturn(Optional.of(studentWithStatus("EXITED", StudentStatus.GRADUATED)));
+
+        Map<String, String> outcomes = service.sendReminderEmailsWithOutcomes(List.of("EXITED"), SESSION);
+
+        assertThat(outcomes).containsEntry("EXITED", "skipped_not_active");
+        verify(emailService, never()).sendHtmlEmailSync(any(), any(), any());
     }
 }

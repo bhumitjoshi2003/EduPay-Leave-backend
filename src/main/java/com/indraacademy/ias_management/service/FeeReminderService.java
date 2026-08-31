@@ -205,13 +205,30 @@ public class FeeReminderService {
 
     // ─── Manual reminder sending ──────────────────────────────────────────────
 
+    /** Final outcome of a fee-reminder send attempt. SKIPPED_* means the student was found
+     *  but is not eligible — reported back to the caller explicitly rather than silently
+     *  doing nothing, so an exited/no-email student never just "goes quiet." FAILED is
+     *  reserved for a real send-time failure (only detectable by the synchronous path — see
+     *  sendReminderEmailSync). */
+    public enum ReminderOutcome {
+        SENT, SKIPPED_NOT_ACTIVE, SKIPPED_NO_EMAIL, FAILED;
+
+        /** Lowercase, machine-readable form used in API responses and the AI-workflow
+         *  per-student outcomes map (e.g. "skipped_not_active"). */
+        public String key() { return name().toLowerCase(); }
+    }
+
+    /** Per-student send result for {@link #sendBulkReminders}. */
+    public record BulkReminderResult(int sent, List<Map<String, String>> skipped) {}
+
     /**
-     * Sends a fee reminder email to a single student and logs one audit entry.
-     * Returns true if the email was sent (student has an email), false otherwise.
+     * Sends a fee reminder email to a single student and logs one audit entry on success.
+     * Returns SENT, or a SKIPPED_* outcome explaining exactly why nothing was sent (never
+     * silently succeeds-with-nothing-happening).
      */
-    public boolean sendReminder(String studentId, String session, HttpServletRequest request) {
-        String monthList = sendReminderEmail(studentId, session);
-        if (monthList == null) return false;
+    public ReminderOutcome sendReminder(String studentId, String session, HttpServletRequest request) {
+        SendResult result = sendReminderEmail(studentId, session);
+        if (result.outcome() != ReminderOutcome.SENT) return result.outcome();
 
         auditService.log(
                 securityUtil.getUsername(),
@@ -220,28 +237,34 @@ public class FeeReminderService {
                 "StudentFees",
                 studentId,
                 null,
-                "Reminder sent for session " + session + "; months: " + monthList,
+                "Reminder sent for session " + session + "; months: " + result.monthList(),
                 request.getRemoteAddr()
         );
-        return true;
+        return ReminderOutcome.SENT;
     }
 
     /**
      * Sends reminders to all students in the list and logs a single summary audit entry.
-     * Returns the count of successful sends.
+     * Returns both the count of successful sends and a per-student list of skipped
+     * students with their exact reason (e.g. a stale/manually-supplied exited studentId is
+     * reported as "skipped_not_active", never silently dropped from the count with no trace).
      */
-    public int sendBulkReminders(List<String> studentIds, String session, HttpServletRequest request) {
+    public BulkReminderResult sendBulkReminders(List<String> studentIds, String session, HttpServletRequest request) {
         List<String> reached = new ArrayList<>();
+        List<Map<String, String>> skipped = new ArrayList<>();
         int sent = 0;
         for (String studentId : studentIds) {
             try {
-                String monthList = sendReminderEmail(studentId, session);
-                if (monthList != null) {
+                SendResult result = sendReminderEmail(studentId, session);
+                if (result.outcome() == ReminderOutcome.SENT) {
                     reached.add(studentId);
                     sent++;
+                } else {
+                    skipped.add(Map.of("studentId", studentId, "reason", result.outcome().key()));
                 }
             } catch (Exception e) {
                 log.error("Failed to send reminder for student {}: {}", studentId, e.getMessage());
+                skipped.add(Map.of("studentId", studentId, "reason", "error"));
             }
         }
 
@@ -257,16 +280,17 @@ public class FeeReminderService {
                     request.getRemoteAddr()
             );
         }
-        return sent;
+        return new BulkReminderResult(sent, skipped);
     }
 
     /**
      * Sends reminders to all students in the list and returns a per-student outcome map
-     * ("sent" | "failed"), unlike {@link #sendBulkReminders} which only returns a count.
-     * Used by the AI-copilot workflow's dispatch step (AiWorkflowController), which needs
-     * to report partial failures clearly rather than a single opaque number. Does not do
-     * its own audit logging — the caller (which also owns the ai_fee_reminder_batch
-     * idempotency row) logs one summary entry for the whole batch.
+     * ("sent" | "skipped_not_active" | "skipped_no_email" | "failed"), unlike
+     * {@link #sendBulkReminders} which is audit-logged and admin-facing. Used by the
+     * AI-copilot workflow's dispatch step (AiWorkflowController), which needs to report
+     * partial failures/skips clearly rather than a single opaque number. Does not do its
+     * own audit logging — the caller (which also owns the ai_fee_reminder_batch idempotency
+     * row) logs one summary entry for the whole batch.
      *
      * Uses {@link #sendReminderEmailSync}, NOT {@link #sendReminderEmail} — the async
      * version can only report "we handed it to the mail system," never a real outcome (see
@@ -276,8 +300,8 @@ public class FeeReminderService {
         Map<String, String> outcomes = new LinkedHashMap<>();
         for (String studentId : studentIds) {
             try {
-                boolean sent = sendReminderEmailSync(studentId, session);
-                outcomes.put(studentId, sent ? "sent" : "failed");
+                SendResult result = sendReminderEmailSync(studentId, session);
+                outcomes.put(studentId, result.outcome().key());
             } catch (Exception e) {
                 log.error("Failed to send workflow reminder for student {}: {}", studentId, e.getMessage());
                 outcomes.put(studentId, "failed");
@@ -288,15 +312,33 @@ public class FeeReminderService {
 
     private record ReminderEmailContent(String email, String subject, String htmlBody, String monthList) {}
 
+    /** content is non-null iff outcome == SENT-eligible (i.e. buildReminderEmailContent
+     *  succeeded); skip outcomes always carry a null content. */
+    private record ReminderBuildResult(ReminderEmailContent content, ReminderOutcome skipOutcome) {
+        boolean isEligible() { return content != null; }
+    }
+
+    /** The actual send outcome plus the month list for audit logging (null when not sent). */
+    private record SendResult(ReminderOutcome outcome, String monthList) {}
+
     /** Shared by sendReminderEmail and sendReminderEmailSync — builds the email content,
-     * doesn't send it. Returns null if the student has no email on file. */
-    private ReminderEmailContent buildReminderEmailContent(String studentId, String session) {
+     * doesn't send it. This is the single boundary both the manual admin (single/bulk) and
+     * AI-workflow send paths funnel through, so the eligibility check lives here exactly
+     * once rather than being re-implemented (and potentially forgotten) per caller — a
+     * stale/manually-supplied exited studentId can never reach an actual send, regardless
+     * of which entry point supplied it. */
+    private ReminderBuildResult buildReminderEmailContent(String studentId, String session) {
         Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
+        if (student.getStatus() != StudentStatus.ACTIVE) {
+            log.info("Skipping fee reminder for non-active student {} (status={})", studentId, student.getStatus());
+            return new ReminderBuildResult(null, ReminderOutcome.SKIPPED_NOT_ACTIVE);
+        }
+
         String email = student.getEmail();
         if (email == null || email.isBlank()) {
-            return null;
+            return new ReminderBuildResult(null, ReminderOutcome.SKIPPED_NO_EMAIL);
         }
 
         int[] years = parseSession(session);
@@ -321,48 +363,51 @@ public class FeeReminderService {
                 .map(School::getName).orElse("School");
         String htmlBody = buildFeeReminderHtml(studentName, monthList, session, schoolName);
 
-        return new ReminderEmailContent(email, subject, htmlBody, monthList);
+        return new ReminderBuildResult(new ReminderEmailContent(email, subject, htmlBody, monthList), null);
     }
 
     /**
      * Sends the reminder email for one student via the existing fire-and-forget
-     * {@link EmailService#sendHtmlEmail}. Returns the month list string as soon as the
-     * student is confirmed to have an email on file — NOT proof of actual delivery.
-     * {@code @Async void sendHtmlEmail} returns before the SMTP call even happens and
-     * catches every exception internally, so nothing here can ever detect a real send
-     * failure. Fine for the interactive single/bulk-send endpoints, where the tradeoff is
-     * a fast HTTP response and a human already watching the result. NOT used by the
-     * AI-workflow dispatch path — see sendReminderEmailSync for why.
+     * {@link EmailService#sendHtmlEmail}. Returns SENT as soon as the student is confirmed
+     * eligible and has an email on file — NOT proof of actual delivery. {@code @Async void
+     * sendHtmlEmail} returns before the SMTP call even happens and catches every exception
+     * internally, so nothing here can ever detect a real send failure. Fine for the
+     * interactive single/bulk-send endpoints, where the tradeoff is a fast HTTP response and
+     * a human already watching the result. NOT used by the AI-workflow dispatch path — see
+     * sendReminderEmailSync for why.
      */
-    private String sendReminderEmail(String studentId, String session) {
-        ReminderEmailContent content = buildReminderEmailContent(studentId, session);
-        if (content == null) {
-            log.warn("Cannot send reminder: student {} has no email.", studentId);
-            return null;
+    private SendResult sendReminderEmail(String studentId, String session) {
+        ReminderBuildResult result = buildReminderEmailContent(studentId, session);
+        if (!result.isEligible()) {
+            log.warn("Cannot send reminder to student {}: {}", studentId, result.skipOutcome());
+            return new SendResult(result.skipOutcome(), null);
         }
+        ReminderEmailContent content = result.content();
         emailService.sendHtmlEmail(content.email(), content.subject(), content.htmlBody());
         log.info("Fee reminder sent to student {} ({})", studentId, content.email());
-        return content.monthList();
+        return new SendResult(ReminderOutcome.SENT, content.monthList());
     }
 
     /**
      * Synchronous variant used only by {@link #sendReminderEmailsWithOutcomes} (the
      * AI-workflow dispatch path). Blocks on the real SMTP round-trip so it can report a
-     * genuine per-student true/false outcome — the async path structurally cannot do this
+     * genuine per-student SENT/FAILED outcome — the async path structurally cannot do this
      * (see sendReminderEmail's Javadoc). Deliberately not used by the interactive
      * single/bulk-send endpoints, which keep their existing fast, fire-and-forget behavior.
      */
-    private boolean sendReminderEmailSync(String studentId, String session) {
-        ReminderEmailContent content = buildReminderEmailContent(studentId, session);
-        if (content == null) {
-            log.warn("Cannot send reminder (sync): student {} has no email.", studentId);
-            return false;
+    private SendResult sendReminderEmailSync(String studentId, String session) {
+        ReminderBuildResult result = buildReminderEmailContent(studentId, session);
+        if (!result.isEligible()) {
+            log.warn("Cannot send reminder (sync) to student {}: {}", studentId, result.skipOutcome());
+            return new SendResult(result.skipOutcome(), null);
         }
+        ReminderEmailContent content = result.content();
         boolean sent = emailService.sendHtmlEmailSync(content.email(), content.subject(), content.htmlBody());
         if (sent) {
             log.info("Fee reminder sent (sync) to student {} ({})", studentId, content.email());
+            return new SendResult(ReminderOutcome.SENT, content.monthList());
         }
-        return sent;
+        return new SendResult(ReminderOutcome.FAILED, null);
     }
 
     // ─── Email template ───────────────────────────────────────────────────────

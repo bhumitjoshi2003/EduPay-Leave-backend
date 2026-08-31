@@ -323,18 +323,22 @@ public class StudentFeesController {
         if (studentId == null || session == null) {
             return ResponseEntity.badRequest().body("studentId and session are required.");
         }
-        boolean sent = feeReminderService.sendReminder(studentId, session, request);
-        if (sent) {
-            return ResponseEntity.ok(Map.of("message", "Reminder sent successfully."));
-        } else {
-            return ResponseEntity.ok(Map.of("message", "Student has no email configured; reminder not sent."));
-        }
+        FeeReminderService.ReminderOutcome outcome = feeReminderService.sendReminder(studentId, session, request);
+        String message = switch (outcome) {
+            case SENT -> "Reminder sent successfully.";
+            case SKIPPED_NOT_ACTIVE -> "This student is no longer active (left/graduated/transferred); reminder not sent.";
+            case SKIPPED_NO_EMAIL -> "Student has no email configured; reminder not sent.";
+            case FAILED -> "Reminder could not be sent.";
+        };
+        return ResponseEntity.ok(Map.of("status", outcome.key(), "message", message));
     }
 
     /**
      * POST /api/student-fees/reminders/send-bulk
      * Body: { studentIds: [...], session }
-     * Sends reminders to all listed students. Returns { sent: N }.
+     * Sends reminders to all listed students. Returns { sent: N, skipped: [{studentId, reason}] } —
+     * a skipped entry's reason is "skipped_not_active"/"skipped_no_email"/"error", so a
+     * stale or exited studentId in the request is reported explicitly, never silently dropped.
      */
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping("/reminders/send-bulk")
@@ -347,7 +351,7 @@ public class StudentFeesController {
         if (studentIds == null || studentIds.isEmpty() || session == null) {
             return ResponseEntity.badRequest().body("studentIds (non-empty list) and session are required.");
         }
-        int sent = feeReminderService.sendBulkReminders(studentIds, session, request);
-        return ResponseEntity.ok(Map.of("sent", sent));
+        FeeReminderService.BulkReminderResult result = feeReminderService.sendBulkReminders(studentIds, session, request);
+        return ResponseEntity.ok(Map.of("sent", result.sent(), "skipped", result.skipped()));
     }
 }

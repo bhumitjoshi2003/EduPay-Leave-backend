@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -70,15 +71,27 @@ class AttendanceServiceConsecutiveAbsenceTest {
     }
 
     private Student student(String id, String name) {
+        return student(id, name, StudentStatus.ACTIVE);
+    }
+
+    private Student student(String id, String name, StudentStatus status) {
         Student s = new Student();
         s.setStudentId(id);
         s.setName(name);
         s.setClassName(CLASS_NAME);
+        s.setStatus(status);
         return s;
     }
 
+    /** Only ACTIVE students are ever handed back — mirrors the repository's own
+     *  status-filtered query, so a stub set up with an exited student here is
+     *  simply never returned, exactly like the real findByClassNameAndStatusAndSchoolId. */
     private void givenClassRoster(Student... students) {
-        when(studentRepository.findByClassNameAndSchoolId(CLASS_NAME, SCHOOL_ID)).thenReturn(List.of(students));
+        List<Student> active = List.of(students).stream()
+                .filter(s -> s.getStatus() == StudentStatus.ACTIVE)
+                .toList();
+        when(studentRepository.findByClassNameAndStatusAndSchoolId(CLASS_NAME, StudentStatus.ACTIVE, SCHOOL_ID))
+                .thenReturn(active);
     }
 
     private void givenAttendanceRows(List<Attendance> rows) {
@@ -233,6 +246,23 @@ class AttendanceServiceConsecutiveAbsenceTest {
         List<ConsecutiveAbsenceDTO> result = service.getConsecutiveAbsentees(CLASS_NAME, 3, null, null);
 
         assertThat(result).extracting(ConsecutiveAbsenceDTO::getStudentId).containsExactly("S2", "S1");
+    }
+
+    @Test
+    void excludesAWithdrawnStudentEvenThoughTheirOldAttendanceRowsStillShowAStreak() {
+        // The withdrawn student has real historical absence rows on every marked day — a naive
+        // "count absences" pass would flag them. They must never appear: they've left the school.
+        givenClassRoster(student("S1", "Still Enrolled Sam"),
+                student("S2", "Withdrawn Wes", StudentStatus.WITHDRAWN));
+        givenAttendanceRows(new ArrayList<>(List.of(
+                row("X", D2), row("X", D3), row("X", D4),
+                row("S1", D2), row("S1", D3), row("S1", D4),
+                row("S2", D2), row("S2", D3), row("S2", D4)
+        )));
+
+        List<ConsecutiveAbsenceDTO> result = service.getConsecutiveAbsentees(CLASS_NAME, 3, null, null);
+
+        assertThat(result).extracting(ConsecutiveAbsenceDTO::getStudentId).containsExactly("S1");
     }
 
     @Test

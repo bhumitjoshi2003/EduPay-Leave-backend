@@ -277,6 +277,14 @@ public class AttendanceController {
                     .body("Students cannot access class attendance summaries.");
         }
 
+        // PARENT: no access to class-wide data — this endpoint returns every student in the
+        // class, which would let a parent see attendance for students they aren't linked to.
+        // Parents must use /summary/student/{studentId}, which enforces assertChildAccess.
+        if (Role.PARENT.equals(currentRole)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Parents cannot access class attendance summaries.");
+        }
+
         // TEACHER: only their assigned class
         if (Role.TEACHER.equals(currentRole)) {
             String teacherClass = teacherRepository.findById(currentUserId)
@@ -320,6 +328,12 @@ public class AttendanceController {
         if (Role.STUDENT.equals(currentRole)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Students cannot access class attendance summaries.");
+        }
+
+        // PARENT: no access to class-wide data — same rule as getClassAttendanceSummary.
+        if (Role.PARENT.equals(currentRole)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Parents cannot access class attendance summaries.");
         }
 
         // TEACHER: only their assigned class. Identical check to getClassAttendanceSummary —

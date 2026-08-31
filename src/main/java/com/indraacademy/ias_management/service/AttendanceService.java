@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
@@ -575,9 +576,11 @@ public class AttendanceService {
                                                             Integer month, Integer year,
                                                             String session, Long sectionId) {
         Long schoolId = securityUtil.getSchoolId();
+        // ACTIVE-only at the query level (not loaded-then-filtered) — an exited student must
+        // never appear in a class attendance summary, regardless of how this method is reached.
         List<Student> students = (sectionId != null)
-                ? studentRepository.findByClassNameAndSectionIdAndSchoolId(className, sectionId, schoolId)
-                : studentRepository.findByClassNameAndSchoolId(className, schoolId);
+                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
+                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
 
         LocalDate start;
         LocalDate end;
@@ -734,7 +737,9 @@ public class AttendanceService {
             }
         }
 
-        List<Student> students = studentRepository.findByClassNameAndSchoolId(className, schoolId);
+        // ACTIVE-only — an exited student must never surface in a consecutive-absence report,
+        // even if their old attendance rows are still present in the marked-day window above.
+        List<Student> students = studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
         List<ConsecutiveAbsenceDTO> result = new ArrayList<>();
 
         for (Student student : students) {

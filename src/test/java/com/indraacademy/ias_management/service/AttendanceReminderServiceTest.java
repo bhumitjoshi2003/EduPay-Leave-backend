@@ -69,6 +69,7 @@ class AttendanceReminderServiceTest {
         student.setStudentId(STUDENT_ID);
         student.setName("Jordan Test Student");
         student.setEmail("jordan.test@example.com");
+        student.setStatus(com.indraacademy.ias_management.entity.StudentStatus.ACTIVE);
         when(studentRepository.findByStudentIdAndSchoolId(STUDENT_ID, SCHOOL_ID))
                 .thenReturn(Optional.of(student));
 
@@ -122,6 +123,7 @@ class AttendanceReminderServiceTest {
         student.setStudentId(STUDENT_ID);
         student.setName("Jordan Test Student");
         student.setEmail("jordan.test@example.com");
+        student.setStatus(com.indraacademy.ias_management.entity.StudentStatus.ACTIVE);
         when(studentRepository.findByStudentIdAndSchoolId(STUDENT_ID, SCHOOL_ID))
                 .thenReturn(Optional.of(student));
 
@@ -161,6 +163,7 @@ class AttendanceReminderServiceTest {
         student.setStudentId(STUDENT_ID);
         student.setName("Jordan Test Student");
         student.setEmail("jordan.test@example.com");
+        student.setStatus(com.indraacademy.ias_management.entity.StudentStatus.ACTIVE);
         when(studentRepository.findByStudentIdAndSchoolId(STUDENT_ID, SCHOOL_ID))
                 .thenReturn(Optional.of(student));
 
@@ -208,12 +211,87 @@ class AttendanceReminderServiceTest {
         student.setStudentId(STUDENT_ID);
         student.setName("Jordan Test Student");
         student.setEmail(null);
+        student.setStatus(com.indraacademy.ias_management.entity.StudentStatus.ACTIVE);
         when(studentRepository.findByStudentIdAndSchoolId(STUDENT_ID, SCHOOL_ID))
                 .thenReturn(Optional.of(student));
 
         Map<String, String> outcomes = service.sendAttendanceReminderEmailsWithOutcomes(List.of(STUDENT_ID), SESSION);
 
-        assertThat(outcomes).containsEntry(STUDENT_ID, "failed");
+        // Specific outcome, not a bare "failed" — mirrors FeeReminderService's ReminderOutcome
+        // vocabulary so a caller can tell "no email on file" apart from a real send failure.
+        assertThat(outcomes).containsEntry(STUDENT_ID, "skipped_no_email");
         verifyNoInteractions(emailService);
+    }
+
+    // ─── Exit-status enforcement (defense in depth: not just candidate-list filtering) ───
+
+    @Test
+    void sendAttendanceReminderEmailsWithOutcomes_rejectsATransferredStudent_evenWithAQualifyingSummaryRow() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+
+        ClassAttendanceSummaryDTO summaryRow = new ClassAttendanceSummaryDTO(
+                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 30.0);
+        when(attendanceService.getSchoolSummary("year", null, null, SESSION))
+                .thenReturn(List.of(summaryRow));
+
+        Student student = new Student();
+        student.setStudentId(STUDENT_ID);
+        student.setName("Jordan Test Student");
+        student.setEmail("jordan.test@example.com");
+        student.setStatus(com.indraacademy.ias_management.entity.StudentStatus.TRANSFERRED);
+        when(studentRepository.findByStudentIdAndSchoolId(STUDENT_ID, SCHOOL_ID))
+                .thenReturn(Optional.of(student));
+
+        Map<String, String> outcomes = service.sendAttendanceReminderEmailsWithOutcomes(List.of(STUDENT_ID), SESSION);
+
+        assertThat(outcomes).containsEntry(STUDENT_ID, "skipped_not_active");
+        verifyNoInteractions(emailService);
+    }
+
+    /**
+     * Covers the "AI workflow dispatch with exited student" and "stale/direct-API-supplied
+     * exited studentId" cases together: studentIds arriving at this method come straight from
+     * a dispatch request body (AiAttendanceWorkflowController / AiTeacherAttendanceWorkflowController),
+     * not a freshly-recomputed candidate list — a withdrawn student mixed into an otherwise
+     * valid batch must be skipped, not silently emailed, while the active student in the same
+     * batch is unaffected.
+     */
+    @Test
+    void sendAttendanceReminderEmailsWithOutcomes_withdrawnStudentInBatchIsSkipped_activeStudentInSameBatchStillSent() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+
+        String activeId = "ACTIVE_STU";
+        String withdrawnId = "WITHDRAWN_STU";
+
+        ClassAttendanceSummaryDTO activeRow = new ClassAttendanceSummaryDTO(
+                activeId, "Active Student", "10", 10L, 3L, 7L, 30.0);
+        ClassAttendanceSummaryDTO withdrawnRow = new ClassAttendanceSummaryDTO(
+                withdrawnId, "Withdrawn Student", "10", 10L, 3L, 7L, 30.0);
+        when(attendanceService.getSchoolSummary("year", null, null, SESSION))
+                .thenReturn(List.of(activeRow, withdrawnRow));
+
+        Student active = new Student();
+        active.setStudentId(activeId);
+        active.setName("Active Student");
+        active.setEmail("active@example.com");
+        active.setStatus(com.indraacademy.ias_management.entity.StudentStatus.ACTIVE);
+        when(studentRepository.findByStudentIdAndSchoolId(activeId, SCHOOL_ID)).thenReturn(Optional.of(active));
+
+        Student withdrawn = new Student();
+        withdrawn.setStudentId(withdrawnId);
+        withdrawn.setName("Withdrawn Student");
+        withdrawn.setEmail("withdrawn@example.com");
+        withdrawn.setStatus(com.indraacademy.ias_management.entity.StudentStatus.WITHDRAWN);
+        when(studentRepository.findByStudentIdAndSchoolId(withdrawnId, SCHOOL_ID)).thenReturn(Optional.of(withdrawn));
+
+        when(emailService.sendHtmlEmailSync(anyString(), anyString(), anyString())).thenReturn(true);
+
+        Map<String, String> outcomes = service.sendAttendanceReminderEmailsWithOutcomes(
+                List.of(activeId, withdrawnId), SESSION);
+
+        assertThat(outcomes).containsEntry(activeId, "sent");
+        assertThat(outcomes).containsEntry(withdrawnId, "skipped_not_active");
+        verify(emailService, times(1)).sendHtmlEmailSync(anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlEmailSync(eq("withdrawn@example.com"), anyString(), anyString());
     }
 }

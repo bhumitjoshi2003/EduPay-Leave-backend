@@ -54,9 +54,6 @@ public class ParentStudentRelationship {
     @Column(name = "can_manage_leave", nullable = false)
     private boolean canManageLeave = true;
 
-    @Column(name = "pickup_authorized", nullable = false)
-    private boolean pickupAuthorized;
-
     @Column(nullable = false)
     private boolean active = true;
 

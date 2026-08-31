@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.dto.ParentDtos;
 import com.indraacademy.ias_management.entity.Parent;
 import com.indraacademy.ias_management.entity.ParentStudentRelationship;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.ParentRepository;
 import com.indraacademy.ias_management.repository.ParentStudentRelationshipRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -89,6 +90,35 @@ class ParentPortalServiceTest {
 
         assertThat(profile.parent().linkedChildren()).isZero();
         assertThat(profile.children()).isEmpty();
+    }
+
+    @Test
+    void getParent_excludesAnExitedStudentEvenThoughTheRelationshipIsStillMarkedActive() {
+        // relationship.active == true here on purpose: unlinking is a separate, deliberate admin
+        // action from a student exiting, so a graduated/transferred/withdrawn student can easily
+        // still have active=true on their old relationship row. getParent() (activeOnly=false,
+        // the admin parent-detail view) must not rely on relationship.active alone — it has to
+        // independently check the linked student's own exit status, same as myProfile() does.
+        Parent parent = parent();
+        ParentStudentRelationship stillActiveLink = relationship(1L, "STU_003", true);
+        Student exited = new Student();
+        exited.setStudentId("STU_003");
+        exited.setName("Graduated Student");
+        exited.setClassName("12");
+        exited.setStatus(StudentStatus.GRADUATED);
+
+        when(parentRepository.findByParentIdAndSchoolId(PARENT_ID, SCHOOL_ID))
+                .thenReturn(Optional.of(parent));
+        when(relationshipRepository
+                .findBySchoolIdAndParentIdOrderByPrimaryGuardianDescStudentIdAsc(SCHOOL_ID, PARENT_ID))
+                .thenReturn(List.of(stillActiveLink));
+        when(studentRepository.findByStudentIdAndSchoolId("STU_003", SCHOOL_ID))
+                .thenReturn(Optional.of(exited));
+
+        ParentDtos.ParentProfile profile = service.getParent(PARENT_ID);
+
+        assertThat(profile.children()).isEmpty();
+        assertThat(profile.parent().linkedChildren()).isZero();
     }
 
     private Parent parent() {

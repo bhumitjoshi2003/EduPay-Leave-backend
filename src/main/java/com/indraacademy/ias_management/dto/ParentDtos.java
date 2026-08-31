@@ -17,6 +17,9 @@ public final class ParentDtos {
             @NotBlank @Size(max = 20) String phoneNumber,
             @NotBlank @Size(min = 8, max = 100) String temporaryPassword) {}
 
+    public record ResetPasswordRequest(
+            @NotBlank @Size(min = 8, max = 100) String temporaryPassword) {}
+
     public record LinkStudentRequest(
             @NotBlank String studentId,
             @NotBlank String relationshipType,
@@ -27,19 +30,22 @@ public final class ParentDtos {
             Boolean canViewResults,
             Boolean canViewTimetable,
             Boolean canManageLeave,
-            boolean pickupAuthorized,
             LocalDate effectiveFrom,
             LocalDate effectiveUntil) {}
 
     public record ParentSummary(String parentId, String name, String email, String phoneNumber,
                                 boolean active, int linkedChildren) {}
 
+    /** School-wide directory aggregates for the summary cards — cheap COUNT queries, not a full parent scan. */
+    public record ParentDirectoryStats(long totalParents, long activeParents,
+                                       long linkedStudents, long unlinkedParents) {}
+
     public record ChildAccess(Long relationshipId, String studentId, String studentName,
                               String className, String sectionName, String relationshipType,
                               boolean primaryGuardian, boolean canViewAttendance,
                               boolean canViewFees, boolean canPayFees, boolean canViewResults,
                               boolean canViewTimetable,
-                              boolean canManageLeave, boolean pickupAuthorized,
+                              boolean canManageLeave,
                               LocalDate effectiveFrom, LocalDate effectiveUntil) {}
 
     public record ParentProfile(ParentSummary parent, List<ChildAccess> children) {}

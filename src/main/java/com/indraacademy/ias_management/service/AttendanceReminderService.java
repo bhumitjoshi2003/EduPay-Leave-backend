@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -40,6 +41,13 @@ public class AttendanceReminderService {
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private EmailService emailService;
     @Autowired private SecurityUtil securityUtil;
+
+    /** Mirrors FeeReminderService.ReminderOutcome — same reasoning: a caller needs to know
+     *  *why* nothing was sent, not just that nothing was. */
+    private enum ReminderOutcome {
+        SENT, SKIPPED_NOT_ACTIVE, SKIPPED_NO_EMAIL, FAILED;
+        String key() { return name().toLowerCase(Locale.ROOT); }
+    }
 
     /**
      * Sends the attendance warning email to each given student, blocking on the real SMTP
@@ -89,31 +97,43 @@ public class AttendanceReminderService {
 
         for (String studentId : studentIds) {
             try {
-                boolean sent = sendReminderEmailSync(studentId, session, byStudentId.get(studentId),
+                ReminderOutcome outcome = sendReminderEmailSync(studentId, session, byStudentId.get(studentId),
                         absenceDates.get(studentId));
-                outcomes.put(studentId, sent ? "sent" : "failed");
+                outcomes.put(studentId, outcome.key());
             } catch (Exception e) {
                 log.error("Failed to send attendance reminder for student {}: {}", studentId, e.getMessage());
-                outcomes.put(studentId, "failed");
+                outcomes.put(studentId, ReminderOutcome.FAILED.key());
             }
         }
         return outcomes;
     }
 
-    private boolean sendReminderEmailSync(String studentId, String session, ClassAttendanceSummaryDTO attendance,
+    /**
+     * The single send boundary both AI attendance-workflow dispatch endpoints funnel through
+     * (class-teacher and admin variants). studentIds arriving here originate from a request
+     * body, not a freshly-recomputed candidate list — a stale or directly-supplied exited
+     * studentId must be rejected here, independent of whatever filtering happened upstream when
+     * the candidate list was first built.
+     */
+    private ReminderOutcome sendReminderEmailSync(String studentId, String session, ClassAttendanceSummaryDTO attendance,
                                           List<String> recentAbsenceDates) {
         if (attendance == null) {
             log.warn("Cannot send attendance reminder: no attendance summary row for student {} in session {}.", studentId, session);
-            return false;
+            return ReminderOutcome.FAILED;
         }
 
         Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
+        if (student.getStatus() != StudentStatus.ACTIVE) {
+            log.info("Skipping attendance reminder for non-active student {} (status={})", studentId, student.getStatus());
+            return ReminderOutcome.SKIPPED_NOT_ACTIVE;
+        }
+
         String email = student.getEmail();
         if (email == null || email.isBlank()) {
             log.warn("Cannot send attendance reminder (sync): student {} has no email.", studentId);
-            return false;
+            return ReminderOutcome.SKIPPED_NO_EMAIL;
         }
 
         String studentName = student.getName() != null ? student.getName() : "Parent/Guardian";
@@ -126,7 +146,7 @@ public class AttendanceReminderService {
         if (sent) {
             log.info("Attendance reminder sent (sync) to student {} ({})", studentId, email);
         }
-        return sent;
+        return sent ? ReminderOutcome.SENT : ReminderOutcome.FAILED;
     }
 
     // ─── Email template ───────────────────────────────────────────────────────

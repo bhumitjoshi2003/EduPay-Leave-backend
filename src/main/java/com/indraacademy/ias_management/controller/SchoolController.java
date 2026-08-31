@@ -229,7 +229,7 @@ public class SchoolController {
      * Returns ordered active class names for the current school (for dropdowns).
      */
     @GetMapping("/api/school/classes")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', 'TEACHER', 'STUDENT', 'SUB_ADMIN')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', 'TEACHER', 'STUDENT', 'SUB_ADMIN', '" + Role.PARENT + "')")
     public ResponseEntity<List<String>> getClassNames() {
         log.info("GET /api/school/classes");
         return ResponseEntity.ok(schoolService.getClassNames());

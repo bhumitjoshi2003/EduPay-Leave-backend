@@ -1,16 +1,18 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.dto.ParentDtos;
+import com.indraacademy.ias_management.dto.ParentFilterDTO;
 import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -30,7 +32,13 @@ public class ParentPortalController {
 
     @GetMapping
     @PreAuthorize("hasRole('ADMIN')")
-    public List<ParentDtos.ParentSummary> list() { return parentPortalService.listParents(); }
+    public Page<ParentDtos.ParentSummary> list(ParentFilterDTO filter, Pageable pageable) {
+        return parentPortalService.listParentsPaged(filter, pageable);
+    }
+
+    @GetMapping("/stats")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ParentDtos.ParentDirectoryStats stats() { return parentPortalService.directoryStats(); }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -54,21 +62,10 @@ public class ParentPortalController {
     public ParentDtos.ParentProfile link(@PathVariable String parentId,
                                          @Valid @RequestBody ParentDtos.LinkStudentRequest request,
                                          HttpServletRequest httpRequest) {
-        boolean pickupWasAuthorized = parentPortalService.getParent(parentId).children().stream()
-                .filter(child -> child.studentId().equals(request.studentId()))
-                .findFirst()
-                .map(ParentDtos.ChildAccess::pickupAuthorized)
-                .orElse(false);
         ParentDtos.ParentProfile profile = parentPortalService.linkStudent(parentId, request);
         audit("LINK_PARENT_STUDENT", "ParentStudentRelationship",
                 parentId + ":" + request.studentId(), null,
                 "Student linked with relationship " + request.relationshipType(), httpRequest);
-        if (pickupWasAuthorized != request.pickupAuthorized()) {
-            audit("CHANGE_PICKUP_AUTHORIZATION", "ParentStudentRelationship",
-                    parentId + ":" + request.studentId(),
-                    pickupWasAuthorized ? "AUTHORIZED" : "NOT_AUTHORIZED",
-                    request.pickupAuthorized() ? "AUTHORIZED" : "NOT_AUTHORIZED", httpRequest);
-        }
         return profile;
     }
 
@@ -92,6 +89,17 @@ public class ParentPortalController {
         audit("CHANGE_PARENT_ACCOUNT_STATUS", "Parent", parentId, null,
                 active ? "ACTIVE" : "INACTIVE", httpRequest);
         return Map.of("parentId", parentId, "active", active);
+    }
+
+    @PostMapping("/{parentId}/reset-password")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Map<String, String> resetPassword(@PathVariable String parentId,
+                                             @Valid @RequestBody ParentDtos.ResetPasswordRequest request,
+                                             HttpServletRequest httpRequest) {
+        parentPortalService.resetPassword(parentId, request.temporaryPassword());
+        audit("RESET_PARENT_PASSWORD", "User", parentId, null,
+                "Temporary password reset; mustChangePassword=true", httpRequest);
+        return Map.of("parentId", parentId, "status", "reset");
     }
 
     @GetMapping("/me/profile")

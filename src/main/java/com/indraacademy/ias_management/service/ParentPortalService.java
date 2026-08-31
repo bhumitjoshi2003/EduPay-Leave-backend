@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.ParentDtos;
+import com.indraacademy.ias_management.dto.ParentFilterDTO;
 import com.indraacademy.ias_management.entity.Parent;
 import com.indraacademy.ias_management.entity.ParentStudentRelationship;
 import com.indraacademy.ias_management.entity.Student;
@@ -10,7 +11,11 @@ import com.indraacademy.ias_management.repository.ParentRepository;
 import com.indraacademy.ias_management.repository.ParentStudentRelationshipRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
+import com.indraacademy.ias_management.specification.ParentSpecification;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -20,6 +25,8 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class ParentPortalService {
@@ -48,12 +55,41 @@ public class ParentPortalService {
         this.entitlementService = entitlementService;
     }
 
+    /**
+     * Paginated, filterable parent directory for the admin management screen. Avoids the
+     * N+1 pattern of the old unpaginated listing (one relationship query, plus one student
+     * lookup per relationship, per parent): the page's link counts are computed with a
+     * single grouped aggregate query (see ParentStudentRelationshipRepository#countActiveByParentIds).
+     */
     @Transactional(readOnly = true)
-    public List<ParentDtos.ParentSummary> listParents() {
+    public Page<ParentDtos.ParentSummary> listParentsPaged(ParentFilterDTO filter, Pageable pageable) {
         Long schoolId = schoolId();
         requireFeature(schoolId);
-        return parentRepository.findBySchoolIdOrderByNameAsc(schoolId).stream()
-                .map(parent -> summary(parent, schoolId)).toList();
+        filter.setSchoolId(schoolId);
+        Page<Parent> page = parentRepository.findAll(ParentSpecification.filter(filter), pageable);
+        List<String> parentIds = page.getContent().stream().map(Parent::getParentId).toList();
+        Map<String, Long> linkCounts = parentIds.isEmpty() ? Map.of()
+                : relationshipRepository.countActiveByParentIds(schoolId, parentIds).stream()
+                        .collect(Collectors.toMap(ParentStudentRelationshipRepository.ParentLinkCount::getParentId,
+                                ParentStudentRelationshipRepository.ParentLinkCount::getTotal));
+        List<ParentDtos.ParentSummary> summaries = page.getContent().stream()
+                .map(parent -> new ParentDtos.ParentSummary(parent.getParentId(), parent.getName(), parent.getEmail(),
+                        parent.getPhoneNumber(), parent.isActive(),
+                        linkCounts.getOrDefault(parent.getParentId(), 0L).intValue()))
+                .toList();
+        return new PageImpl<>(summaries, pageable, page.getTotalElements());
+    }
+
+    @Transactional(readOnly = true)
+    public ParentDtos.ParentDirectoryStats directoryStats() {
+        Long schoolId = schoolId();
+        requireFeature(schoolId);
+        long totalParents = parentRepository.countBySchoolId(schoolId);
+        long activeParents = parentRepository.countBySchoolIdAndActiveTrue(schoolId);
+        long linkedStudents = relationshipRepository.countBySchoolIdAndActiveTrue(schoolId);
+        long parentsWithLinks = relationshipRepository.countDistinctActiveParents(schoolId);
+        return new ParentDtos.ParentDirectoryStats(totalParents, activeParents, linkedStudents,
+                totalParents - parentsWithLinks);
     }
 
     @Transactional
@@ -139,7 +175,6 @@ public class ParentPortalService {
         link.setCanViewResults(defaultTrue(request.canViewResults()));
         link.setCanViewTimetable(defaultTrue(request.canViewTimetable()));
         link.setCanManageLeave(defaultTrue(request.canManageLeave()));
-        link.setPickupAuthorized(request.pickupAuthorized());
         link.setEffectiveFrom(request.effectiveFrom() == null ? LocalDate.now() : request.effectiveFrom());
         link.setEffectiveUntil(request.effectiveUntil());
         if (link.getEffectiveUntil() != null && link.getEffectiveUntil().isBefore(link.getEffectiveFrom())) {
@@ -196,6 +231,30 @@ public class ParentPortalService {
         }
         user.setActive(active);
         if (!active) user.setRefreshTokenId(null);
+        userRepository.save(user);
+    }
+
+    /**
+     * ADMIN-only password reset for a parent login whose original temporary password is
+     * unknown. There is no DOB (or similar) to fall back to for a Parent the way
+     * AuthController#resetToDefaultPassword does for Student/Teacher, so this mirrors the
+     * only other established convention for setting a parent's password — an admin-supplied
+     * temporary value, exactly as already used at account creation (createParent above).
+     */
+    @Transactional
+    public void resetPassword(String parentId, String temporaryPassword) {
+        Long schoolId = schoolId();
+        requireFeature(schoolId);
+        findParent(parentId, schoolId);
+        validatePasswordStrength(temporaryPassword);
+        User user = userRepository.findByUserId(parentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Parent login not found"));
+        if (!schoolId.equals(user.getSchoolId()) || !Role.PARENT.equals(user.getRole())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Parent login does not belong to this school");
+        }
+        user.setPassword(passwordEncoder.encode(temporaryPassword));
+        user.setMustChangePassword(true);
+        user.setRefreshTokenId(null);
         userRepository.save(user);
     }
 
@@ -265,7 +324,11 @@ public class ParentPortalService {
                 .filter(link -> !activeOnly || (
                         !link.getEffectiveFrom().isAfter(today)
                         && (link.getEffectiveUntil() == null || !link.getEffectiveUntil().isBefore(today))))
-                .filter(link -> !activeOnly || studentRepository
+                // Unconditional regardless of activeOnly — an exited student must never appear
+                // in a parent's linked-child list, including the admin-facing getParent() view
+                // (activeOnly=false), which previously relied only on relationship.active and
+                // could show a stale link for a student who has since left the school.
+                .filter(link -> studentRepository
                         .findByStudentIdAndSchoolId(link.getStudentId(), schoolId)
                         .map(student -> student.getStatus() == null || !student.getStatus().isExitStatus())
                         .orElse(false))
@@ -280,7 +343,7 @@ public class ParentPortalService {
                 student.getClassName(), student.getSectionName(), link.getRelationshipType(),
                 link.isPrimaryGuardian(), link.isCanViewAttendance(), link.isCanViewFees(),
                 link.isCanPayFees(), link.isCanViewResults(), link.isCanViewTimetable(), link.isCanManageLeave(),
-                link.isPickupAuthorized(), link.getEffectiveFrom(), link.getEffectiveUntil());
+                link.getEffectiveFrom(), link.getEffectiveUntil());
     }
 
     private ParentDtos.ParentSummary summary(Parent parent, Long schoolId) {
@@ -307,6 +370,21 @@ public class ParentPortalService {
     }
 
     private void requireFeature(Long schoolId) { entitlementService.requireFeature(schoolId, "PARENT_PORTAL"); }
+    /** Same rules as AuthController's password-change validation, so the strength requirement is consistent app-wide. */
+    private void validatePasswordStrength(String password) {
+        if (password == null || password.length() < 8) {
+            throw new IllegalArgumentException("Password must be at least 8 characters long");
+        }
+        if (!password.matches(".*[A-Z].*")) {
+            throw new IllegalArgumentException("Password must contain at least one uppercase letter");
+        }
+        if (!password.matches(".*[a-z].*")) {
+            throw new IllegalArgumentException("Password must contain at least one lowercase letter");
+        }
+        if (!password.matches(".*\\d.*")) {
+            throw new IllegalArgumentException("Password must contain at least one digit");
+        }
+    }
     private boolean defaultTrue(Boolean value) { return value == null || value; }
     private String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
     private String normalizeEmail(String value) {
