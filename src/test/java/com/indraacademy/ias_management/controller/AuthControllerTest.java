@@ -35,6 +35,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.time.LocalDate;
+import java.util.HashMap;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,6 +68,7 @@ class AuthControllerTest {
     @Mock private PermissionService permissionService;
     @Mock private AuditService auditService;
     @Mock private WelcomeEmailService welcomeEmailService;
+    @Mock private com.indraacademy.ias_management.service.PasswordResetService passwordResetService;
 
     private AuthController controller;
     private static final Long SCHOOL_ID = 1L;
@@ -86,7 +88,7 @@ class AuthControllerTest {
         ReflectionTestUtils.setField(controller, "permissionService", permissionService);
         ReflectionTestUtils.setField(controller, "auditService", auditService);
         ReflectionTestUtils.setField(controller, "welcomeEmailService", welcomeEmailService);
-        ReflectionTestUtils.setField(controller, "frontendUrl", "http://localhost:4200");
+        ReflectionTestUtils.setField(controller, "passwordResetService", passwordResetService);
         ReflectionTestUtils.setField(controller, "isSecure", false);
         ReflectionTestUtils.setField(controller, "sameSite", "Lax");
         ReflectionTestUtils.setField(controller, "accessTokenExpiryMinutes", 15L);
@@ -283,6 +285,103 @@ class AuthControllerTest {
         ArgumentCaptor<User> savedCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(savedCaptor.capture());
         assertThat(savedCaptor.getValue().getRefreshTokenId()).isNotNull();
+    }
+
+    // ─── Generated-ID / legacy-ID login — format-agnostic by design ────────
+
+    @Test
+    void generatedStudentId_logsInExactlyLikeAnyOtherUserId() {
+        User user = new User();
+        user.setUserId("stu_26010001");
+        user.setRole(Role.STUDENT);
+        user.setPassword("HASHED");
+        user.setSchoolId(SCHOOL_ID);
+        user.setMustChangePassword(false);
+
+        when(userRepository.findByUserId("stu_26010001")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("MyRealPassword1", "HASHED")).thenReturn(true);
+
+        LoginRequest req = new LoginRequest();
+        req.setUserId("stu_26010001");
+        req.setPassword("MyRealPassword1");
+
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletResponse());
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    @Test
+    void generatedParentId_logsInExactlyLikeAnyOtherUserId() {
+        User user = new User();
+        user.setUserId("par_26010001");
+        user.setRole(Role.PARENT);
+        user.setPassword("HASHED");
+        user.setSchoolId(SCHOOL_ID);
+        user.setMustChangePassword(false);
+
+        when(userRepository.findByUserId("par_26010001")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("MyRealPassword1", "HASHED")).thenReturn(true);
+
+        LoginRequest req = new LoginRequest();
+        req.setUserId("par_26010001");
+        req.setPassword("MyRealPassword1");
+
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletResponse());
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    @Test
+    void legacyNonStandardTeacherId_stillLogsIn_backwardCompatibility() {
+        // The exact Indra Academy scenario: an existing teacher ID predating this feature,
+        // in an arbitrary SWEEDU-era format. Nothing in the login path cares about format.
+        User user = new User();
+        user.setUserId("EMP123");
+        user.setRole(Role.TEACHER);
+        user.setPassword("HASHED");
+        user.setSchoolId(SCHOOL_ID);
+        user.setMustChangePassword(false);
+
+        when(userRepository.findByUserId("EMP123")).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("MyRealPassword1", "HASHED")).thenReturn(true);
+
+        LoginRequest req = new LoginRequest();
+        req.setUserId("EMP123");
+        req.setPassword("MyRealPassword1");
+
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletResponse());
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    // ─── reset-password clears mustChangePassword (Parent Option A onboarding) ──
+
+    @Test
+    void resetPassword_success_alsoClearsMustChangePassword() {
+        // This is what makes Parent Option A onboarding actually work end-to-end: a newly
+        // created parent's account has mustChangePassword=true and an unknown placeholder
+        // password. Setting their real password via this emailed-token flow must be the
+        // ONLY step needed — without this, they'd be forced through change-initial-password
+        // again immediately after, having just set a real password through a verified link.
+        User user = new User();
+        user.setUserId("par_26010001");
+        user.setRole(Role.PARENT);
+        user.setResetToken("HASHED_TOKEN");
+        user.setResetTokenExpiry(new java.util.Date(System.currentTimeMillis() + 60000));
+        user.setMustChangePassword(true);
+
+        when(passwordResetService.hashToken("raw-token")).thenReturn("HASHED_TOKEN");
+        when(userRepository.findByResetToken("HASHED_TOKEN")).thenReturn(Optional.of(user));
+        when(passwordEncoder.encode(org.mockito.ArgumentMatchers.anyString())).thenReturn("NEW_HASHED");
+
+        HashMap<String, String> body = new HashMap<>();
+        body.put("newPassword", "BrandNewPassw0rd");
+        ResponseEntity<?> response = controller.resetPassword("raw-token", body);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        ArgumentCaptor<User> savedCaptor = ArgumentCaptor.forClass(User.class);
+        verify(userRepository).save(savedCaptor.capture());
+        assertThat(savedCaptor.getValue().isMustChangePassword()).isFalse();
     }
 
     // ─── change-initial-password ───────────────────────────────────────────────

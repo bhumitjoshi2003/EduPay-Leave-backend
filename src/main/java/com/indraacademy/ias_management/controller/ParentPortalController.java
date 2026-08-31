@@ -46,7 +46,7 @@ public class ParentPortalController {
     public ParentDtos.ParentProfile create(@Valid @RequestBody ParentDtos.CreateParentRequest request,
                                             HttpServletRequest httpRequest) {
         ParentDtos.ParentProfile created = parentPortalService.createParent(request);
-        audit("CREATE_PARENT_ACCOUNT", "Parent", request.parentId(), null,
+        audit("CREATE_PARENT_ACCOUNT", "Parent", created.parent().parentId(), null,
                 "Parent account created", httpRequest);
         return created;
     }

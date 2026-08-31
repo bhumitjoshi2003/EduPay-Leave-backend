@@ -10,12 +10,16 @@ import java.util.List;
 public final class ParentDtos {
     private ParentDtos() {}
 
+    /**
+     * parentId is deliberately absent — Edunexify generates it (par_YYnnnnnn). email is
+     * required (unlike before) because it is now the only way to deliver the account-setup
+     * link (Option A onboarding: no temporary password is ever admin-supplied or exposed —
+     * see ParentPortalService.createParent).
+     */
     public record CreateParentRequest(
-            @NotBlank @Size(max = 50) String parentId,
             @NotBlank @Size(max = 200) String name,
-            @Email @Size(max = 255) String email,
-            @NotBlank @Size(max = 20) String phoneNumber,
-            @NotBlank @Size(min = 8, max = 100) String temporaryPassword) {}
+            @NotBlank @Email @Size(max = 255) String email,
+            @NotBlank @Size(max = 20) String phoneNumber) {}
 
     public record ResetPasswordRequest(
             @NotBlank @Size(min = 8, max = 100) String temporaryPassword) {}

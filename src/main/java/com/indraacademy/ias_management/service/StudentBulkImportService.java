@@ -26,16 +26,20 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * Handles CSV bulk import of students.
  *
- * Expected CSV header row and field mapping:
+ * Expected CSV header row and field mapping (columns are matched by name, not position —
+ * see {@link #buildColumnIndex}, so column order doesn't matter and old/new templates both
+ * work):
  *
  *  Column name     | Student field  | Required | Notes
  *  ----------------|----------------|----------|------------------------------
- *  Student ID      | studentId      | yes      |
  *  Student Name    | name           | yes      |
  *  Email           | email          | yes      |
  *  Phone Number    | phoneNumber    | no       |
@@ -50,6 +54,12 @@ import java.util.List;
  *  Joining Date    | joiningDate    | yes      | yyyy-MM-dd
  *  Leaving Date    | leavingDate    | no       | yyyy-MM-dd
  *
+ * Edunexify always generates the Student ID for every newly imported student — a "Student
+ * ID" column is no longer part of the downloadable template. An OLDER CSV that still has one
+ * (from before this feature existed) is still accepted without erroring — its column is
+ * simply never read into the entity, and the result's {@code notice} field says so plainly
+ * so the admin isn't left guessing why the values they typed there didn't take effect.
+ *
  * Processing rules:
  * - Each row is saved in its own transaction (via StudentService.addStudent).
  *   A failure on one row does not roll back previously saved rows.
@@ -61,12 +71,15 @@ public class StudentBulkImportService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentBulkImportService.class);
 
-    /** Column headers written to the downloadable template CSV. */
+    /** Column headers written to the downloadable template CSV — no ID column; Edunexify
+     *  generates it. */
     public static final String[] TEMPLATE_HEADERS = {
-            "Student ID", "Student Name", "Email", "Phone Number",
+            "Student Name", "Email", "Phone Number",
             "Date of Birth", "Class", "Section", "Gender", "Father Name", "Mother Name",
             "Takes Bus", "Distance (km)", "Joining Date", "Leaving Date"
     };
+
+    private static final String LEGACY_ID_COLUMN = "student id";
 
     private static final DateTimeFormatter DOB_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
 
@@ -86,6 +99,7 @@ public class StudentBulkImportService {
      */
     public BulkImportResultDTO bulkImport(MultipartFile file, HttpServletRequest request) {
         List<BulkImportResultDTO.RowError> errors = new ArrayList<>();
+        List<BulkImportResultDTO.RowSuccess> created = new ArrayList<>();
         int successful = 0;
         int totalRows  = 0;
 
@@ -96,6 +110,8 @@ public class StudentBulkImportService {
             if (header == null) {
                 throw new IllegalArgumentException("CSV file is empty.");
             }
+            Map<String, Integer> columnIndex = buildColumnIndex(header);
+            boolean hasLegacyIdColumn = columnIndex.containsKey(LEGACY_ID_COLUMN);
 
             String[] row;
             int rowNum = 1; // header is row 1; data starts at row 2
@@ -104,29 +120,36 @@ public class StudentBulkImportService {
                 if (isBlankRow(row)) continue;
                 totalRows++;
 
-                String studentId = getCol(row, 0);
+                String name = getCol(row, columnIndex, "student name");
                 try {
-                    Student student = parseRow(row, rowNum, studentId, errors);
+                    Student student = parseRow(row, columnIndex, rowNum, errors);
                     if (student == null) continue; // validation error already recorded
 
                     // Each addStudent call runs in its own @Transactional context —
-                    // a failure here does not affect rows already committed.
-                    studentService.addStudent(student, request);
-                    createUserAccount(student.getStudentId(), student.getName(), student.getEmail(),
-                            student.getDob(), Role.STUDENT);
+                    // a failure here does not affect rows already committed. studentId is
+                    // intentionally left unset on `student` here; addStudent() generates it.
+                    Student saved = studentService.addStudent(student, request);
+                    createUserAccount(saved.getStudentId(), saved.getName(), saved.getEmail(),
+                            saved.getDob(), Role.STUDENT);
                     successful++;
-                    log.info("Bulk import: row {} saved (studentId={})", rowNum, studentId);
+                    created.add(new BulkImportResultDTO.RowSuccess(rowNum, saved.getName(), saved.getStudentId()));
+                    log.info("Bulk import: row {} saved (studentId={})", rowNum, saved.getStudentId());
 
                 } catch (IllegalArgumentException e) {
                     // Covers duplicate ID and other business-rule rejections from addStudent.
-                    log.warn("Bulk import: row {} rejected (studentId={}): {}", rowNum, studentId, e.getMessage());
-                    errors.add(new BulkImportResultDTO.RowError(rowNum, studentId, e.getMessage()));
+                    log.warn("Bulk import: row {} rejected (name={}): {}", rowNum, name, e.getMessage());
+                    errors.add(new BulkImportResultDTO.RowError(rowNum, name, e.getMessage()));
                 } catch (Exception e) {
-                    log.error("Bulk import: unexpected error on row {} (studentId={})", rowNum, studentId, e);
-                    errors.add(new BulkImportResultDTO.RowError(rowNum, studentId,
+                    log.error("Bulk import: unexpected error on row {} (name={})", rowNum, name, e);
+                    errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                             "Unexpected error: " + e.getMessage()));
                 }
             }
+
+            BulkImportResultDTO result = new BulkImportResultDTO(totalRows, successful, errors.size(), errors,
+                    created, hasLegacyIdColumn ? LEGACY_ID_NOTICE : null);
+            auditBulkImport(file.getOriginalFilename(), result, request);
+            return result;
 
         } catch (IllegalArgumentException e) {
             throw e;
@@ -134,11 +157,12 @@ public class StudentBulkImportService {
             log.error("Failed to read CSV file during bulk import", e);
             throw new RuntimeException("Failed to read CSV file: " + e.getMessage(), e);
         }
-
-        BulkImportResultDTO result = new BulkImportResultDTO(totalRows, successful, errors.size(), errors);
-        auditBulkImport(file.getOriginalFilename(), result, request);
-        return result;
     }
+
+    private static final String LEGACY_ID_NOTICE =
+            "This file included a 'Student ID' column. Edunexify now generates the account ID "
+                    + "automatically for every new student, so the values in that column were not "
+                    + "used. See the generated ID for each row below.";
 
     /**
      * Creates a User login account for the imported student.
@@ -168,15 +192,6 @@ public class StudentBulkImportService {
     /**
      * Writes a single BULK_IMPORT_STUDENT audit entry summarising the entire import session.
      * Each successfully saved row also has its own CREATE_STUDENT entry written by addStudent().
-     *
-     * newValue JSON shape:
-     * {
-     *   "filename":   "students.csv",
-     *   "totalRows":  120,
-     *   "successful": 115,
-     *   "failed":     5,
-     *   "errors": [{ "row": 3, "studentId": "Stu_12", "reason": "Duplicate studentId" }, ...]
-     * }
      */
     private void auditBulkImport(String filename, BulkImportResultDTO result, HttpServletRequest request) {
         try {
@@ -202,57 +217,56 @@ public class StudentBulkImportService {
             int totalRows,
             int successful,
             int failed,
-            List<BulkImportResultDTO.RowError> errors
+            List<BulkImportResultDTO.RowError> errors,
+            List<BulkImportResultDTO.RowSuccess> created
     ) {
         BulkImportAuditPayload(String filename, BulkImportResultDTO result) {
             this(filename, result.getTotalRows(), result.getSuccessful(),
-                    result.getFailed(), result.getErrors());
+                    result.getFailed(), result.getErrors(), result.getCreated());
         }
     }
 
     /**
-     * Parses a single data row into a Student object.
+     * Parses a single data row into a Student object. studentId is deliberately left unset —
+     * StudentService.addStudent() generates it. Any legacy "Student ID" column in the CSV is
+     * simply never consulted here.
      * Returns {@code null} and appends to {@code errors} if any validation fails.
      */
-    private Student parseRow(String[] row, int rowNum, String studentId,
+    private Student parseRow(String[] row, Map<String, Integer> columnIndex, int rowNum,
                              List<BulkImportResultDTO.RowError> errors) {
-        String name        = getCol(row, 1);
-        String email       = getCol(row, 2);
-        String phoneNumber = getCol(row, 3);
-        String dobStr      = getCol(row, 4);
-        String className   = getCol(row, 5);
-        String sectionName = getCol(row, 6);
-        String gender      = getCol(row, 7);
-        String fatherName  = getCol(row, 8);
-        String motherName  = getCol(row, 9);
-        String takesBusStr = getCol(row, 10);
-        String distanceStr = getCol(row, 11);
-        String joiningStr  = getCol(row, 12);
-        String leavingStr  = getCol(row, 13);
+        String name        = getCol(row, columnIndex, "student name");
+        String email       = getCol(row, columnIndex, "email");
+        String phoneNumber = getCol(row, columnIndex, "phone number");
+        String dobStr      = getCol(row, columnIndex, "date of birth");
+        String className   = getCol(row, columnIndex, "class");
+        String sectionName = getCol(row, columnIndex, "section");
+        String gender       = getCol(row, columnIndex, "gender");
+        String fatherName  = getCol(row, columnIndex, "father name");
+        String motherName  = getCol(row, columnIndex, "mother name");
+        String takesBusStr = getCol(row, columnIndex, "takes bus");
+        String distanceStr = getCol(row, columnIndex, "distance (km)");
+        String joiningStr  = getCol(row, columnIndex, "joining date");
+        String leavingStr  = getCol(row, columnIndex, "leaving date");
 
         // Required field checks
-        if (studentId.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, "", "Student ID is required"));
-            return null;
-        }
         if (name.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, studentId, "Student Name is required"));
+            errors.add(new BulkImportResultDTO.RowError(rowNum, "", "Student Name is required"));
             return null;
         }
         if (email.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, studentId, "Email is required"));
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name, "Email is required"));
             return null;
         }
         if (className.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, studentId, "Class is required"));
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name, "Class is required"));
             return null;
         }
         if (joiningStr.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, studentId, "Joining Date is required"));
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name, "Joining Date is required"));
             return null;
         }
         if (dobStr.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, studentId,
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                     "Date of birth is required because it is used as the initial password."));
             return null;
         }
@@ -262,7 +276,7 @@ public class StudentBulkImportService {
         try {
             dob = LocalDate.parse(dobStr);
         } catch (DateTimeParseException e) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, studentId,
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                     "Invalid date format for 'Date of Birth', expected yyyy-MM-dd"));
             return null;
         }
@@ -271,7 +285,7 @@ public class StudentBulkImportService {
         try {
             joiningDate = LocalDate.parse(joiningStr);
         } catch (DateTimeParseException e) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, studentId,
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                     "Invalid date format for 'Joining Date', expected yyyy-MM-dd"));
             return null;
         }
@@ -281,7 +295,7 @@ public class StudentBulkImportService {
             try {
                 leavingDate = LocalDate.parse(leavingStr);
             } catch (DateTimeParseException e) {
-                errors.add(new BulkImportResultDTO.RowError(rowNum, studentId,
+                errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                         "Invalid date format for 'Leaving Date', expected yyyy-MM-dd"));
                 return null;
             }
@@ -295,7 +309,7 @@ public class StudentBulkImportService {
             } else if ("false".equalsIgnoreCase(takesBusStr)) {
                 takesBus = false;
             } else {
-                errors.add(new BulkImportResultDTO.RowError(rowNum, studentId,
+                errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                         "Takes Bus must be 'true' or 'false'"));
                 return null;
             }
@@ -307,14 +321,13 @@ public class StudentBulkImportService {
             try {
                 distance = Double.parseDouble(distanceStr);
             } catch (NumberFormatException e) {
-                errors.add(new BulkImportResultDTO.RowError(rowNum, studentId,
+                errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                         "Distance must be a valid number"));
                 return null;
             }
         }
 
         Student student = new Student();
-        student.setStudentId(studentId);
         student.setName(name);
         student.setEmail(email);
         student.setPhoneNumber(phoneNumber.isEmpty()  ? null : phoneNumber);
@@ -348,9 +361,25 @@ public class StudentBulkImportService {
         return student;
     }
 
-    /** Returns the trimmed cell value, or an empty string if the index is out of bounds. */
-    private String getCol(String[] row, int idx) {
-        if (idx >= row.length || row[idx] == null) return "";
+    /** Maps each header cell (trimmed, lower-cased) to its column index, so columns are
+     *  matched by name rather than fixed position — this is what lets an older CSV that
+     *  still has a leading "Student ID" column (or any other reordering) parse correctly
+     *  without that column needing to be at any particular position. */
+    private Map<String, Integer> buildColumnIndex(String[] header) {
+        Map<String, Integer> index = new HashMap<>();
+        for (int i = 0; i < header.length; i++) {
+            if (header[i] != null) {
+                index.put(header[i].trim().toLowerCase(Locale.ROOT), i);
+            }
+        }
+        return index;
+    }
+
+    /** Returns the trimmed cell value for the named column, or an empty string if that
+     *  column isn't present in this file's header at all, or the cell itself is blank. */
+    private String getCol(String[] row, Map<String, Integer> columnIndex, String columnName) {
+        Integer idx = columnIndex.get(columnName);
+        if (idx == null || idx >= row.length || row[idx] == null) return "";
         return row[idx].trim();
     }
 

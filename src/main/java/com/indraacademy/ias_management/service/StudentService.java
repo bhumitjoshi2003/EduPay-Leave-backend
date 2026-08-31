@@ -64,6 +64,7 @@ public class StudentService {
     @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private SectionRepository sectionRepository;
     @Autowired private ParentPortalService parentPortalService;
+    @Autowired private IdGeneratorService idGeneratorService;
 
     private String getAcademicYear(LocalDate date) {
         int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
@@ -118,13 +119,21 @@ public class StudentService {
 
     @Transactional
     public Student addStudent(Student student, HttpServletRequest request) {
-        if (student == null || student.getStudentId() == null || student.getStudentId().trim().isEmpty()) {
-            log.error("Attempted to add student with null or empty Student object/ID.");
-            throw new IllegalArgumentException("Student object and ID must be provided.");
+        if (student == null) {
+            log.error("Attempted to add a null Student object.");
+            throw new IllegalArgumentException("Student object must be provided.");
         }
         if (student.getDob() == null) {
-            log.warn("Attempted to add student {} without a date of birth.", student.getStudentId());
+            log.warn("Attempted to add student without a date of birth.");
             throw new IllegalArgumentException("Date of birth is required because it is used as the initial password.");
+        }
+        // Edunexify generates the Student ID for every new account going forward — never
+        // an admin-typed or CSV-supplied value, regardless of what the caller sent (both
+        // StudentController.registerStudent and StudentBulkImportService already omit any
+        // client-supplied studentId before calling this method, but this check is the real
+        // enforcement point: nothing reaches here with an admin-chosen ID).
+        if (student.getStudentId() == null || student.getStudentId().trim().isEmpty()) {
+            student.setStudentId(idGeneratorService.generateStudentId());
         }
         log.info("Attempting to add new student with ID: {}", student.getStudentId());
 
@@ -146,6 +155,9 @@ public class StudentService {
             // catches a cross-school collision with a clear message before save() ever runs;
             // Student now implementing Persistable also makes save() itself reject a genuine
             // conflict (INSERT, not silent upsert) as a second layer if this check races.
+            // A generated ID should never actually collide (see IdGeneratorService), so this
+            // path realistically only fires for the exceedingly rare case of two concurrent
+            // requests both retrying after a transient failure — kept as defense in depth.
             if (studentRepository.existsById(student.getStudentId())) {
                 log.warn("Student ID {} is already registered under a different school.", student.getStudentId());
                 throw new IllegalArgumentException("Student ID " + student.getStudentId() + " is already in use. Student IDs must be unique across the entire platform.");

@@ -69,7 +69,11 @@ public class StudentController {
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> registerStudent(@Valid @RequestBody Student newStudent, HttpServletRequest request) {
-        log.info("Request to register new student: {}", newStudent.getStudentId());
+        // Edunexify always generates the Student ID for a brand-new account — any studentId
+        // sent by the client (a stale UI build, a direct API call, etc.) is discarded here,
+        // never trusted. StudentService.addStudent() generates a fresh one for a blank ID.
+        newStudent.setStudentId(null);
+        log.info("Request to register new student.");
         try {
             Student savedStudent = studentService.addStudent(newStudent, request);
             log.info("Student registered successfully with ID: {}", savedStudent.getStudentId());

@@ -38,6 +38,9 @@ public class ParentPortalService {
     private final PasswordEncoder passwordEncoder;
     private final SecurityUtil securityUtil;
     private final EntitlementService entitlementService;
+    private final IdGeneratorService idGeneratorService;
+    private final PasswordResetService passwordResetService;
+    private final com.indraacademy.ias_management.repository.SchoolRepository schoolRepository;
 
     public ParentPortalService(ParentRepository parentRepository,
                                ParentStudentRelationshipRepository relationshipRepository,
@@ -45,7 +48,10 @@ public class ParentPortalService {
                                UserRepository userRepository,
                                PasswordEncoder passwordEncoder,
                                SecurityUtil securityUtil,
-                               EntitlementService entitlementService) {
+                               EntitlementService entitlementService,
+                               IdGeneratorService idGeneratorService,
+                               PasswordResetService passwordResetService,
+                               com.indraacademy.ias_management.repository.SchoolRepository schoolRepository) {
         this.parentRepository = parentRepository;
         this.relationshipRepository = relationshipRepository;
         this.studentRepository = studentRepository;
@@ -53,6 +59,9 @@ public class ParentPortalService {
         this.passwordEncoder = passwordEncoder;
         this.securityUtil = securityUtil;
         this.entitlementService = entitlementService;
+        this.idGeneratorService = idGeneratorService;
+        this.passwordResetService = passwordResetService;
+        this.schoolRepository = schoolRepository;
     }
 
     /**
@@ -92,15 +101,20 @@ public class ParentPortalService {
                 totalParents - parentsWithLinks);
     }
 
+    /**
+     * Creates a new Parent account with an Edunexify-generated parentId (par_YYnnnnnn) and
+     * Option A onboarding: the account's initial password is a long random value that is
+     * never stored in plaintext, never logged, never returned in this method's response, and
+     * never communicated to anyone — nobody, including the creating admin, ever needs to
+     * know it, because the parent's actual first password is whatever they set via the
+     * secure emailed link sent by {@link PasswordResetService#sendParentWelcomeLink}. This is
+     * exactly the same mechanism the existing self-service "forgot password" flow already
+     * uses, not a second authentication path built specifically for Parent.
+     */
     @Transactional
     public ParentDtos.ParentProfile createParent(ParentDtos.CreateParentRequest request) {
         Long schoolId = schoolId();
         requireFeature(schoolId);
-        String parentId = request.parentId().trim();
-        if (parentRepository.findByParentIdAndSchoolId(parentId, schoolId).isPresent()
-                || userRepository.findByUserId(parentId).isPresent()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Parent ID already exists");
-        }
         String phoneNumber = request.phoneNumber().trim();
         String email = normalizeEmail(request.email());
         if (parentRepository.existsByPhoneNumberAndSchoolId(phoneNumber, schoolId)) {
@@ -111,6 +125,8 @@ public class ParentPortalService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "A parent account with this email already exists in this school");
         }
+
+        String parentId = idGeneratorService.generateParentId();
 
         Parent parent = new Parent();
         parent.setParentId(parentId);
@@ -126,11 +142,25 @@ public class ParentPortalService {
         user.setSchoolId(schoolId);
         user.setRole(Role.PARENT);
         user.setEmail(email);
-        user.setPassword(passwordEncoder.encode(request.temporaryPassword()));
+        user.setPassword(passwordEncoder.encode(generateUnusedPlaceholderPassword()));
         user.setMustChangePassword(true);
         user.setActive(true);
         userRepository.save(user);
+
+        String schoolName = schoolRepository.findById(schoolId)
+                .map(com.indraacademy.ias_management.entity.School::getName).orElse("your school");
+        passwordResetService.sendParentWelcomeLink(user, parent.getName(), schoolName);
+
         return profile(parent, schoolId, false);
+    }
+
+    /** A random value nobody will ever type — the real first password is whatever the parent
+     *  sets via the emailed link. Never logged, never returned, never persisted anywhere
+     *  except as its bcrypt hash on the User row. */
+    private String generateUnusedPlaceholderPassword() {
+        byte[] randomBytes = new byte[32];
+        new java.security.SecureRandom().nextBytes(randomBytes);
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
     }
 
     @Transactional

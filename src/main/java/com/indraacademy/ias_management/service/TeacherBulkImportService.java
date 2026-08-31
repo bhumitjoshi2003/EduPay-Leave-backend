@@ -24,16 +24,19 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 
 /**
  * Handles CSV bulk import of teachers.
  *
- * Expected CSV header row and field mapping:
+ * Expected CSV header row and field mapping (columns are matched by name, not position —
+ * see {@link #buildColumnIndex}, so old/new templates both work regardless of column order):
  *
  *  Column name     | Teacher field  | Required | Notes
  *  ----------------|----------------|----------|------------------------------
- *  Teacher ID      | teacherId      | yes      |
  *  Teacher Name    | name           | yes      |
  *  Email           | email          | yes      |
  *  Phone Number    | phoneNumber    | no       |
@@ -41,6 +44,11 @@ import java.util.List;
  *  Gender          | gender         | no       |
  *  Class Teacher   | classTeacher   | no       | class this teacher is class teacher of (e.g. "5", "Play group")
  *  Joining Date    | joiningDate    | yes      | yyyy-MM-dd
+ *
+ * Edunexify always generates the Employee ID for every newly imported teacher — a
+ * "Teacher ID" column is no longer part of the downloadable template. An OLDER CSV that
+ * still has one is still accepted without erroring — its column is simply never read into
+ * the entity, and the result's {@code notice} field says so plainly.
  *
  * Processing rules:
  * - Each row is saved in its own transaction (via TeacherService.addTeacher).
@@ -53,11 +61,19 @@ public class TeacherBulkImportService {
 
     private static final Logger log = LoggerFactory.getLogger(TeacherBulkImportService.class);
 
-    /** Column headers written to the downloadable template CSV. */
+    /** Column headers written to the downloadable template CSV — no ID column; Edunexify
+     *  generates it. */
     public static final String[] TEMPLATE_HEADERS = {
-            "Teacher ID", "Teacher Name", "Email", "Phone Number",
+            "Teacher Name", "Email", "Phone Number",
             "Date of Birth", "Gender", "Class Teacher", "Joining Date"
     };
+
+    private static final String LEGACY_ID_COLUMN = "teacher id";
+
+    private static final String LEGACY_ID_NOTICE =
+            "This file included a 'Teacher ID' column. Edunexify now generates the account ID "
+                    + "automatically for every new teacher, so the values in that column were not "
+                    + "used. See the generated ID for each row below.";
 
     private static final DateTimeFormatter DOB_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
 
@@ -75,6 +91,7 @@ public class TeacherBulkImportService {
      */
     public BulkImportResultDTO bulkImport(MultipartFile file, HttpServletRequest request) {
         List<BulkImportResultDTO.RowError> errors = new ArrayList<>();
+        List<BulkImportResultDTO.RowSuccess> created = new ArrayList<>();
         int successful = 0;
         int totalRows  = 0;
 
@@ -85,6 +102,8 @@ public class TeacherBulkImportService {
             if (header == null) {
                 throw new IllegalArgumentException("CSV file is empty.");
             }
+            Map<String, Integer> columnIndex = buildColumnIndex(header);
+            boolean hasLegacyIdColumn = columnIndex.containsKey(LEGACY_ID_COLUMN);
 
             String[] row;
             int rowNum = 1; // header is row 1; data starts at row 2
@@ -93,32 +112,35 @@ public class TeacherBulkImportService {
                 if (isBlankRow(row)) continue;
                 totalRows++;
 
-                String teacherId = getCol(row, 0);
+                String name = getCol(row, columnIndex, "teacher name");
                 try {
-                    Teacher teacher = parseRow(row, rowNum, teacherId, errors);
+                    Teacher teacher = parseRow(row, columnIndex, rowNum, errors);
                     if (teacher == null) continue; // validation error already recorded
 
                     // Each addTeacher call runs in its own @Transactional context —
-                    // a failure here does not affect rows already committed.
-                    teacherService.addTeacher(teacher, request);
-                    createUserAccount(teacher.getTeacherId(), teacher.getName(), teacher.getEmail(),
-                            teacher.getDob(), Role.TEACHER);
+                    // a failure here does not affect rows already committed. teacherId is
+                    // intentionally left unset on `teacher` here; addTeacher() generates it.
+                    Teacher saved = teacherService.addTeacher(teacher, request);
+                    createUserAccount(saved.getTeacherId(), saved.getName(), saved.getEmail(),
+                            saved.getDob(), Role.TEACHER);
                     successful++;
-                    log.info("Bulk import: row {} saved (teacherId={})", rowNum, teacherId);
+                    created.add(new BulkImportResultDTO.RowSuccess(rowNum, saved.getName(), saved.getTeacherId()));
+                    log.info("Bulk import: row {} saved (teacherId={})", rowNum, saved.getTeacherId());
 
                 } catch (IllegalArgumentException e) {
-                    // Covers duplicate ID and other business-rule rejections from addTeacher.
-                    String reason = isDuplicateTeacherId(e.getMessage(), teacherId)
-                            ? "Duplicate teacherId"
-                            : e.getMessage();
-                    log.warn("Bulk import: row {} rejected (teacherId={}): {}", rowNum, teacherId, reason);
-                    errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId, reason));
+                    log.warn("Bulk import: row {} rejected (name={}): {}", rowNum, name, e.getMessage());
+                    errors.add(new BulkImportResultDTO.RowError(rowNum, name, e.getMessage()));
                 } catch (Exception e) {
-                    log.error("Bulk import: unexpected error on row {} (teacherId={})", rowNum, teacherId, e);
-                    errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId,
+                    log.error("Bulk import: unexpected error on row {} (name={})", rowNum, name, e);
+                    errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                             "Unexpected error: " + e.getMessage()));
                 }
             }
+
+            BulkImportResultDTO result = new BulkImportResultDTO(totalRows, successful, errors.size(), errors,
+                    created, hasLegacyIdColumn ? LEGACY_ID_NOTICE : null);
+            auditBulkImport(file.getOriginalFilename(), result, request);
+            return result;
 
         } catch (IllegalArgumentException e) {
             throw e;
@@ -126,10 +148,6 @@ public class TeacherBulkImportService {
             log.error("Failed to read CSV file during bulk import", e);
             throw new RuntimeException("Failed to read CSV file: " + e.getMessage(), e);
         }
-
-        BulkImportResultDTO result = new BulkImportResultDTO(totalRows, successful, errors.size(), errors);
-        auditBulkImport(file.getOriginalFilename(), result, request);
-        return result;
     }
 
     /**
@@ -160,15 +178,6 @@ public class TeacherBulkImportService {
     /**
      * Writes a single BULK_IMPORT_TEACHER audit entry summarising the entire import session.
      * Each successfully saved row also has its own CREATE_TEACHER entry written by addTeacher().
-     *
-     * newValue JSON shape:
-     * {
-     *   "filename":   "teachers.csv",
-     *   "totalRows":  50,
-     *   "successful": 48,
-     *   "failed":     2,
-     *   "errors": [{ "row": 3, "studentId": "TCH_05", "reason": "Duplicate teacherId" }, ...]
-     * }
      */
     private void auditBulkImport(String filename, BulkImportResultDTO result, HttpServletRequest request) {
         try {
@@ -194,48 +203,46 @@ public class TeacherBulkImportService {
             int totalRows,
             int successful,
             int failed,
-            List<BulkImportResultDTO.RowError> errors
+            List<BulkImportResultDTO.RowError> errors,
+            List<BulkImportResultDTO.RowSuccess> created
     ) {
         BulkImportAuditPayload(String filename, BulkImportResultDTO result) {
             this(filename, result.getTotalRows(), result.getSuccessful(),
-                    result.getFailed(), result.getErrors());
+                    result.getFailed(), result.getErrors(), result.getCreated());
         }
     }
 
     /**
-     * Parses a single data row into a Teacher object.
+     * Parses a single data row into a Teacher object. teacherId is deliberately left unset —
+     * TeacherService.addTeacher() generates it. Any legacy "Teacher ID" column in the CSV is
+     * simply never consulted here.
      * Returns {@code null} and appends to {@code errors} if any validation fails.
      */
-    private Teacher parseRow(String[] row, int rowNum, String teacherId,
+    private Teacher parseRow(String[] row, Map<String, Integer> columnIndex, int rowNum,
                              List<BulkImportResultDTO.RowError> errors) {
-        // Column index mapping (matches TEMPLATE_HEADERS order)
-        String name         = getCol(row, 1); // Teacher Name
-        String email        = getCol(row, 2); // Email
-        String phoneNumber  = getCol(row, 3); // Phone Number
-        String dobStr       = getCol(row, 4); // Date of Birth
-        String gender       = getCol(row, 5); // Gender
-        String classTeacher = getCol(row, 6); // Class Teacher
-        String joiningStr   = getCol(row, 7); // Joining Date
+        String name         = getCol(row, columnIndex, "teacher name");
+        String email        = getCol(row, columnIndex, "email");
+        String phoneNumber  = getCol(row, columnIndex, "phone number");
+        String dobStr       = getCol(row, columnIndex, "date of birth");
+        String gender       = getCol(row, columnIndex, "gender");
+        String classTeacher = getCol(row, columnIndex, "class teacher");
+        String joiningStr   = getCol(row, columnIndex, "joining date");
 
         // Required field checks
-        if (teacherId.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, "", "Teacher ID is required"));
-            return null;
-        }
         if (name.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId, "Teacher Name is required"));
+            errors.add(new BulkImportResultDTO.RowError(rowNum, "", "Teacher Name is required"));
             return null;
         }
         if (email.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId, "Email is required"));
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name, "Email is required"));
             return null;
         }
         if (joiningStr.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId, "Joining Date is required"));
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name, "Joining Date is required"));
             return null;
         }
         if (dobStr.isEmpty()) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId,
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                     "Date of birth is required because it is used as the initial password."));
             return null;
         }
@@ -245,7 +252,7 @@ public class TeacherBulkImportService {
         try {
             dob = LocalDate.parse(dobStr);
         } catch (DateTimeParseException e) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId,
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                     "Invalid date format for 'Date of Birth', expected yyyy-MM-dd"));
             return null;
         }
@@ -254,13 +261,12 @@ public class TeacherBulkImportService {
         try {
             joiningDate = LocalDate.parse(joiningStr);
         } catch (DateTimeParseException e) {
-            errors.add(new BulkImportResultDTO.RowError(rowNum, teacherId,
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name,
                     "Invalid date format for 'Joining Date', expected yyyy-MM-dd"));
             return null;
         }
 
         Teacher teacher = new Teacher();
-        teacher.setTeacherId(teacherId);
         teacher.setName(name);
         teacher.setEmail(email);
         teacher.setPhoneNumber(phoneNumber.isEmpty()  ? null : phoneNumber);
@@ -271,17 +277,23 @@ public class TeacherBulkImportService {
         return teacher;
     }
 
-    /**
-     * Returns true when the exception message from addTeacher signals a duplicate ID.
-     * addTeacher throws: "Teacher with ID <id> already exists."
-     */
-    private boolean isDuplicateTeacherId(String message, String teacherId) {
-        return message != null && message.contains(teacherId) && message.contains("already exists");
+    /** Maps each header cell (trimmed, lower-cased) to its column index, so columns are
+     *  matched by name rather than fixed position. */
+    private Map<String, Integer> buildColumnIndex(String[] header) {
+        Map<String, Integer> index = new HashMap<>();
+        for (int i = 0; i < header.length; i++) {
+            if (header[i] != null) {
+                index.put(header[i].trim().toLowerCase(Locale.ROOT), i);
+            }
+        }
+        return index;
     }
 
-    /** Returns the trimmed cell value, or an empty string if the index is out of bounds. */
-    private String getCol(String[] row, int idx) {
-        if (idx >= row.length || row[idx] == null) return "";
+    /** Returns the trimmed cell value for the named column, or an empty string if that
+     *  column isn't present in this file's header at all, or the cell itself is blank. */
+    private String getCol(String[] row, Map<String, Integer> columnIndex, String columnName) {
+        Integer idx = columnIndex.get(columnName);
+        if (idx == null || idx >= row.length || row[idx] == null) return "";
         return row[idx].trim();
     }
 

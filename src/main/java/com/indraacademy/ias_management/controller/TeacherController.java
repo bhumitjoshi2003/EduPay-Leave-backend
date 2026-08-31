@@ -46,7 +46,11 @@ public class TeacherController {
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> registerTeacher(@Valid @RequestBody Teacher newTeacher, HttpServletRequest request) {
-        log.info("Request to register new teacher: {}", newTeacher.getTeacherId());
+        // Edunexify always generates the Employee ID for a brand-new account — any
+        // teacherId sent by the client is discarded here, never trusted. Existing teachers
+        // (including legacy SWEEDU-era IDs) are untouched — this only affects new creation.
+        newTeacher.setTeacherId(null);
+        log.info("Request to register new teacher.");
         try {
             Teacher savedTeacher = teacherService.addTeacher(newTeacher, request);
             log.info("Teacher registered successfully with ID: {}", savedTeacher.getTeacherId());
