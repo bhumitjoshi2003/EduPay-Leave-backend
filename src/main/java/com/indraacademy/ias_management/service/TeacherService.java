@@ -57,6 +57,9 @@ public class TeacherService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private IdGeneratorService idGeneratorService;
+
     @Transactional(readOnly = true)
     public Optional<Teacher> getTeacher(String teacherId) {
         if (teacherId == null || teacherId.trim().isEmpty()) {
@@ -132,9 +135,17 @@ public class TeacherService {
     }
 
     public Teacher addTeacher(Teacher teacher, HttpServletRequest request) {
-        if (teacher == null || teacher.getTeacherId() == null || teacher.getTeacherId().trim().isEmpty()) {
-            log.error("Attempted to add teacher with null or empty Teacher object/ID.");
-            throw new IllegalArgumentException("Teacher object and ID must be provided.");
+        if (teacher == null) {
+            log.error("Attempted to add a null Teacher object.");
+            throw new IllegalArgumentException("Teacher object must be provided.");
+        }
+        // Edunexify generates the Employee ID for every new account going forward — same
+        // enforcement point as StudentService.addStudent(); see that method's comment for
+        // the full rationale. Existing teachers (including legacy SWEEDU-era IDs) are never
+        // touched by this — this only fires when teacherId arrives blank, i.e. a genuinely
+        // new account.
+        if (teacher.getTeacherId() == null || teacher.getTeacherId().trim().isEmpty()) {
+            teacher.setTeacherId(idGeneratorService.generateTeacherId());
         }
         if (teacher.getDob() == null) {
             log.warn("Attempted to add teacher {} without a date of birth.", teacher.getTeacherId());

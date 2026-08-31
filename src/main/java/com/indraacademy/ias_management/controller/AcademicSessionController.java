@@ -18,13 +18,13 @@ public class AcademicSessionController {
     private AcademicSessionService sessionService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER', 'STUDENT', 'SUB_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER', 'STUDENT', 'PARENT', 'SUB_ADMIN')")
     public ResponseEntity<List<AcademicSessionDto>> getAllSessions() {
         return ResponseEntity.ok(sessionService.getAllSessions());
     }
 
     @GetMapping("/current")
-    @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER', 'STUDENT', 'SUB_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER', 'STUDENT', 'PARENT', 'SUB_ADMIN')")
     public ResponseEntity<AcademicSessionDto> getCurrentSession() {
         return ResponseEntity.ok(sessionService.getCurrentSession());
     }

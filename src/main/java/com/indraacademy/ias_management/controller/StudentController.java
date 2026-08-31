@@ -18,6 +18,7 @@ import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentBulkImportService;
 import com.indraacademy.ias_management.service.StudentPromotionService;
 import com.indraacademy.ias_management.service.StudentService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,6 +57,7 @@ public class StudentController {
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private AuthService authService;
+    @Autowired private ParentPortalService parentPortalService;
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/search")
@@ -67,7 +69,11 @@ public class StudentController {
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> registerStudent(@Valid @RequestBody Student newStudent, HttpServletRequest request) {
-        log.info("Request to register new student: {}", newStudent.getStudentId());
+        // Edunexify always generates the Student ID for a brand-new account — any studentId
+        // sent by the client (a stale UI build, a direct API call, etc.) is discarded here,
+        // never trusted. StudentService.addStudent() generates a fresh one for a blank ID.
+        newStudent.setStudentId(null);
+        log.info("Request to register new student.");
         try {
             Student savedStudent = studentService.addStudent(newStudent, request);
             log.info("Student registered successfully with ID: {}", savedStudent.getStudentId());
@@ -97,6 +103,10 @@ public class StudentController {
         if(Role.STUDENT.equals(role)){
             resolvedStudentId = authService.getUserId();
             log.info("Student accessing their own record with ID: {}", resolvedStudentId);
+        } else if (Role.PARENT.equals(role)) {
+            parentPortalService.assertChildAccess(studentId);
+            resolvedStudentId = studentId;
+            log.info("Parent accessing linked student record with ID: {}", resolvedStudentId);
         } else {
             resolvedStudentId = studentId;
             log.info("Admin/Teacher accessing student record with ID: {}", resolvedStudentId);

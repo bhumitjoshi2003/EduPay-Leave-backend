@@ -9,10 +9,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.repository.PaymentRepository;
+import com.indraacademy.ias_management.repository.PaymentOrderRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.service.StudentFeesService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -41,8 +43,10 @@ public class PaymentController {
     @Autowired private PaymentService paymentService;
     @Autowired private AuthService authService;
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private PaymentOrderRepository paymentOrderRepository;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private StudentFeesService studentFeesService;
+    @Autowired private ParentPortalService parentPortalService;
 
     /** Tight tolerance for the client-displayed vs. server-computed core checkout amount
      * (school fee + late fee + platform fee) — absorbs last-cent rounding differences, not
@@ -54,7 +58,7 @@ public class PaymentController {
     private static final long AMOUNT_MISMATCH_TOLERANCE_PAISE = 100L; // ₹1
 
     @PostMapping("/create")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<Map<String, Object>> createOrder(@Valid @RequestBody CreateOrderRequest req) {
         log.info("Request to create payment order for student: {}", req.getStudentId());
 
@@ -67,6 +71,9 @@ public class PaymentController {
                     authService.getUserId(), req.getStudentId());
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Students can only pay for themselves."));
+        }
+        if (Role.PARENT.equals(authService.getRole())) {
+            parentPortalService.assertChildAccess(req.getStudentId(), ParentPortalService.ChildPermission.PAY_FEES);
         }
 
         // Server-side fee amount validation: verify client-submitted amount against outstanding balance
@@ -161,7 +168,7 @@ public class PaymentController {
     }
 
     @PostMapping("/verify")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<Map<String, Object>> verifyPayment(@RequestBody Map<String, Object> requestBody) {
         log.info("Request to verify payment.");
         try {
@@ -169,6 +176,27 @@ public class PaymentController {
             Map<String, String> paymentData = (Map<String, String>) requestBody.get("paymentResponse");
             @SuppressWarnings("unchecked")
             Map<String, Object> orderDetails = (Map<String, Object>) requestBody.get("orderDetails");
+
+            String orderId = paymentData == null ? null : paymentData.get("razorpay_order_id");
+            if (orderId == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Payment order ID is required."));
+            }
+            var paymentOrder = paymentOrderRepository
+                    .findByOrderIdAndSchoolId(orderId, securityUtil.getSchoolId())
+                    .orElse(null);
+            if (paymentOrder == null) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", "Payment order is not available for this school."));
+            }
+            if (Role.STUDENT.equals(authService.getRole())
+                    && !paymentOrder.getStudentId().equals(authService.getUserId())) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", "Students can only verify their own payments."));
+            }
+            if (Role.PARENT.equals(authService.getRole())) {
+                parentPortalService.assertChildAccess(
+                        paymentOrder.getStudentId(), ParentPortalService.ChildPermission.PAY_FEES);
+            }
 
             Map<String, Object> result = razorpayService.verifyPayment(paymentData, orderDetails);
             log.info("Payment verification result: {}", result.get("status"));
@@ -194,13 +222,16 @@ public class PaymentController {
     }
 
     @GetMapping("/history/student/{studentId}")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<?> getPaymentHistoryOfStudent(
             @PathVariable String studentId, Pageable pageable){
 
         if (Role.STUDENT.equals(authService.getRole()) && !studentId.equals(authService.getUserId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Students can only view their own payment history."));
+        }
+        if (Role.PARENT.equals(authService.getRole())) {
+            parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.FEES);
         }
 
         log.info("Request for payment history for student: {}", studentId);
@@ -209,7 +240,7 @@ public class PaymentController {
     }
 
     @GetMapping("/history/details/{paymentId}")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<?> getPaymentHistoryDetails(@PathVariable String paymentId) {
         log.info("Request for payment details for ID: {}", paymentId);
 
@@ -222,6 +253,9 @@ public class PaymentController {
         if (Role.STUDENT.equals(authService.getRole()) && !payment.getStudentId().equals(authService.getUserId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Students can only view their own payment details."));
+        }
+        if (Role.PARENT.equals(authService.getRole())) {
+            parentPortalService.assertChildAccess(payment.getStudentId(), ParentPortalService.ChildPermission.FEES);
         }
 
         PaymentResponseDTO dto = paymentService.getPaymentHistoryDetails(paymentId);
@@ -241,7 +275,7 @@ public class PaymentController {
      * history/details/{paymentId} and history/receipt/{paymentId}.
      */
     @GetMapping("/history/receipt-breakdown/{paymentId}")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<?> getPaymentReceiptBreakdown(@PathVariable String paymentId) {
         log.info("Request for payment line-item breakdown for ID: {}", paymentId);
 
@@ -254,6 +288,9 @@ public class PaymentController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Students can only view their own payment breakdown."));
         }
+        if (Role.PARENT.equals(authService.getRole())) {
+            parentPortalService.assertChildAccess(payment.getStudentId(), ParentPortalService.ChildPermission.FEES);
+        }
 
         return paymentService.getPaymentLineItemBreakdown(paymentId)
                 .<ResponseEntity<?>>map(ResponseEntity::ok)
@@ -261,7 +298,7 @@ public class PaymentController {
     }
 
     @GetMapping("/history/receipt/{paymentId}")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<?> downloadPaymentReceipt(@PathVariable String paymentId) {
         log.info("Request to download receipt for payment ID: {}", paymentId);
 
@@ -273,6 +310,9 @@ public class PaymentController {
         if (Role.STUDENT.equals(authService.getRole()) && !paymentForOwnershipCheck.getStudentId().equals(authService.getUserId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "Students can only download their own receipts."));
+        }
+        if (Role.PARENT.equals(authService.getRole())) {
+            parentPortalService.assertChildAccess(paymentForOwnershipCheck.getStudentId(), ParentPortalService.ChildPermission.FEES);
         }
 
         byte[] pdfBytes = paymentService.generatePaymentReceiptPdf(paymentId);

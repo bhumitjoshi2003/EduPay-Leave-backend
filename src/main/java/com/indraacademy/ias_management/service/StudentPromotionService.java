@@ -37,6 +37,7 @@ public class StudentPromotionService {
     @Autowired private SectionRepository sectionRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ParentPortalService parentPortalService;
 
     /**
      * Returns the school's active class names in display order (from DB). SchoolClass is
@@ -173,6 +174,8 @@ public class StudentPromotionService {
                         student.setLeavingDate(java.time.LocalDate.now());
                     }
                     studentRepository.save(student);
+                    parentPortalService.endRelationshipsForExitedStudent(
+                            securityUtil.getSchoolId(), studentId, student.getLeavingDate());
                     auditService.log(
                             securityUtil.getUsername(), securityUtil.getRole(),
                             "PASS_OUT_STUDENT", "Student", studentId,

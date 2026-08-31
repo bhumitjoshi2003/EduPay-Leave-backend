@@ -1,15 +1,20 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.dto.ApplicableBusFeeDto;
 import com.indraacademy.ias_management.entity.BusFees;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.BusFeesRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +31,7 @@ public class BusFeesService {
     private static final Logger log = LoggerFactory.getLogger(BusFeesService.class);
 
     @Autowired private BusFeesRepository busFeesRepository;
+    @Autowired private StudentRepository studentRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -81,6 +87,22 @@ public class BusFeesService {
             log.error("Data access error fetching bus fees for academic year: {}", academicYear, e);
             throw new RuntimeException("Could not retrieve bus fees by academic year due to data access issue", e);
         }
+    }
+
+    /** The single student's resolved bus fee — mirrors FeeCalculationService's own bus-fee resolution
+     *  (takesBus + distance -> slab lookup) so this view and the actual monthly billing snapshot never
+     *  disagree. Returns busFee=null when the student doesn't take the bus or no slab matches. */
+    @Transactional(readOnly = true)
+    public ApplicableBusFeeDto getApplicableBusFee(String studentId, String academicYear) {
+        Long schoolId = securityUtil.getSchoolId();
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+        boolean takesBus = Boolean.TRUE.equals(student.getTakesBus());
+        Double distance = student.getDistance();
+        BigDecimal busFee = (takesBus && distance != null && distance > 0)
+                ? getBusFeesOfDistance(distance, academicYear)
+                : null;
+        return new ApplicableBusFeeDto(studentId, takesBus, distance, academicYear, busFee);
     }
 
     @CacheEvict(value = "bus-fees", allEntries = true)

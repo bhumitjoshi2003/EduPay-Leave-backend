@@ -14,12 +14,14 @@ import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.ParentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PermissionService;
 import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.service.WelcomeEmailService;
+import com.indraacademy.ias_management.service.PasswordResetService;
 import com.indraacademy.ias_management.util.JwtUtil;
 import com.indraacademy.ias_management.util.SchoolContext;
 import io.jsonwebtoken.Claims;
@@ -42,13 +44,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.util.WebUtils;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.HexFormat;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -56,6 +55,12 @@ public class AuthController {
 
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
+    // PARENT is deliberately excluded — Parent accounts are created exclusively through
+    // ParentPortalService.createParent (POST /api/parents), which generates the parentId,
+    // creates both the Parent and User rows atomically, and sends the Option A account-setup
+    // link. This endpoint's else-branch (below) would otherwise let a caller set an
+    // admin-typed plaintext password for a PARENT-role User row with no corresponding Parent
+    // domain row at all — bypassing the entire generated-ID/no-exposed-password design.
     private static final Set<String> VALID_ROLES = Set.of(
             Role.SUPER_ADMIN, Role.ADMIN, Role.SUB_ADMIN, Role.TEACHER, Role.STUDENT);
 
@@ -65,18 +70,17 @@ public class AuthController {
     @Autowired private JwtUtil jwtUtil;
     @Autowired private EmailService emailService;
     @Autowired private WelcomeEmailService welcomeEmailService;
+    @Autowired private PasswordResetService passwordResetService;
     @Autowired private AuthService authService;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private AdminRepository adminRepository;
+    @Autowired private ParentRepository parentRepository;
     @Autowired private com.indraacademy.ias_management.service.EntitlementService entitlementService;
     @Autowired private com.indraacademy.ias_management.repository.SchoolEffectiveEntitlementRepository entitlementRepo;
     @Autowired private RateLimiter rateLimiter;
     @Autowired private PermissionService permissionService;
     @Autowired private AuditService auditService;
-
-    @Value("${frontend.url}")
-    private String frontendUrl;
 
     @Value("${auth.cookie.secure}")
     private boolean isSecure;
@@ -452,6 +456,9 @@ public class AuthController {
             } else if (Role.TEACHER.equals(role)) {
                 return teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
                         .map(Teacher::getName).orElse(null);
+            } else if (Role.PARENT.equals(role)) {
+                return parentRepository.findByParentIdAndSchoolId(userId, schoolId)
+                        .map(com.indraacademy.ias_management.entity.Parent::getName).orElse(null);
             } else {
                 // ADMIN, SUB_ADMIN: scope to school; SUPER_ADMIN has null schoolId so fall back to findById
                 if (schoolId != null) {
@@ -549,10 +556,12 @@ public class AuthController {
                             .body("Your school account has been deactivated. Please contact Edunexify support.");
                 }
 
-                // Block token refresh for STUDENT/TEACHER when subscription is EXPIRED.
+                // Block token refresh for school end-users when subscription is EXPIRED.
                 // ADMIN/SUB_ADMIN are allowed to keep their session so they can renew.
                 String refreshRole = loggedIn.getRole();
-                if (Role.STUDENT.equals(refreshRole) || Role.TEACHER.equals(refreshRole)) {
+                if (Role.STUDENT.equals(refreshRole)
+                        || Role.TEACHER.equals(refreshRole)
+                        || Role.PARENT.equals(refreshRole)) {
                     var ent = entitlementRepo.findById(loggedIn.getSchoolId()).orElse(null);
                     if (ent != null && "EXPIRED".equals(ent.getSubscriptionStatus())) {
                         log.warn("Token refresh rejected for userId={} ({}): school {} subscription is EXPIRED",
@@ -840,15 +849,10 @@ public class AuthController {
         }
 
         try {
-            String rawToken = UUID.randomUUID().toString();
-            user.setResetToken(hashToken(rawToken));
-            user.setResetTokenExpiry(new Date(System.currentTimeMillis() + 3600000));
-            userRepository.save(user);
-
-            String resetLink = frontendUrl + "/reset-password?token=" + rawToken;
-            String subject   = "Password Reset Request – Edunexify";
-            String htmlBody  = buildPasswordResetHtml(resetLink);
-            emailService.sendHtmlEmail(user.getEmail(), subject, htmlBody);
+            passwordResetService.sendResetLink(user, "Password Reset Request – Edunexify",
+                    "We received a request to reset the password for your Edunexify account. "
+                            + "Click the button below to set a new password. This link will expire in "
+                            + "<strong style=\"color:#111827;\">1 hour</strong>.");
 
             log.info("Password reset link sent to email for user: {}", userId);
 
@@ -879,7 +883,7 @@ public class AuthController {
         log.info("Attempting to reset password using token.");
 
         try {
-            Optional<User> userOptional = userRepository.findByResetToken(hashToken(token));
+            Optional<User> userOptional = userRepository.findByResetToken(passwordResetService.hashToken(token));
             if (userOptional.isEmpty()) {
                 log.warn("Password reset failed: Invalid reset token.");
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid reset token.");
@@ -894,6 +898,13 @@ public class AuthController {
             user.setPassword(passwordEncoder.encode(newPassword));
             user.setResetToken(null);
             user.setResetTokenExpiry(null);
+            // A password set via a verified emailed token IS the "establish your real
+            // password" step — there is nothing left to force a change of afterward. This
+            // also closes the actual onboarding path for new Parent accounts (Option A):
+            // without this, a parent who sets their password via this link would still be
+            // forced through the separate initial-password-change flow on their very next
+            // login, immediately after having just set a real password.
+            user.setMustChangePassword(false);
             userRepository.save(user);
             log.info("Password reset successfully for user: {}", user.getUserId());
 
@@ -919,110 +930,4 @@ public class AuthController {
         }
     }
 
-    private String hashToken(String token) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to hash token", e);
-        }
-    }
-
-    private String buildPasswordResetHtml(String resetLink) {
-        int year = LocalDate.now().getYear();
-        return """
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                  <meta charset="UTF-8">
-                  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                  <title>Password Reset</title>
-                </head>
-                <body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
-                  <table width="100%%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:32px 16px;">
-                    <tr><td align="center">
-                      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;">
-
-                        <!-- Header -->
-                        <tr>
-                          <td align="center" style="background-color:#3730a3;border-radius:16px 16px 0 0;padding:32px 40px 24px;">
-                            <p style="margin:0 0 10px;font-size:44px;line-height:1;">&#128274;</p>
-                            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:800;">Edunexify</h1>
-                            <p style="margin:6px 0 0;color:rgba(255,255,255,0.75);font-size:13px;">School Management Platform</p>
-                          </td>
-                        </tr>
-
-                        <!-- Band -->
-                        <tr>
-                          <td align="center" style="background-color:#4f46e5;padding:10px 40px;">
-                            <p style="margin:0;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;">
-                              Password Reset Request
-                            </p>
-                          </td>
-                        </tr>
-
-                        <!-- Body -->
-                        <tr>
-                          <td style="background-color:#ffffff;padding:36px 40px;">
-                            <p style="margin:0 0 16px;font-size:16px;color:#111827;">Hello,</p>
-                            <p style="margin:0 0 28px;font-size:14px;color:#6b7280;line-height:1.8;">
-                              We received a request to reset the password for your Edunexify account.
-                              Click the button below to set a new password. This link will expire in
-                              <strong style="color:#111827;">1 hour</strong>.
-                            </p>
-
-                            <!-- CTA Button -->
-                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-                              <tr>
-                                <td align="center">
-                                  <a href="%s"
-                                     style="display:inline-block;background-color:#4f46e5;color:#ffffff;text-decoration:none;
-                                            font-size:15px;font-weight:700;padding:14px 36px;border-radius:10px;
-                                            letter-spacing:0.3px;">
-                                    &#128273;&nbsp; Reset My Password
-                                  </a>
-                                </td>
-                              </tr>
-                            </table>
-
-                            <!-- Security note -->
-                            <table width="100%%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-                              <tr>
-                                <td style="background-color:#fef2f2;border-left:4px solid #dc2626;padding:14px 18px;border-radius:0 8px 8px 0;">
-                                  <p style="margin:0;font-size:13px;color:#991b1b;line-height:1.7;">
-                                    <strong>Didn't request this?</strong> If you did not request a password reset,
-                                    please ignore this email. Your account remains secure.
-                                  </p>
-                                </td>
-                              </tr>
-                            </table>
-
-                            <p style="margin:0 0 6px;font-size:12px;color:#9ca3af;">Or copy and paste this URL into your browser:</p>
-                            <p style="margin:0 0 28px;font-size:11px;color:#6b7280;word-break:break-all;">%s</p>
-
-                            <hr style="border:none;border-top:1px solid #f1f5f9;margin:0 0 24px;">
-                            <p style="margin:0;font-size:14px;color:#374151;line-height:1.7;">
-                              With regards,<br>
-                              <strong>Edunexify</strong><br>
-                              <span style="font-size:12px;color:#9ca3af;">IT &amp; Support</span>
-                            </p>
-                          </td>
-                        </tr>
-
-                        <!-- Footer -->
-                        <tr>
-                          <td align="center" style="background-color:#1f2937;border-radius:0 0 16px 16px;padding:20px 40px;">
-                            <p style="margin:0 0 4px;font-size:12px;color:rgba(255,255,255,0.55);">This is an automated message. Please do not reply to this email.</p>
-                            <p style="margin:0;font-size:11px;color:rgba(255,255,255,0.35);">&copy; %d Edunexify. All rights reserved.</p>
-                          </td>
-                        </tr>
-
-                      </table>
-                    </td></tr>
-                  </table>
-                </body>
-                </html>
-                """.formatted(resetLink, resetLink, year);
-    }
 }

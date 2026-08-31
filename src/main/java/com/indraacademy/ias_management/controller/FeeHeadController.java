@@ -19,7 +19,7 @@ public class FeeHeadController {
     private FeeHeadService feeHeadService;
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'STUDENT', 'SUB_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'STUDENT', 'SUB_ADMIN', 'PARENT')")
     public ResponseEntity<List<FeeHeadDto>> getActiveFeeHeads() {
         return ResponseEntity.ok(feeHeadService.getActiveFeeHeads());
     }

@@ -22,6 +22,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,6 +37,12 @@ import static org.mockito.Mockito.when;
  * with a clear, row-level error (not silently defaulted to the studentId, the
  * old fallback), while the partial-success import model is preserved: other
  * valid rows in the same file still succeed.
+ *
+ * <p>studentService.addStudent is mocked here (this is a unit test of the CSV parsing/
+ * orchestration layer, not of ID generation itself — see IdGeneratorServiceTest and
+ * StudentServiceTest for that) but its stub simulates the real method's actual behavior:
+ * assigning a generated studentId to whatever Student it receives, since that assignment
+ * now happens inside StudentService.addStudent(), not in this parser.
  */
 @ExtendWith(MockitoExtension.class)
 class StudentBulkImportServiceTest {
@@ -72,10 +79,17 @@ class StudentBulkImportServiceTest {
         lenient().when(securityUtil.getRole()).thenReturn("ADMIN");
         lenient().when(request.getRemoteAddr()).thenReturn("127.0.0.1");
         lenient().when(schoolClassRepository.findBySchoolIdAndName(any(), anyString())).thenReturn(Optional.empty());
-        lenient().when(studentService.addStudent(any(Student.class), any())).thenAnswer(inv -> inv.getArgument(0));
+        AtomicInteger seq = new AtomicInteger(1);
+        lenient().when(studentService.addStudent(any(Student.class), any())).thenAnswer(inv -> {
+            Student s = inv.getArgument(0);
+            s.setStudentId(String.format("stu_260100%02d", seq.getAndIncrement()));
+            return s;
+        });
         lenient().when(passwordEncoder.encode(anyString())).thenReturn("ENCODED");
     }
 
+    /** New-format CSV — no ID column at all, matching the current (post-generation)
+     *  TEMPLATE_HEADERS and the header-name-based parser. */
     private MockMultipartFile csv(String... dataRows) {
         StringBuilder sb = new StringBuilder(String.join(",", StudentBulkImportService.TEMPLATE_HEADERS)).append("\n");
         for (String row : dataRows) {
@@ -88,8 +102,8 @@ class StudentBulkImportServiceTest {
     @Test
     void rowMissingDobIsRejectedWithClearMessage_otherRowsStillSucceed() {
         MockMultipartFile file = csv(
-                "S1,Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,",
-                "S2,No Dob Student,s2@test.com,,,10,,,,,,,2024-01-01,"
+                "Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,",
+                "No Dob Student,s2@test.com,,,10,,,,,,,2024-01-01,"
         );
 
         BulkImportResultDTO result = service.bulkImport(file, request);
@@ -99,12 +113,12 @@ class StudentBulkImportServiceTest {
         assertThat(result.getFailed()).isEqualTo(1);
         assertThat(result.getErrors().get(0).getReason())
                 .isEqualTo("Date of birth is required because it is used as the initial password.");
-        assertThat(result.getErrors().get(0).getStudentId()).isEqualTo("S2");
+        assertThat(result.getErrors().get(0).getStudentId()).isEqualTo("No Dob Student");
     }
 
     @Test
     void validRowCreatesUserWithDobDerivedPasswordAndMustChangePasswordTrue() {
-        MockMultipartFile file = csv("S1,Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,");
+        MockMultipartFile file = csv("Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,");
 
         service.bulkImport(file, request);
 
@@ -113,7 +127,7 @@ class StudentBulkImportServiceTest {
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
         verify(userRepository).save(userCaptor.capture());
         User saved = userCaptor.getValue();
-        assertThat(saved.getUserId()).isEqualTo("S1");
+        assertThat(saved.getUserId()).startsWith("stu_26");
         assertThat(saved.getRole()).isEqualTo(Role.STUDENT);
         assertThat(saved.isMustChangePassword()).isTrue();
         assertThat(saved.getPassword()).isEqualTo("ENCODED");
@@ -121,20 +135,52 @@ class StudentBulkImportServiceTest {
 
     @Test
     void validRowTriggersWelcomeEmailAfterUserAccountIsCreated() {
-        MockMultipartFile file = csv("S1,Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,");
+        MockMultipartFile file = csv("Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,");
 
         service.bulkImport(file, request);
 
-        verify(welcomeEmailService).sendWelcomeEmail("S1", "Valid Student", Role.STUDENT, "s1@test.com", SCHOOL_ID);
+        ArgumentCaptor<String> studentIdCaptor = ArgumentCaptor.forClass(String.class);
+        verify(welcomeEmailService).sendWelcomeEmail(studentIdCaptor.capture(), org.mockito.Mockito.eq("Valid Student"),
+                org.mockito.Mockito.eq(Role.STUDENT), org.mockito.Mockito.eq("s1@test.com"), org.mockito.Mockito.eq(SCHOOL_ID));
+        assertThat(studentIdCaptor.getValue()).startsWith("stu_26");
     }
 
     @Test
     void rowMissingDobDoesNotTriggerWelcomeEmail() {
-        MockMultipartFile file = csv("S2,No Dob Student,s2@test.com,,,10,,,,,,,2024-01-01,");
+        MockMultipartFile file = csv("No Dob Student,s2@test.com,,,10,,,,,,,2024-01-01,");
 
         service.bulkImport(file, request);
 
         verify(welcomeEmailService, org.mockito.Mockito.never())
                 .sendWelcomeEmail(anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void generatedStudentIdIsReportedInSuccessfulImportResult() {
+        MockMultipartFile file = csv("Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,");
+
+        BulkImportResultDTO result = service.bulkImport(file, request);
+
+        assertThat(result.getCreated()).hasSize(1);
+        assertThat(result.getCreated().get(0).getName()).isEqualTo("Valid Student");
+        assertThat(result.getCreated().get(0).getGeneratedId()).startsWith("stu_26");
+        assertThat(result.getNotice()).isNull();
+    }
+
+    @Test
+    void legacyCsvWithStudentIdColumnIsAcceptedButIgnored_noticeExplainsWhy() {
+        // An old CSV still has "Student ID" as the first column. It must not error, and the
+        // value in that column must never become the generated account's ID.
+        MockMultipartFile file = new MockMultipartFile("file", "students.csv", "text/csv",
+                ("Student ID,Student Name,Email,Phone Number,Date of Birth,Class,Section,Gender,Father Name,Mother Name,Takes Bus,Distance (km),Joining Date,Leaving Date\n"
+                        + "LEGACY_ID_123,Valid Student,s1@test.com,,1990-05-23,10,,,,,,,2024-01-01,\n")
+                        .getBytes(StandardCharsets.UTF_8));
+
+        BulkImportResultDTO result = service.bulkImport(file, request);
+
+        assertThat(result.getSuccessful()).isEqualTo(1);
+        assertThat(result.getCreated().get(0).getGeneratedId()).isNotEqualTo("LEGACY_ID_123");
+        assertThat(result.getCreated().get(0).getGeneratedId()).startsWith("stu_26");
+        assertThat(result.getNotice()).contains("Student ID").contains("generates the account ID automatically");
     }
 }

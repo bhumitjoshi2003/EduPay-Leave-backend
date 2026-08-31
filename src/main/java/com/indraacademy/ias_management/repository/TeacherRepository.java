@@ -13,6 +13,8 @@ public interface TeacherRepository extends JpaRepository<Teacher, String> {
 
     List<Teacher> findBySchoolId(Long schoolId);
 
+    List<Teacher> findByStatusAndSchoolId(TeacherStatus status, Long schoolId);
+
     Optional<Teacher> findByTeacherIdAndSchoolId(String teacherId, Long schoolId);
 
     Optional<Teacher> findByClassTeacherAndSchoolId(String className, Long schoolId);

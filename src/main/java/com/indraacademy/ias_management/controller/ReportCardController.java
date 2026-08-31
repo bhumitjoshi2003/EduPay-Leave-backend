@@ -16,6 +16,7 @@ import com.indraacademy.ias_management.service.ReportCardPublicationService;
 import com.indraacademy.ias_management.service.ReportCardTemplateService;
 import com.indraacademy.ias_management.service.RemarksService;
 import com.indraacademy.ias_management.service.EntitlementService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +48,7 @@ public class ReportCardController {
     @Autowired private TeacherRepository             teacherRepository;
     @Autowired private SecurityUtil                  securityUtil;
     @Autowired private EntitlementService            entitlementService;
+    @Autowired private ParentPortalService            parentPortalService;
 
     // ── Template CRUD ─────────────────────────────────────────────────────
 
@@ -109,23 +111,13 @@ public class ReportCardController {
      * GET /api/report-cards?studentId=&templateId=&session=
      */
     @GetMapping("/report-cards")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<ReportCardDataDTO> getReportCard(
             @RequestParam String studentId,
             @RequestParam Long templateId,
             @RequestParam String session) {
 
-        // Students can only view published report cards
-        if (Role.STUDENT.equals(securityUtil.getRole())) {
-            Long schoolId = securityUtil.getSchoolId();
-            Student student = studentRepository
-                .findByStudentIdAndSchoolId(studentId, schoolId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
-            if (!publicationService.isPublished(templateId, session, student.getClassName())) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Report card has not been published yet.");
-            }
-        }
+        checkStudentOrParentPublishedAccess(studentId, templateId, session);
 
         checkTeacherOwnsStudents(List.of(studentId));
 
@@ -190,11 +182,13 @@ public class ReportCardController {
      * GET /api/report-cards/pdf?studentId=&templateId=&session=
      */
     @GetMapping("/report-cards/pdf")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<byte[]> downloadPdf(
             @RequestParam String studentId,
             @RequestParam Long templateId,
             @RequestParam String session) {
+
+        checkStudentOrParentPublishedAccess(studentId, templateId, session);
 
         checkTeacherOwnsStudents(List.of(studentId));
 
@@ -385,6 +379,28 @@ public class ReportCardController {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                         "Teachers can only access report card data for students in their own class.");
             }
+        }
+    }
+
+    /** Student-facing HTML and PDF paths must enforce the same publication boundary. */
+    private void checkStudentOrParentPublishedAccess(String studentId, Long templateId, String session) {
+        String role = securityUtil.getRole();
+        if (!Role.STUDENT.equals(role) && !Role.PARENT.equals(role)) return;
+
+        if (Role.STUDENT.equals(role) && !studentId.equals(securityUtil.getUsername())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Students can only access their own report card.");
+        }
+        if (Role.PARENT.equals(role)) {
+            parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.RESULTS);
+        }
+
+        Student student = studentRepository
+                .findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+        if (!publicationService.isPublished(templateId, session, student.getClassName())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Report card has not been published yet.");
         }
     }
 

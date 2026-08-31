@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.LeaveService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -35,18 +36,28 @@ public class LeaveController {
     @Autowired private AuthService authService;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ParentPortalService parentPortalService;
 
-    @PreAuthorize("hasAnyRole('" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @PostMapping("/apply-leave")
-    public ResponseEntity<String> applyLeave(@Valid @RequestBody Leave leave, HttpServletRequest request) {
-        String studentId = authService.getUserId();
-        log.info("Request to apply leave for student ID: {}", studentId);
-        leave.setStudentId(studentId);
+    public ResponseEntity<String> applyLeave(@Valid @RequestBody Leave leave,
+                                             @RequestParam(required = false) String studentId,
+                                             HttpServletRequest request) {
+        String role = authService.getRole();
+        String effectiveStudentId = Role.STUDENT.equals(role) ? authService.getUserId() : studentId;
+        if (effectiveStudentId == null || effectiveStudentId.isBlank()) {
+            return ResponseEntity.badRequest().body("A child must be selected.");
+        }
+        if (Role.PARENT.equals(role)) {
+            parentPortalService.assertChildAccess(effectiveStudentId, ParentPortalService.ChildPermission.MANAGE_LEAVE);
+        }
+        log.info("Request to apply leave for student ID: {}", effectiveStudentId);
+        leave.setStudentId(effectiveStudentId);
         leaveService.applyLeave(leave, request);
         return ResponseEntity.ok("Leave applied successfully");
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.PARENT + "', '" + Role.ADMIN + "')")
     @DeleteMapping("/delete/{studentId}/{leaveDate}")
     public ResponseEntity<String> deleteLeave(@PathVariable String studentId, @PathVariable String leaveDate, HttpServletRequest request) {
         String userId = authService.getUserId();
@@ -56,6 +67,8 @@ public class LeaveController {
         String finalStudentId = studentId;
         if(Role.STUDENT.equals(role)) {
             finalStudentId = userId;
+        } else if (Role.PARENT.equals(role)) {
+            parentPortalService.assertChildAccess(finalStudentId, ParentPortalService.ChildPermission.MANAGE_LEAVE);
         }
 
         leaveService.deleteLeave(finalStudentId, leaveDate, request);
@@ -93,16 +106,21 @@ public class LeaveController {
     }
 
     @GetMapping("/student/{studentId}")
-    @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.PARENT + "', '" + Role.ADMIN + "')")
     public ResponseEntity<Page<Leave>> getLeavesOfStudent(
             @PathVariable String studentId,
             Pageable pageable) {
 
         // Pulls the studentId from the SecurityContext to prevent users from querying other students' leaves.
-        String authenticatedStudentId = authService.getUserId();
-        log.info("Request to get leaves for student ID: {} (authenticated as {})", studentId, authenticatedStudentId);
+        String role = authService.getRole();
+        String authenticatedUserId = authService.getUserId();
+        String effectiveStudentId = Role.STUDENT.equals(role) ? authenticatedUserId : studentId;
+        if (Role.PARENT.equals(role)) {
+            parentPortalService.assertChildAccess(effectiveStudentId, ParentPortalService.ChildPermission.MANAGE_LEAVE);
+        }
+        log.info("Request to get leaves for student ID: {} (authenticated as {})", effectiveStudentId, authenticatedUserId);
 
-        return ResponseEntity.ok(leaveService.getLeavesByStudentId(authenticatedStudentId, pageable));
+        return ResponseEntity.ok(leaveService.getLeavesByStudentId(effectiveStudentId, pageable));
     }
 
     @GetMapping("/date/{date}/class/{className}")

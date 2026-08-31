@@ -19,13 +19,13 @@ public class FeeRuleController {
     private FeeRuleService feeRuleService;
 
     @GetMapping("/session/{sessionId}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'STUDENT', 'SUB_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'STUDENT', 'SUB_ADMIN', 'PARENT')")
     public ResponseEntity<List<FeeStructureRuleDto>> getRulesBySession(@PathVariable Long sessionId) {
         return ResponseEntity.ok(feeRuleService.getRulesBySession(sessionId));
     }
 
     @GetMapping("/session/{sessionId}/class/{className}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'STUDENT', 'SUB_ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'STUDENT', 'SUB_ADMIN', 'PARENT')")
     public ResponseEntity<List<FeeStructureRuleDto>> getRulesBySessionAndClass(
             @PathVariable Long sessionId, @PathVariable String className) {
         return ResponseEntity.ok(feeRuleService.getRulesBySessionAndClass(sessionId, className));

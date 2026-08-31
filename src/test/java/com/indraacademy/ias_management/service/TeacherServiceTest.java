@@ -37,6 +37,7 @@ class TeacherServiceTest {
     @Mock private AuditService auditService;
     @Mock private SecurityUtil securityUtil;
     @Mock private EntitlementService entitlementService;
+    @Mock private IdGeneratorService idGeneratorService;
     @Mock private HttpServletRequest request;
 
     private TeacherService service;
@@ -51,6 +52,7 @@ class TeacherServiceTest {
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "entitlementService", entitlementService);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper().registerModule(new JavaTimeModule()));
+        ReflectionTestUtils.setField(service, "idGeneratorService", idGeneratorService);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         lenient().when(securityUtil.getUsername()).thenReturn("admin");
@@ -109,5 +111,32 @@ class TeacherServiceTest {
                 .hasMessageContaining("already exists");
 
         verify(teacherRepository, never()).save(any());
+    }
+
+    // ─── System-generated Employee ID ──────────────────────────────────────
+
+    @Test
+    void newTeacherWithNoIdSuppliedGetsAGeneratedId() {
+        when(idGeneratorService.generateTeacherId()).thenReturn("emp_26010007");
+        when(teacherRepository.findByTeacherIdAndSchoolId("emp_26010007", SCHOOL_ID)).thenReturn(Optional.empty());
+        when(teacherRepository.existsById("emp_26010007")).thenReturn(false);
+
+        Teacher saved = service.addTeacher(newTeacher(null, LocalDate.of(1985, 3, 20)), request);
+
+        assertThat(saved.getTeacherId()).isEqualTo("emp_26010007");
+        verify(idGeneratorService).generateTeacherId();
+    }
+
+    @Test
+    void existingSuppliedTeacherIdIsNeverOverwritten_backwardCompatibility() {
+        // The Indra Academy scenario this directly protects: an existing teacher's legacy
+        // SWEEDU-era ID (or any other non-blank supplied ID) must never be regenerated.
+        when(teacherRepository.findByTeacherIdAndSchoolId("EMP123", SCHOOL_ID)).thenReturn(Optional.empty());
+        when(teacherRepository.existsById("EMP123")).thenReturn(false);
+
+        Teacher saved = service.addTeacher(newTeacher("EMP123", LocalDate.of(1985, 3, 20)), request);
+
+        assertThat(saved.getTeacherId()).isEqualTo("EMP123");
+        verify(idGeneratorService, never()).generateTeacherId();
     }
 }

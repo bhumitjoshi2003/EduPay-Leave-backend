@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -69,6 +70,10 @@ public class AttendanceEmailScheduler {
 
             if (studentOptional.isPresent()) {
                 Student student = studentOptional.get();
+                if (student.getStatus() != StudentStatus.ACTIVE) {
+                    log.debug("Skipping absence email for non-active student ID: {}", studentId);
+                    continue;
+                }
                 String parentEmail = student.getEmail();
 
                 if (parentEmail != null && !parentEmail.trim().isEmpty()) {

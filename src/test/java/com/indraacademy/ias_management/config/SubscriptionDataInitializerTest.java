@@ -144,17 +144,17 @@ class SubscriptionDataInitializerTest {
     // ─── Fresh DB (nothing seeded yet) ───
 
     @Test
-    void freshDatabase_endsWithExactly16CatalogKeys_8CoreAnd10Tiered() {
+    void freshDatabase_endsWithExactly19CatalogKeys_8CoreAnd11Tiered() {
         initializer.run(null);
 
         // 8 Core entries (including EVENT_CALENDAR/STUDENT_PROMOTION, now first-class Core keys
-        // owned by this initializer) + 10 TIERED_FEATURES = 18 total.
+        // owned by this initializer) + 11 TIERED_FEATURES = 19 total.
         assertThat(catalog.keySet()).containsExactlyInAnyOrder(
                 "ATTENDANCE", "LEAVE_MANAGEMENT", "TIMETABLE", "SCHOOL_ADMINISTRATION",
                 "NOTICE_BOARD", "HOLIDAY_CALENDAR", "EVENT_CALENDAR", "STUDENT_PROMOTION",
                 "FEE_MANAGEMENT", "PAYMENT_COLLECTION", "EXAM_MARKS", "FEE_REMINDERS",
                 "REPORT_CARD", "BULK_COMMUNICATIONS", "BULK_IMPORT", "ANALYTICS",
-                "AI_COPILOT", "AUDIT_LOGS"
+                "AI_COPILOT", "AUDIT_LOGS", "PARENT_PORTAL"
         );
     }
 
@@ -167,34 +167,34 @@ class SubscriptionDataInitializerTest {
     }
 
     @Test
-    void freshDatabase_grantsExpectedFeatureCountsPerPlan_3Tiered8CoreForCampus() {
+    void freshDatabase_grantsExpectedFeatureCountsPerPlan_4Tiered8CoreForCampus() {
         initializer.run(null);
 
         Plan campus = plans.values().stream().filter(p -> p.getTier().equals("CAMPUS")).findFirst().orElseThrow();
         long grants = planFeatures.stream().filter(pf -> pf.getPlanId().equals(campus.getId())).count();
 
-        // 3 tiered (FEE_MANAGEMENT, PAYMENT_COLLECTION, EXAM_MARKS) + 8 core = 11
-        assertThat(grants).isEqualTo(11);
+        // 4 tiered (fees, payments, exams, parent portal) + 8 core = 12
+        assertThat(grants).isEqualTo(12);
     }
 
     @Test
-    void freshDatabase_grantsExpectedFeatureCountsPerPlan_9Tiered8CoreForAcademy() {
+    void freshDatabase_grantsExpectedFeatureCountsPerPlan_10Tiered8CoreForAcademy() {
         initializer.run(null);
 
         Plan academy = plans.values().stream().filter(p -> p.getTier().equals("ACADEMY")).findFirst().orElseThrow();
         long grants = planFeatures.stream().filter(pf -> pf.getPlanId().equals(academy.getId())).count();
 
-        assertThat(grants).isEqualTo(17); // 9 tiered + 8 core
+        assertThat(grants).isEqualTo(18); // 10 tiered + 8 core
     }
 
     @Test
-    void freshDatabase_grantsExpectedFeatureCountsPerPlan_10Tiered8CoreForInstitute() {
+    void freshDatabase_grantsExpectedFeatureCountsPerPlan_11Tiered8CoreForInstitute() {
         initializer.run(null);
 
         Plan institute = plans.values().stream().filter(p -> p.getTier().equals("INSTITUTE")).findFirst().orElseThrow();
         long grants = planFeatures.stream().filter(pf -> pf.getPlanId().equals(institute.getId())).count();
 
-        assertThat(grants).isEqualTo(18); // 10 tiered (all of them) + 8 core
+        assertThat(grants).isEqualTo(19); // 11 tiered (all of them) + 8 core
     }
 
     @Test

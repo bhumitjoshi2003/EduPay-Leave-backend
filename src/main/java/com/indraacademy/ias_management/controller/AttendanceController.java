@@ -14,6 +14,7 @@ import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -41,6 +42,7 @@ public class AttendanceController {
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private com.indraacademy.ias_management.util.SecurityUtil securityUtil;
+    @Autowired private ParentPortalService parentPortalService;
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
@@ -174,6 +176,9 @@ public class AttendanceController {
             @RequestParam int month,
             @RequestParam int year) {
 
+        ResponseEntity<?> deniedResponse = checkStudentDataAccess(studentId);
+        if (deniedResponse != null) return deniedResponse;
+
         String currentUserId = authService.getUserId();
         String currentRole   = authService.getRole();
 
@@ -214,6 +219,9 @@ public class AttendanceController {
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) String session) {
 
+        ResponseEntity<?> deniedResponse = checkStudentDataAccess(studentId);
+        if (deniedResponse != null) return deniedResponse;
+
         String currentUserId = authService.getUserId();
         String currentRole   = authService.getRole();
 
@@ -222,7 +230,6 @@ public class AttendanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Students can only view their own attendance summary.");
         }
-
         // TEACHER: only students in their assigned class
         if (Role.TEACHER.equals(currentRole)) {
             Long schoolId = securityUtil.getSchoolId();
@@ -270,6 +277,14 @@ public class AttendanceController {
                     .body("Students cannot access class attendance summaries.");
         }
 
+        // PARENT: no access to class-wide data — this endpoint returns every student in the
+        // class, which would let a parent see attendance for students they aren't linked to.
+        // Parents must use /summary/student/{studentId}, which enforces assertChildAccess.
+        if (Role.PARENT.equals(currentRole)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Parents cannot access class attendance summaries.");
+        }
+
         // TEACHER: only their assigned class
         if (Role.TEACHER.equals(currentRole)) {
             String teacherClass = teacherRepository.findById(currentUserId)
@@ -313,6 +328,12 @@ public class AttendanceController {
         if (Role.STUDENT.equals(currentRole)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Students cannot access class attendance summaries.");
+        }
+
+        // PARENT: no access to class-wide data — same rule as getClassAttendanceSummary.
+        if (Role.PARENT.equals(currentRole)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Parents cannot access class attendance summaries.");
         }
 
         // TEACHER: only their assigned class. Identical check to getClassAttendanceSummary —
@@ -377,6 +398,9 @@ public class AttendanceController {
         if (Role.STUDENT.equals(currentRole) && !studentId.equals(currentUserId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Students can only view their own attendance.");
+        }
+        if (Role.PARENT.equals(currentRole)) {
+            parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.ATTENDANCE);
         }
         if (Role.TEACHER.equals(currentRole)) {
             Long schoolId = securityUtil.getSchoolId();

@@ -59,6 +59,7 @@ class StudentServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private SchoolClassRepository schoolClassRepository;
     @Mock private SectionRepository sectionRepository;
+    @Mock private IdGeneratorService idGeneratorService;
     @Mock private HttpServletRequest request;
 
     private StudentService service;
@@ -84,6 +85,7 @@ class StudentServiceTest {
         ReflectionTestUtils.setField(service, "userRepository", userRepository);
         ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
         ReflectionTestUtils.setField(service, "sectionRepository", sectionRepository);
+        ReflectionTestUtils.setField(service, "idGeneratorService", idGeneratorService);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         lenient().when(securityUtil.getUsername()).thenReturn("admin");
@@ -223,6 +225,38 @@ class StudentServiceTest {
                 .hasMessageContaining("Date of birth is required");
 
         verify(studentRepository, never()).save(any());
+    }
+
+    // ─── System-generated Student ID ───────────────────────────────────────
+
+    @Test
+    void newStudentWithNoIdSuppliedGetsAGeneratedId() {
+        when(idGeneratorService.generateStudentId()).thenReturn("stu_26010042");
+        when(schoolClassRepository.findBySchoolIdAndName(SCHOOL_ID, "10"))
+                .thenReturn(Optional.of(schoolClass(10L, SCHOOL_ID, "10")));
+        Student blankId = newStudent(null, "10", null);
+        when(studentRepository.findByStudentIdAndSchoolId("stu_26010042", SCHOOL_ID)).thenReturn(Optional.empty());
+        when(studentRepository.existsById("stu_26010042")).thenReturn(false);
+
+        Student saved = service.addStudent(blankId, request);
+
+        assertThat(saved.getStudentId()).isEqualTo("stu_26010042");
+        verify(idGeneratorService).generateStudentId();
+    }
+
+    @Test
+    void existingSuppliedStudentIdIsNeverOverwritten_backwardCompatibility() {
+        // Any caller that already supplies a non-blank studentId — including, hypothetically,
+        // any future internal path re-using this method for a pre-existing legacy ID — keeps
+        // that exact ID untouched. The generator must never fire in that case.
+        when(schoolClassRepository.findBySchoolIdAndName(SCHOOL_ID, "10"))
+                .thenReturn(Optional.of(schoolClass(10L, SCHOOL_ID, "10")));
+        stubNewStudentId("EMP123_LEGACY");
+
+        Student saved = service.addStudent(newStudent("EMP123_LEGACY", "10", null), request);
+
+        assertThat(saved.getStudentId()).isEqualTo("EMP123_LEGACY");
+        verify(idGeneratorService, never()).generateStudentId();
     }
 
     // ─── updateStudent ──────────────────────────────────────────────────────

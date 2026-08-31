@@ -17,6 +17,7 @@ import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.FeeReminderService;
 import com.indraacademy.ias_management.service.StudentFeesService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -42,8 +43,9 @@ public class StudentFeesController {
     @Autowired private AuthService authService;
     @Autowired private FeeReminderService feeReminderService;
     @Autowired private StudentFeesRecalculationService recalculationService;
+    @Autowired private ParentPortalService parentPortalService;
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/{studentId}/{year}")
     public ResponseEntity<List<StudentFees>> getStudentFees(
             @PathVariable String studentId,
@@ -57,6 +59,9 @@ public class StudentFeesController {
             log.info("Student {} accessing their fees for year: {}", resolvedStudentId, year);
         } else {
             resolvedStudentId = studentId;
+            if (Role.PARENT.equals(role)) {
+                parentPortalService.assertChildAccess(resolvedStudentId, ParentPortalService.ChildPermission.FEES);
+            }
             log.info("Admin/Teacher accessing fees for student {} in year: {}", resolvedStudentId, year);
         }
 
@@ -138,7 +143,7 @@ public class StudentFeesController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/{studentId}/{year}/{month}")
     public ResponseEntity<StudentFees> getStudentFee(@PathVariable String studentId, @PathVariable String year, @PathVariable Integer month) {
 
@@ -149,6 +154,7 @@ public class StudentFeesController {
             resolvedStudentId = authService.getUserId();
         } else {
             resolvedStudentId = studentId;
+            if (Role.PARENT.equals(role)) parentPortalService.assertChildAccess(resolvedStudentId, ParentPortalService.ChildPermission.FEES);
         }
 
         log.info("Request to get student fee for ID: {} Year: {} Month: {}", resolvedStudentId, year, month);
@@ -169,7 +175,7 @@ public class StudentFeesController {
      * fabricates a breakdown for historical rows with no StudentFeesLineItem data — see
      * MonthFeeBreakdownDto's javadoc.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/{studentId}/{year}/{month}/breakdown")
     public ResponseEntity<MonthFeeBreakdownDto> getMonthFeeBreakdown(
             @PathVariable String studentId,
@@ -178,6 +184,7 @@ public class StudentFeesController {
 
         String role = authService.getRole();
         String resolvedStudentId = Role.STUDENT.equals(role) ? authService.getUserId() : studentId;
+        if (Role.PARENT.equals(role)) parentPortalService.assertChildAccess(resolvedStudentId, ParentPortalService.ChildPermission.FEES);
 
         log.info("Request to get month fee breakdown for ID: {} Year: {} Month: {}", resolvedStudentId, year, month);
 
@@ -187,8 +194,9 @@ public class StudentFeesController {
     }
 
     @GetMapping("/sessions/{studentId}")
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     public ResponseEntity<List<String>> getDistinctYearsByStudentId(@PathVariable String studentId) {
+        if (Role.PARENT.equals(authService.getRole())) parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.FEES);
         log.info("Request to get distinct academic years for student: {}", studentId);
         List<String> sessions = studentFeesService.getDistinctYearsByStudentId(studentId);
         return ResponseEntity.ok(sessions);
@@ -200,7 +208,7 @@ public class StudentFeesController {
      * fee due (from each month's stored StudentFees snapshot) + late fee + platform fee =
      * totalAmount. Angular must display these values as-is, never recompute them itself.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/{studentId}/checkout-quote")
     public ResponseEntity<?> getCheckoutQuote(
             @PathVariable String studentId,
@@ -209,6 +217,7 @@ public class StudentFeesController {
 
         String role = authService.getRole();
         String resolvedStudentId = Role.STUDENT.equals(role) ? authService.getUserId() : studentId;
+        if (Role.PARENT.equals(role)) parentPortalService.assertChildAccess(resolvedStudentId, ParentPortalService.ChildPermission.FEES);
 
         List<Integer> monthList;
         try {
@@ -314,18 +323,22 @@ public class StudentFeesController {
         if (studentId == null || session == null) {
             return ResponseEntity.badRequest().body("studentId and session are required.");
         }
-        boolean sent = feeReminderService.sendReminder(studentId, session, request);
-        if (sent) {
-            return ResponseEntity.ok(Map.of("message", "Reminder sent successfully."));
-        } else {
-            return ResponseEntity.ok(Map.of("message", "Student has no email configured; reminder not sent."));
-        }
+        FeeReminderService.ReminderOutcome outcome = feeReminderService.sendReminder(studentId, session, request);
+        String message = switch (outcome) {
+            case SENT -> "Reminder sent successfully.";
+            case SKIPPED_NOT_ACTIVE -> "This student is no longer active (left/graduated/transferred); reminder not sent.";
+            case SKIPPED_NO_EMAIL -> "Student has no email configured; reminder not sent.";
+            case FAILED -> "Reminder could not be sent.";
+        };
+        return ResponseEntity.ok(Map.of("status", outcome.key(), "message", message));
     }
 
     /**
      * POST /api/student-fees/reminders/send-bulk
      * Body: { studentIds: [...], session }
-     * Sends reminders to all listed students. Returns { sent: N }.
+     * Sends reminders to all listed students. Returns { sent: N, skipped: [{studentId, reason}] } —
+     * a skipped entry's reason is "skipped_not_active"/"skipped_no_email"/"error", so a
+     * stale or exited studentId in the request is reported explicitly, never silently dropped.
      */
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping("/reminders/send-bulk")
@@ -338,7 +351,7 @@ public class StudentFeesController {
         if (studentIds == null || studentIds.isEmpty() || session == null) {
             return ResponseEntity.badRequest().body("studentIds (non-empty list) and session are required.");
         }
-        int sent = feeReminderService.sendBulkReminders(studentIds, session, request);
-        return ResponseEntity.ok(Map.of("sent", sent));
+        FeeReminderService.BulkReminderResult result = feeReminderService.sendBulkReminders(studentIds, session, request);
+        return ResponseEntity.ok(Map.of("sent", result.sent(), "skipped", result.skipped()));
     }
 }
