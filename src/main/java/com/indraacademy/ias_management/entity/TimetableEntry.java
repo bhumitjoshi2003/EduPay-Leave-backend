@@ -51,6 +51,15 @@ public class TimetableEntry {
     @Column(name = "teacher_name")
     private String teacherName;
 
+    /** Null = a normal, single-occupant period (today's default/only behavior). A shared,
+     *  admin-defined value (e.g. "MATH_BIO") tags this row as one of several legitimate
+     *  simultaneous/elective subject assignments occupying the same class+section+day+period —
+     *  see TimetableValidationService for how this is enforced. This identifies the logical
+     *  subject-alternative relationship, not a specific slot, so the same tag is reusable
+     *  across different days/periods wherever that same elective pairing recurs. */
+    @Column(name = "simultaneous_group", length = 100)
+    private String simultaneousGroup;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -89,4 +98,7 @@ public class TimetableEntry {
 
     public String getSectionName() { return sectionName; }
     public void setSectionName(String sectionName) { this.sectionName = sectionName; }
+
+    public String getSimultaneousGroup() { return simultaneousGroup; }
+    public void setSimultaneousGroup(String simultaneousGroup) { this.simultaneousGroup = simultaneousGroup; }
 }
