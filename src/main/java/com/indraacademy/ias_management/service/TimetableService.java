@@ -116,6 +116,77 @@ public class TimetableService {
         return saved;
     }
 
+    /**
+     * Adds a second (or further) subject to the exact same class/section/day/period/time slot
+     * as the entry at {@code existingId} — the "+ Simultaneous" action. Class/section/day/period
+     * /time are inherited from the existing entry rather than trusted from the client, so the
+     * new row can never target a different slot by mistake.
+     *
+     * <p>The simultaneousGroup tag itself is fully automatic: if the existing entry doesn't have
+     * one yet, a fresh one is generated and saved onto it here; if it already has one (e.g. this
+     * is the third subject joining an existing pair), that tag is reused as-is. Either way, the
+     * admin never sees or types this value — see TimetableEntry#simultaneousGroup and
+     * TimetableValidationService for why the tag exists at all.
+     */
+    @Transactional
+    public TimetableEntry addSimultaneous(Long existingId, String subjectName, String teacherId, HttpServletRequest request) {
+        Long schoolId = securityUtil.getSchoolId();
+        TimetableEntry existing = timetableRepository.findById(existingId)
+                .filter(e -> schoolId.equals(e.getSchoolId()))
+                .orElseThrow(() -> new NoSuchElementException("Timetable entry not found: " + existingId));
+
+        String group = existing.getSimultaneousGroup();
+        if (group == null || group.isBlank()) {
+            group = "sg-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+            String oldValue = toJson(existing);
+            existing.setSimultaneousGroup(group);
+            timetableRepository.save(existing);
+            auditService.logUpdate(
+                    securityUtil.getUsername(),
+                    securityUtil.getRole(),
+                    "UPDATE_TIMETABLE_ENTRY",
+                    "TimetableEntry",
+                    existing.getId().toString(),
+                    oldValue,
+                    toJson(existing),
+                    request.getRemoteAddr()
+            );
+        }
+
+        TimetableEntry candidate = new TimetableEntry();
+        candidate.setSchoolId(schoolId);
+        candidate.setClassName(existing.getClassName());
+        candidate.setClassId(existing.getClassId());
+        candidate.setSectionId(existing.getSectionId());
+        candidate.setDay(existing.getDay());
+        candidate.setPeriodNumber(existing.getPeriodNumber());
+        candidate.setStartTime(existing.getStartTime());
+        candidate.setEndTime(existing.getEndTime());
+        candidate.setSubjectName(subjectName);
+        candidate.setTeacherId(teacherId);
+        candidate.setSimultaneousGroup(group);
+
+        timetableValidationService.validate(candidate, schoolId, null);
+        resolveTeacherName(candidate);
+        resolveSectionName(candidate);
+
+        TimetableEntry saved = timetableRepository.save(candidate);
+        log.info("Timetable simultaneous entry created: id={}, pairedWith={}, group={}", saved.getId(), existingId, group);
+
+        auditService.log(
+                securityUtil.getUsername(),
+                securityUtil.getRole(),
+                "CREATE_TIMETABLE_ENTRY",
+                "TimetableEntry",
+                saved.getId().toString(),
+                null,
+                toJson(saved),
+                request.getRemoteAddr()
+        );
+
+        return saved;
+    }
+
     public void delete(Long id, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         TimetableEntry existing = timetableRepository.findById(id)
