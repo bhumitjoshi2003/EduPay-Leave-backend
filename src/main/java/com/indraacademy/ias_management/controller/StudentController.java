@@ -10,15 +10,16 @@ import com.indraacademy.ias_management.dto.StudentExitRequest;
 import com.indraacademy.ias_management.dto.StudentLeaveDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
-import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
-import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.StudentBulkImportService;
 import com.indraacademy.ias_management.service.StudentPromotionService;
 import com.indraacademy.ias_management.service.StudentService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.ScopedAccess;
+import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -54,10 +55,11 @@ public class StudentController {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private StudentRepository studentRepository;
     @Autowired private UserRepository userRepository;
-    @Autowired private TeacherRepository teacherRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private AuthService authService;
     @Autowired private ParentPortalService parentPortalService;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
+    @Autowired private SecurityUtil securityUtil;
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/search")
@@ -157,15 +159,16 @@ public class StudentController {
     public ResponseEntity<?> findActiveStudentsByClass(
             @PathVariable String className,
             @RequestParam(required = false) Long sectionId) {
-        // TEACHER: only their assigned class — mirrors the same check already used in
-        // AttendanceController for the identical isolation concern.
+        // TEACHER: only their assigned class/section — mirrors the same check already used in
+        // AttendanceController for the identical isolation concern. Effective sectionId always
+        // comes from the teacher's own assignment, never the client-supplied value.
         if (Role.TEACHER.equals(authService.getRole())) {
-            String teacherClass = teacherRepository.findById(authService.getUserId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (!className.equals(teacherClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view students in their assigned class.");
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    authService.getRole(), authService.getUserId(), securityUtil.getSchoolId(), className, sectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
             }
+            sectionId = access.effectiveSectionId();
         }
         log.info("Request to get ACTIVE students for class: {}, section: {}", className, sectionId);
         List<Student> students = sectionId != null
@@ -294,14 +297,16 @@ public class StudentController {
     public ResponseEntity<?> getAlumniByClass(
             @PathVariable String className,
             @RequestParam(required = false) Long sectionId) {
-        // TEACHER: only their assigned class — same check as findActiveStudentsByClass above.
+        // TEACHER: only their assigned class/section — same check as findActiveStudentsByClass
+        // above. Effective sectionId always comes from the teacher's own assignment, never the
+        // client-supplied value.
         if (Role.TEACHER.equals(authService.getRole())) {
-            String teacherClass = teacherRepository.findById(authService.getUserId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (!className.equals(teacherClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view students in their assigned class.");
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    authService.getRole(), authService.getUserId(), securityUtil.getSchoolId(), className, sectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
             }
+            sectionId = access.effectiveSectionId();
         }
         log.info("Request to get GRADUATED students for class: {}, section: {}", className, sectionId);
         List<Student> students = sectionId != null

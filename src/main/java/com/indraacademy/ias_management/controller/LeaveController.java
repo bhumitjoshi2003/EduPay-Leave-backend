@@ -3,13 +3,17 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Leave;
 import com.indraacademy.ias_management.entity.LeaveStatus;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.exception.InvalidLeaveStatusTransitionException;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.LeaveService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.ScopedAccess;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -35,8 +39,10 @@ public class LeaveController {
     @Autowired private LeaveService leaveService;
     @Autowired private AuthService authService;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private StudentRepository studentRepository;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ParentPortalService parentPortalService;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
 
     @PreAuthorize("hasAnyRole('" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @PostMapping("/apply-leave")
@@ -85,23 +91,29 @@ public class LeaveController {
             @RequestParam(required = false) LeaveStatus status,
             Pageable pageable
     ) {
-        // TEACHER: always their own assigned class — overridden, never merged with whatever
-        // (if anything) the client sent, same rule already enforced on /for-review. Without
-        // this, a teacher with no className in the request (e.g. the empty-string case) fell
-        // through to an unscoped, school-wide leave search.
+        // TEACHER: always their own assigned class+section — overridden, never merged with
+        // whatever (if anything) the client sent, same rule already enforced on /for-review.
+        // Without this, a teacher with no className in the request (e.g. the empty-string case)
+        // fell through to an unscoped, school-wide leave search.
         String effectiveClassName = className;
+        Long sectionId = null;
         if (Role.TEACHER.equals(authService.getRole())) {
-            String ownClass = teacherRepository.findByTeacherIdAndSchoolId(authService.getUserId(), securityUtil.getSchoolId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (ownClass == null || ownClass.isBlank()) {
+            TeacherClassScopeService.TeacherScope scope =
+                    teacherClassScopeService.resolveOwnScope(authService.getUserId(), securityUtil.getSchoolId());
+            if (!scope.hasClassResponsibility()) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("error", "You are not assigned as a class teacher."));
             }
-            effectiveClassName = ownClass;
+            if (scope.sectionRequiredButMissing()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
+            }
+            effectiveClassName = scope.className();
+            sectionId = scope.sectionId();
         }
         log.info("Request to get filtered leaves. Class: {}, Student: {}, Date: {}", effectiveClassName, studentId, date);
         return ResponseEntity.ok(
-                leaveService.getLeavesFiltered(effectiveClassName, studentId, date, status, pageable)
+                leaveService.getLeavesFiltered(effectiveClassName, studentId, date, status, sectionId, pageable)
         );
     }
 
@@ -126,17 +138,18 @@ public class LeaveController {
     @GetMapping("/date/{date}/class/{className}")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.SUB_ADMIN + "')")
     public ResponseEntity<?> getLeavesByDateAndClass(@PathVariable String date, @PathVariable String className) {
-        // TEACHER: only their assigned class — same rule as getLeaves above.
+        // TEACHER: only their assigned class+section — same rule as getLeaves above.
+        Long sectionId = null;
         if (Role.TEACHER.equals(authService.getRole())) {
-            String ownClass = teacherRepository.findByTeacherIdAndSchoolId(authService.getUserId(), securityUtil.getSchoolId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (ownClass == null || !ownClass.equals(className)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(Map.of("error", "Teachers can only view leaves for their assigned class."));
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    authService.getRole(), authService.getUserId(), securityUtil.getSchoolId(), className, null);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", access.errorMessage()));
             }
+            sectionId = access.effectiveSectionId();
         }
         log.info("Request to get leaves by Date: {} and Class: {}", date, className);
-        List<String> leaves = leaveService.getLeavesByDateAndClass(date, className);
+        List<String> leaves = leaveService.getLeavesByDateAndClass(date, className, sectionId);
         return new ResponseEntity<>(leaves, HttpStatus.OK);
     }
 
@@ -191,28 +204,43 @@ public class LeaveController {
 
         String role = authService.getRole();
         String effectiveClassName = className;
+        Long sectionId = null;
 
         if (Role.TEACHER.equals(role)) {
-            String ownClass = teacherRepository.findByTeacherIdAndSchoolId(
-                            authService.getUserId(), securityUtil.getSchoolId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (ownClass == null || ownClass.isBlank()) {
+            TeacherClassScopeService.TeacherScope scope =
+                    teacherClassScopeService.resolveOwnScope(authService.getUserId(), securityUtil.getSchoolId());
+            if (!scope.hasClassResponsibility()) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(Map.of("error", "You are not assigned as a class teacher."));
             }
+            if (scope.sectionRequiredButMissing()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
+            }
             // Overridden, never merged — a className in the query string can only ever narrow to
             // the teacher's own class, never select a different one.
-            effectiveClassName = ownClass;
+            effectiveClassName = scope.className();
+            sectionId = scope.sectionId();
         }
 
         List<Leave> result;
         if (ids != null && !ids.isEmpty()) {
-            final String scope = effectiveClassName;
+            final String scopeClassName = effectiveClassName;
+            final Long scopeSectionId = sectionId;
+            final Long schoolId = securityUtil.getSchoolId();
             result = leaveService.getLeavesByIds(ids).stream()
-                    .filter(l -> scope == null || scope.equals(l.getClassName()))
+                    .filter(l -> scopeClassName == null || scopeClassName.equals(l.getClassName()))
+                    .filter(l -> {
+                        // Leave itself carries no sectionId — resolve the student's CURRENT
+                        // section live, same rationale as LeaveRepository's EXISTS-subquery.
+                        if (scopeSectionId == null) return true;
+                        Long studentSectionId = studentRepository.findByStudentIdAndSchoolId(l.getStudentId(), schoolId)
+                                .map(Student::getSectionId).orElse(null);
+                        return scopeSectionId.equals(studentSectionId);
+                    })
                     .toList();
         } else {
-            result = leaveService.getLeavesForReview(effectiveClassName, studentId, limit);
+            result = leaveService.getLeavesForReview(effectiveClassName, studentId, limit, sectionId);
         }
         return ResponseEntity.ok(result);
     }

@@ -413,7 +413,11 @@ public class MarkService {
      */
     @Transactional(readOnly = true)
     public ClassExamPerformanceDTO computeClassExamPerformance(String className, ExamConfig exam) {
-        List<ClassStudentResultDTO> results = getClassResults(className, exam.getId(), null);
+        return computeClassExamPerformance(className, exam, null);
+    }
+
+    public ClassExamPerformanceDTO computeClassExamPerformance(String className, ExamConfig exam, Long sectionId) {
+        List<ClassStudentResultDTO> results = getClassResults(className, exam.getId(), sectionId);
 
         List<ClassStudentResultDTO> scored = results.stream()
                 .filter(r -> r.getRank() != null && r.getRank() > 0)

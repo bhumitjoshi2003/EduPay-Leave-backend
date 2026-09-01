@@ -376,11 +376,13 @@ public class EmailService {
                             .filter(email -> email != null && !email.trim().isEmpty())
                             .toList()
             );
-            teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
+            // A class can have more than one class-teacher once it has sections (one per
+            // section) — CC every active one, not just "the" first result.
+            teacherRepository.findByClassTeacherAndSchoolId(className, schoolId).stream()
                     .filter(teacher -> teacher.getStatus() == TeacherStatus.ACTIVE)
                     .map(Teacher::getEmail)
                     .filter(email -> email != null && !email.trim().isEmpty())
-                    .ifPresent(emails::add);
+                    .forEach(emails::add);
 
             List<String> distinct = emails.stream().distinct().toList();
             if (distinct.isEmpty()) {

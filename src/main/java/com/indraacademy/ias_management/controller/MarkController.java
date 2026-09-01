@@ -2,10 +2,14 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.*;
+import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.service.ExamConfigService;
 import com.indraacademy.ias_management.service.MarkService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.ScopedAccess;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -28,8 +32,10 @@ public class MarkController {
     @Autowired private MarkService markService;
     @Autowired private ExamConfigService examConfigService;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private StudentRepository studentRepository;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ParentPortalService parentPortalService;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
 
     // ─── Mark Entry Mode A: by subject ───────────────────────────────────────
 
@@ -45,8 +51,13 @@ public class MarkController {
             @RequestParam(required = false) Long sectionId) {
         log.info("GET /api/marks/exam/{}/students sectionId={}", examSubjectEntryId, sectionId);
         String className = examConfigService.resolveClassName(examSubjectEntryId).orElse(null);
-        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-        if (authCheck != null) return authCheck;
+        ScopedAccess access = checkTeacherClassAccess(className);
+        if (!access.allowed()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
+        }
+        if (Role.TEACHER.equals(securityUtil.getRole())) {
+            sectionId = access.effectiveSectionId();
+        }
 
         List<StudentSubjectMarkDTO> result = markService.getStudentsForSubjectEntry(examSubjectEntryId, sectionId);
         return ResponseEntity.ok(result);
@@ -65,9 +76,20 @@ public class MarkController {
             @PathVariable String studentId,
             @PathVariable Long examConfigId) {
         log.info("GET /api/marks/student/{}/exam/{}", studentId, examConfigId);
-        String className = examConfigService.resolveClassNameForExam(examConfigId).orElse(null);
-        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-        if (authCheck != null) return authCheck;
+        // Two-part check: the exam's class must be the teacher's own (checkTeacherClassAccess),
+        // AND — since a class-level match alone doesn't prove this SPECIFIC student is in the
+        // teacher's own section — the student's own section must also match.
+        if (Role.TEACHER.equals(securityUtil.getRole())) {
+            Long schoolId = securityUtil.getSchoolId();
+            Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
+            String studentClass = student != null ? student.getClassName() : null;
+            Long studentSectionId = student != null ? student.getSectionId() : null;
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToStudent(
+                    securityUtil.getRole(), securityUtil.getUsername(), schoolId, studentClass, studentSectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
+            }
+        }
 
         List<StudentExamSubjectDTO> result = markService.getStudentMarksForExam(studentId, examConfigId);
         return ResponseEntity.ok(result);
@@ -88,14 +110,27 @@ public class MarkController {
         if (requests == null || requests.isEmpty()) {
             return ResponseEntity.badRequest().body("Request body must be a non-empty list.");
         }
-        // For TEACHER, verify ALL entries belong to the teacher's class
+        // For TEACHER, verify ALL entries belong to the teacher's own class AND section — a
+        // class-level match alone isn't enough, since the exam's class can be shared across
+        // sections; each entry's actual studentId must also be in the teacher's own section.
         if (Role.TEACHER.equals(securityUtil.getRole())) {
+            Long schoolId = securityUtil.getSchoolId();
             for (MarkEntryRequest req : requests) {
                 if (req.getExamSubjectEntryId() == null) continue;
                 String className = examConfigService
                         .resolveClassName(req.getExamSubjectEntryId()).orElse(null);
-                ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-                if (authCheck != null) return authCheck;
+                ScopedAccess classCheck = checkTeacherClassAccess(className);
+                if (!classCheck.allowed()) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(classCheck.errorMessage());
+                }
+                Student student = studentRepository.findByStudentIdAndSchoolId(req.getStudentId(), schoolId).orElse(null);
+                String studentClass = student != null ? student.getClassName() : null;
+                Long studentSectionId = student != null ? student.getSectionId() : null;
+                ScopedAccess studentCheck = teacherClassScopeService.authorizeAndScopeToStudent(
+                        securityUtil.getRole(), securityUtil.getUsername(), schoolId, studentClass, studentSectionId);
+                if (!studentCheck.allowed()) {
+                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(studentCheck.errorMessage());
+                }
             }
         }
 
@@ -127,6 +162,19 @@ public class MarkController {
         if (Role.PARENT.equals(callerRole)) {
             parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.RESULTS);
         }
+        // TEACHER: this endpoint previously had NO class/section check at all — any teacher
+        // could view any student's results school-wide. Scoped to the teacher's own class+section.
+        if (Role.TEACHER.equals(callerRole)) {
+            Long schoolId = securityUtil.getSchoolId();
+            Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
+            String studentClass = student != null ? student.getClassName() : null;
+            Long studentSectionId = student != null ? student.getSectionId() : null;
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToStudent(
+                    callerRole, callerUserId, schoolId, studentClass, studentSectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
+            }
+        }
 
         List<ExamResultDTO> results = markService.getStudentResults(studentId, session);
         return ResponseEntity.ok(results);
@@ -146,8 +194,13 @@ public class MarkController {
             @PathVariable Long examConfigId,
             @RequestParam(required = false) Long sectionId) {
         log.info("GET /api/marks/class/{}/exam/{} sectionId={}", className, examConfigId, sectionId);
-        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-        if (authCheck != null) return authCheck;
+        ScopedAccess access = checkTeacherClassAccess(className);
+        if (!access.allowed()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
+        }
+        if (Role.TEACHER.equals(securityUtil.getRole())) {
+            sectionId = access.effectiveSectionId();
+        }
 
         List<ClassStudentResultDTO> results = markService.getClassResults(className, examConfigId, sectionId);
         return ResponseEntity.ok(results);
@@ -169,8 +222,11 @@ public class MarkController {
             @RequestParam String session,
             @RequestParam(required = false) String examName) {
         log.info("GET /api/marks/class/{}/exam-performance?session={}&examName={}", className, session, examName);
-        ResponseEntity<?> authCheck = checkTeacherClassAccess(className);
-        if (authCheck != null) return authCheck;
+        ScopedAccess access = checkTeacherClassAccess(className);
+        if (!access.allowed()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
+        }
+        Long sectionId = Role.TEACHER.equals(securityUtil.getRole()) ? access.effectiveSectionId() : null;
 
         List<com.indraacademy.ias_management.entity.ExamConfig> exams = markService.getExamsForClass(session, className);
         if (exams.isEmpty()) {
@@ -186,7 +242,7 @@ public class MarkController {
                     "availableExams", exams.stream().map(com.indraacademy.ias_management.entity.ExamConfig::getExamName).toList()));
         }
 
-        return ResponseEntity.ok(markService.computeClassExamPerformance(className, chosen.get()));
+        return ResponseEntity.ok(markService.computeClassExamPerformance(className, chosen.get(), sectionId));
     }
 
     /**
@@ -204,25 +260,19 @@ public class MarkController {
     // ─── Helper ───────────────────────────────────────────────────────────────
 
     /**
-     * For TEACHER callers: verifies their classTeacher field matches the given className.
-     * Returns a 403 ResponseEntity if access is denied, or null if access is allowed.
-     * ADMIN callers always get null (access allowed).
+     * For TEACHER callers: verifies their classTeacher field (and, when their class has
+     * sections, classTeacherSectionId) matches/covers the given className. ADMIN callers are
+     * always allowed and unrestricted. The returned ScopedAccess's effectiveSectionId — never
+     * any client-supplied sectionId — is what callers must use to filter/scope their actual
+     * data access.
      */
-    private ResponseEntity<?> checkTeacherClassAccess(String className) {
-        if (!Role.TEACHER.equals(securityUtil.getRole())) return null;
-
-        String teacherId = securityUtil.getUsername();
-        Long schoolId = securityUtil.getSchoolId();
-        String teacherClass = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
-                .map(t -> t.getClassTeacher())
-                .orElse(null);
-
-        if (teacherClass == null || !teacherClass.equals(className)) {
-            log.warn("Teacher {} attempted to access marks for class {} (their class: {})",
-                    teacherId, className, teacherClass);
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body("Teachers can only access marks for their own class.");
+    private ScopedAccess checkTeacherClassAccess(String className) {
+        ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                securityUtil.getRole(), securityUtil.getUsername(), securityUtil.getSchoolId(), className, null);
+        if (!access.allowed()) {
+            log.warn("Teacher {} attempted to access marks for class {}: {}",
+                    securityUtil.getUsername(), className, access.errorMessage());
         }
-        return null;
+        return access;
     }
 }

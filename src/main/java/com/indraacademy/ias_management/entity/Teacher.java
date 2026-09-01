@@ -44,6 +44,14 @@ public class Teacher implements Persistable<String> {
     @Column(name = "class_teacher")
     private String classTeacher;
 
+    /** Null when classTeacher's class has no configured sections, OR when this is a
+     *  pre-existing assignment to a class that DOES have sections but was never
+     *  explicitly resolved — see TeacherClassScopeService, which treats that second case as
+     *  blocked (not "all sections") until an admin picks one. References the canonical
+     *  Section entity already used by Student/TimetableEntry — never a second section model. */
+    @Column(name = "class_teacher_section_id")
+    private Long classTeacherSectionId;
+
     @Column(name = "joining_date")
     private LocalDate joiningDate;
 
@@ -163,6 +171,14 @@ public class Teacher implements Persistable<String> {
 
     public void setClassTeacher(String classTeacher) {
         this.classTeacher = classTeacher;
+    }
+
+    public Long getClassTeacherSectionId() {
+        return classTeacherSectionId;
+    }
+
+    public void setClassTeacherSectionId(Long classTeacherSectionId) {
+        this.classTeacherSectionId = classTeacherSectionId;
     }
 
     public LocalDate getJoiningDate() {

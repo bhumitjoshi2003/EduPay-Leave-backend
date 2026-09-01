@@ -5,14 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.AiLeaveDecisionBatch;
 import com.indraacademy.ias_management.entity.LeaveStatus;
-import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.AiLeaveDecisionBatchRepository;
-import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.service.AiReminderBatchService;
 import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.LeaveDecisionService;
 import com.indraacademy.ias_management.service.PermissionService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.TeacherScope;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -49,10 +49,13 @@ import java.util.stream.Collectors;
  * guarantee is replaced by defence in depth:
  * <ol>
  *   <li>role must be ADMIN or TEACHER, AND the role must actually hold LEAVE_APPROVE;</li>
- *   <li>a TEACHER batch is pinned to that teacher's own class at start and re-verified on every
- *       later call, even though the underlying leave API is only school-scoped;</li>
+ *   <li>a TEACHER batch is pinned to that teacher's own class AND section (resolved via
+ *       {@link com.indraacademy.ias_management.service.TeacherClassScopeService}, never from the
+ *       request) at start and re-verified on every later call, even though the underlying leave
+ *       API is only school-scoped;</li>
  *   <li>every proposed ID is re-read server-side at apply time and skipped unless it is still
- *       PENDING and inside the batch's scope (see LeaveDecisionService);</li>
+ *       PENDING and inside the batch's class AND the acting teacher's own section (see
+ *       LeaveDecisionService);</li>
  *   <li>nothing is applied until a human approves the card.</li>
  * </ol>
  * The model's IDs are therefore a <i>proposal</i>, never an instruction.
@@ -76,7 +79,7 @@ public class AiLeaveWorkflowController {
 
     @Autowired private AuthService authService;
     @Autowired private SecurityUtil securityUtil;
-    @Autowired private TeacherRepository teacherRepository;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
     @Autowired private PermissionService permissionService;
     @Autowired private AiLeaveDecisionBatchRepository batchRepository;
     @Autowired private LeaveDecisionService leaveDecisionService;
@@ -112,17 +115,24 @@ public class AiLeaveWorkflowController {
                     "error", "A single batch is limited to " + MAX_LEAVES_PER_BATCH + " leave requests."));
         }
 
-        // A TEACHER batch is confined to their own class. Resolved server-side, never taken from
-        // the request — the same rule AiProxyController.resolveClassName applies for chat.
+        // A TEACHER batch is confined to their own class AND their own section. Both resolved
+        // server-side from the teacher's own Teacher row via TeacherClassScopeService, never
+        // taken from the request — a class name alone stopped being an authorization boundary
+        // once a class can be split into sections (Class 12 / Science vs Class 12 / Commerce
+        // are different teachers' responsibilities). A legacy assignment whose section was
+        // never resolved is BLOCKED here rather than silently widened to the whole class.
         String className = null;
         if (Role.TEACHER.equals(role)) {
-            className = teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
-                    .map(Teacher::getClassTeacher)
-                    .orElse(null);
-            if (className == null || className.isBlank()) {
+            TeacherScope scope = teacherClassScopeService.resolveOwnScope(userId, schoolId);
+            if (!scope.hasClassResponsibility()) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
                         "error", "You are not assigned as a class teacher, so leave decisions aren't available to you."));
             }
+            if (scope.sectionRequiredButMissing()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        "error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
+            }
+            className = scope.className();
         }
 
         Cookie accessTokenCookie = WebUtils.getCookie(request, "accessToken");
@@ -310,9 +320,25 @@ public class AiLeaveWorkflowController {
             return ResponseEntity.badRequest().body(Map.of("error", "This batch has no leave requests to act on."));
         }
 
+        // The section confinement, like the class one, is re-resolved from the acting teacher's
+        // own Teacher row at apply time — never read back from the batch row, never from the
+        // dispatch body (which Python populates and is informational only). A leave whose
+        // student is not in this section is skipped by applyDecisions, so a Science
+        // class-teacher can never approve or reject a Commerce student's leave even if a model
+        // proposed its id and the human approved the card.
+        Long effectiveSectionId = null;
+        if (Role.TEACHER.equals(batch.getRequesterRole())) {
+            TeacherScope scope = teacherClassScopeService.resolveOwnScope(userId, schoolId);
+            if (scope.sectionRequiredButMissing()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        "error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
+            }
+            effectiveSectionId = scope.sectionId();
+        }
+
         LeaveStatus decision = LeaveStatus.valueOf(batch.getDecision());
         Map<Long, String> outcomes = leaveDecisionService.applyDecisions(
-                leaveIds, decision, batch.getClassName(), request);
+                leaveIds, decision, batch.getClassName(), effectiveSectionId, request);
 
         int applied = 0, skipped = 0, failed = 0;
         for (String outcome : outcomes.values()) {
@@ -346,7 +372,8 @@ public class AiLeaveWorkflowController {
                 null,
                 "AI workflow " + workflowId + ": decision " + decision + ", " + applied + " applied, "
                         + skipped + " skipped, " + failed + " failed"
-                        + (batch.getClassName() != null ? ", class " + batch.getClassName() : ", school-wide"),
+                        + (batch.getClassName() != null ? ", class " + batch.getClassName() : ", school-wide")
+                        + (effectiveSectionId != null ? ", section " + effectiveSectionId : ""),
                 request.getRemoteAddr()
         );
 
@@ -390,10 +417,15 @@ public class AiLeaveWorkflowController {
             if (!Objects.equals(batch.getRequesterUserId(), userId)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This workflow does not belong to you."));
             }
-            String currentClass = teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (!Objects.equals(batch.getClassName(), currentClass)) {
+            // Re-resolved live, so a class OR section reassignment after the batch started
+            // revokes the approval capability rather than leaving a stale one behind.
+            TeacherScope scope = teacherClassScopeService.resolveOwnScope(userId, schoolId);
+            if (!Objects.equals(batch.getClassName(), scope.className())) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "You are no longer assigned to this class."));
+            }
+            if (scope.sectionRequiredButMissing()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                        "error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
             }
         } else if (Role.TEACHER.equals(role)) {
             // A teacher may never act on an admin's school-wide batch.

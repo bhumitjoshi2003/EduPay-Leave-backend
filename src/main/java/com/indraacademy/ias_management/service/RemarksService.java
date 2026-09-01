@@ -74,6 +74,14 @@ public class RemarksService {
 
     @Transactional(readOnly = true)
     public ClassRemarksDTO getClassRemarks(Long templateId, String session, String className) {
+        return getClassRemarks(templateId, session, className, null);
+    }
+
+    /** @param sectionId when non-null, restricts to students in that section only — used for a
+     *  section-scoped class-teacher so they only ever see remarks for their own section, not the
+     *  whole class. Null (ADMIN, or a class with no sections) returns the whole class. */
+    @Transactional(readOnly = true)
+    public ClassRemarksDTO getClassRemarks(Long templateId, String session, String className, Long sectionId) {
         Long schoolId = securityUtil.getSchoolId();
 
         templateRepo.findByIdAndSchoolId(templateId, schoolId)
@@ -83,6 +91,7 @@ public class RemarksService {
         List<Student> students = studentRepo.findByClassNameAndSchoolId(className, schoolId)
                 .stream()
                 .filter(s -> s.getStatus() != null && !s.getStatus().isExitStatus())
+                .filter(s -> sectionId == null || sectionId.equals(s.getSectionId()))
                 .collect(Collectors.toList());
 
         // Batch load all remarks for this template+session+school

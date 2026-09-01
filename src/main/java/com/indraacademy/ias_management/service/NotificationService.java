@@ -491,9 +491,11 @@ public class NotificationService {
                         .stream().map(Student::getStudentId).collect(Collectors.toList());
                 fcmService.sendToUsers(studentIds, schoolId, title, body);
                 fcmService.sendToUsers(activeParentIdsForStudents(studentIds, schoolId), schoolId, title, body);
-                teacherRepository.findByClassTeacherAndSchoolId(className, schoolId)
+                // A class can have more than one class-teacher once it has sections (one per
+                // section) — notify every active one, not just "the" first result.
+                teacherRepository.findByClassTeacherAndSchoolId(className, schoolId).stream()
                         .filter(t -> t.getStatus() == TeacherStatus.ACTIVE)
-                        .ifPresent(t -> fcmService.sendToUser(t.getTeacherId(), schoolId, title, body));
+                        .forEach(t -> fcmService.sendToUser(t.getTeacherId(), schoolId, title, body));
 
             } else {
                 // Treat as a specific userId

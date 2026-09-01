@@ -38,20 +38,31 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
 
     Page<Leave> findByStudentIdAndSchoolId(String studentId, Long schoolId, Pageable pageable);
 
+    /** @param sectionId when non-null, restricts to leaves whose student is currently in that
+     *  section — a live join against Student's current section (Leave requests are transient
+     *  operational data, not a historical record, so re-checking the student's CURRENT section
+     *  is correct here, unlike Attendance which stamps sectionId at write time for historical
+     *  accuracy). Null (ADMIN, or a class with no sections) applies no section restriction. */
     @Query("SELECT l FROM Leave l WHERE l.schoolId = :schoolId " +
            "AND (:className IS NULL OR l.className = :className) " +
            "AND (:studentId IS NULL OR LOWER(l.studentId) LIKE LOWER(CONCAT('%', CAST(:studentId AS string), '%'))) " +
            "AND (:date IS NULL OR l.leaveDate = :date) " +
-           "AND (:status IS NULL OR l.status = :status)")
+           "AND (:status IS NULL OR l.status = :status) " +
+           "AND (:sectionId IS NULL OR EXISTS (SELECT 1 FROM Student s WHERE s.studentId = l.studentId " +
+           "     AND s.schoolId = l.schoolId AND s.sectionId = :sectionId))")
     Page<Leave> findFilteredForManagement(@Param("schoolId") Long schoolId,
                                           @Param("className") String className,
                                           @Param("studentId") String studentId,
                                           @Param("date") String date,
                                           @Param("status") LeaveStatus status,
+                                          @Param("sectionId") Long sectionId,
                                           Pageable pageable);
 
-    @Query("SELECT l.studentId FROM Leave l WHERE l.leaveDate = :date AND l.className = :className AND l.schoolId = :schoolId")
-    List<String> findByLeaveDateAndClassNameAndSchoolId(@Param("date") String date, @Param("className") String className, @Param("schoolId") Long schoolId);
+    @Query("SELECT l.studentId FROM Leave l WHERE l.leaveDate = :date AND l.className = :className AND l.schoolId = :schoolId " +
+           "AND (:sectionId IS NULL OR EXISTS (SELECT 1 FROM Student s WHERE s.studentId = l.studentId " +
+           "     AND s.schoolId = l.schoolId AND s.sectionId = :sectionId))")
+    List<String> findByLeaveDateAndClassNameAndSchoolId(@Param("date") String date, @Param("className") String className,
+                                                          @Param("schoolId") Long schoolId, @Param("sectionId") Long sectionId);
 
     Leave findByStudentIdAndLeaveDateAndSchoolId(String studentId, String leaveDate, Long schoolId);
 
@@ -71,11 +82,14 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
     @Query("SELECT l FROM Leave l WHERE l.schoolId = :schoolId AND l.status = :status " +
            "AND (:className IS NULL OR l.className = :className) " +
            "AND (:studentId IS NULL OR l.studentId = :studentId) " +
+           "AND (:sectionId IS NULL OR EXISTS (SELECT 1 FROM Student s WHERE s.studentId = l.studentId " +
+           "     AND s.schoolId = l.schoolId AND s.sectionId = :sectionId)) " +
            "ORDER BY l.appliedDate ASC")
     List<Leave> findForReview(@Param("status") LeaveStatus status,
                               @Param("schoolId") Long schoolId,
                               @Param("className") String className,
                               @Param("studentId") String studentId,
+                              @Param("sectionId") Long sectionId,
                               Pageable pageable);
 
     /** Resolves specific leave ids within the caller's school, whatever their current status. */

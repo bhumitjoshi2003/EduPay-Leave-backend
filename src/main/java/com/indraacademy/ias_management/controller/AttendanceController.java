@@ -8,13 +8,13 @@ import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
 import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.Student;
-import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
-import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.ScopedAccess;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -39,27 +39,35 @@ public class AttendanceController {
     @Autowired private AttendanceService attendanceService;
     @Autowired private AuthService authService;
     @Autowired private StudentRepository studentRepository;
-    @Autowired private TeacherRepository teacherRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private com.indraacademy.ias_management.util.SecurityUtil securityUtil;
     @Autowired private ParentPortalService parentPortalService;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
 
     @PreAuthorize("hasAnyRole('" + Role.TEACHER +  "', '" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<String> saveAttendance(@Valid @RequestBody List<Attendance> attendanceList,
                                                  @RequestParam(required = false) Long sectionId,
                                                  HttpServletRequest request) {
-        // TEACHER: every row must be for their own assigned class — without this a teacher
-        // could write (or overwrite) attendance for a class they don't teach.
-        if (Role.TEACHER.equals(authService.getRole()) && attendanceList != null) {
-            String teacherClass = teacherRepository.findById(authService.getUserId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            boolean allOwnClass = attendanceList.stream()
-                    .allMatch(a -> teacherClass != null && teacherClass.equals(a.getClassName()));
-            if (!allOwnClass) {
+        // TEACHER: every row must be for their own assigned class/section — without this a
+        // teacher could write (or overwrite) attendance for a class/section they don't teach.
+        // The effective sectionId always comes from the teacher's OWN assignment, never from
+        // the sectionId the client sent — see TeacherClassScopeService.
+        if (Role.TEACHER.equals(authService.getRole()) && attendanceList != null && !attendanceList.isEmpty()) {
+            String requestedClassName = attendanceList.get(0).getClassName();
+            boolean allSameClass = attendanceList.stream()
+                    .allMatch(a -> requestedClassName != null && requestedClassName.equals(a.getClassName()));
+            if (!allSameClass) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body("Teachers can only save attendance for their assigned class.");
             }
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    authService.getRole(), authService.getUserId(), securityUtil.getSchoolId(),
+                    requestedClassName, sectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
+            }
+            sectionId = access.effectiveSectionId();
         }
         log.info("Request to save attendance for {} records.", attendanceList != null ? attendanceList.size() : 0);
         attendanceService.saveAttendance(attendanceList, sectionId, request);
@@ -73,15 +81,16 @@ public class AttendanceController {
             @PathVariable LocalDate absentDate,
             @PathVariable String className,
             @RequestParam(required = false) Long sectionId) {
-        // TEACHER: only their assigned class — same check as getClassAttendanceSummary/
-        // getConsecutiveAbsentees below, applied here too since this endpoint was missing it.
+        // TEACHER: only their assigned class/section — same rule as getClassAttendanceSummary/
+        // getConsecutiveAbsentees below. Effective sectionId always comes from the teacher's own
+        // assignment, never the client-supplied value.
         if (Role.TEACHER.equals(authService.getRole())) {
-            String teacherClass = teacherRepository.findById(authService.getUserId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (!className.equals(teacherClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view attendance for their assigned class.");
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    authService.getRole(), authService.getUserId(), securityUtil.getSchoolId(), className, sectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
             }
+            sectionId = access.effectiveSectionId();
         }
         log.info("Request to get attendance for Date: {} and Class: {}", absentDate, className);
         List<Attendance> attendanceList = attendanceService.getAttendanceByDateAndClass(absentDate, className, sectionId);
@@ -134,15 +143,15 @@ public class AttendanceController {
             @PathVariable String className,
             @RequestParam(required = false) Long sectionId,
             HttpServletRequest request) {
-        // TEACHER: only their assigned class — same check as getAttendanceByDateAndClass above;
-        // without this a teacher could delete another class's attendance for a day.
+        // TEACHER: only their assigned class/section — same rule as getAttendanceByDateAndClass
+        // above; without this a teacher could delete another class/section's attendance.
         if (Role.TEACHER.equals(authService.getRole())) {
-            String teacherClass = teacherRepository.findById(authService.getUserId())
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (!className.equals(teacherClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only delete attendance for their assigned class.");
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    authService.getRole(), authService.getUserId(), securityUtil.getSchoolId(), className, sectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
             }
+            sectionId = access.effectiveSectionId();
         }
         log.warn("Request to delete attendance for Date: {} and Class: {}", date, className);
         attendanceService.deleteAttendanceByDateAndClass(date, className, sectionId, request);
@@ -182,20 +191,11 @@ public class AttendanceController {
         String currentUserId = authService.getUserId();
         String currentRole   = authService.getRole();
 
+        // STUDENT/TEACHER scoping is already fully enforced by checkStudentDataAccess above
+        // (including the teacher class+section check) — no need to repeat it here.
         if (Role.STUDENT.equals(currentRole) && !studentId.equals(currentUserId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Students can only view their own attendance.");
-        }
-        if (Role.TEACHER.equals(currentRole)) {
-            Long schoolId = securityUtil.getSchoolId();
-            String teacherClass = teacherRepository.findById(currentUserId)
-                    .map(Teacher::getClassTeacher).orElse(null);
-            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
-                    .map(s -> s.getClassName()).orElse(null);
-            if (teacherClass == null || !teacherClass.equals(studentClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view attendance for students in their assigned class.");
-            }
         }
 
         ResponseEntity<?> rangeError = validateMonthAndYear(month, year);
@@ -225,22 +225,11 @@ public class AttendanceController {
         String currentUserId = authService.getUserId();
         String currentRole   = authService.getRole();
 
-        // STUDENT: only own profile
+        // STUDENT/TEACHER scoping is already fully enforced by checkStudentDataAccess above
+        // (including the teacher class+section check) — no need to repeat it here.
         if (Role.STUDENT.equals(currentRole) && !studentId.equals(currentUserId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body("Students can only view their own attendance summary.");
-        }
-        // TEACHER: only students in their assigned class
-        if (Role.TEACHER.equals(currentRole)) {
-            Long schoolId = securityUtil.getSchoolId();
-            String teacherClass = teacherRepository.findById(currentUserId)
-                    .map(Teacher::getClassTeacher).orElse(null);
-            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
-                    .map(s -> s.getClassName()).orElse(null);
-            if (teacherClass == null || !teacherClass.equals(studentClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view attendance for students in their assigned class.");
-            }
         }
 
         if (month != null || year != null) {
@@ -285,14 +274,15 @@ public class AttendanceController {
                     .body("Parents cannot access class attendance summaries.");
         }
 
-        // TEACHER: only their assigned class
+        // TEACHER: only their assigned class/section — effective sectionId always comes from
+        // the teacher's own assignment, never the client-supplied value.
         if (Role.TEACHER.equals(currentRole)) {
-            String teacherClass = teacherRepository.findById(currentUserId)
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (!className.equals(teacherClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view attendance for their assigned class.");
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    currentRole, currentUserId, securityUtil.getSchoolId(), className, sectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
             }
+            sectionId = access.effectiveSectionId();
         }
 
         if (month != null || year != null) {
@@ -336,15 +326,19 @@ public class AttendanceController {
                     .body("Parents cannot access class attendance summaries.");
         }
 
-        // TEACHER: only their assigned class. Identical check to getClassAttendanceSummary —
-        // a teacher can never pull another class's absence patterns, whatever className is sent.
+        // TEACHER: only their assigned class/section. Identical rule to getClassAttendanceSummary
+        // — a teacher can never pull another class's (or another section's) absence patterns.
+        // This endpoint has no client-facing sectionId parameter at all, so the effective
+        // sectionId (when the teacher's class has sections) comes entirely from their own
+        // assignment.
+        Long effectiveSectionId = null;
         if (Role.TEACHER.equals(currentRole)) {
-            String teacherClass = teacherRepository.findById(currentUserId)
-                    .map(Teacher::getClassTeacher).orElse(null);
-            if (!className.equals(teacherClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view attendance for their assigned class.");
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                    currentRole, currentUserId, securityUtil.getSchoolId(), className, null);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
             }
+            effectiveSectionId = access.effectiveSectionId();
         }
 
         if (minDays < 1 || minDays > 60) {
@@ -354,7 +348,7 @@ public class AttendanceController {
         log.info("Consecutive-absentee request — class: {}, minDays: {}, session: {}, lookbackDays: {}",
                 className, minDays, session, lookbackDays);
         List<ConsecutiveAbsenceDTO> result =
-                attendanceService.getConsecutiveAbsentees(className, minDays, lookbackDays, session);
+                attendanceService.getConsecutiveAbsentees(className, minDays, lookbackDays, session, effectiveSectionId);
         return ResponseEntity.ok(result);
     }
 
@@ -404,13 +398,13 @@ public class AttendanceController {
         }
         if (Role.TEACHER.equals(currentRole)) {
             Long schoolId = securityUtil.getSchoolId();
-            String teacherClass = teacherRepository.findById(currentUserId)
-                    .map(Teacher::getClassTeacher).orElse(null);
-            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
-                    .map(Student::getClassName).orElse(null);
-            if (teacherClass == null || !teacherClass.equals(studentClass)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body("Teachers can only view attendance for students in their assigned class.");
+            Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
+            String studentClass = student != null ? student.getClassName() : null;
+            Long studentSectionId = student != null ? student.getSectionId() : null;
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToStudent(
+                    currentRole, currentUserId, schoolId, studentClass, studentSectionId);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(access.errorMessage());
             }
         }
         return null;

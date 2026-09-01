@@ -2,7 +2,9 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.Leave;
 import com.indraacademy.ias_management.entity.LeaveStatus;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.exception.InvalidLeaveStatusTransitionException;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -44,26 +47,48 @@ public class LeaveDecisionService {
     public static final String SKIPPED_NOT_PENDING = "skipped_not_pending";
     public static final String SKIPPED_NOT_FOUND = "skipped_not_found";
     public static final String SKIPPED_WRONG_CLASS = "skipped_wrong_class";
+    public static final String SKIPPED_WRONG_SECTION = "skipped_wrong_section";
     public static final String FAILED = "failed";
 
     /** Outcomes that mean "deliberately left alone", as opposed to "went wrong". */
     public static boolean isSkip(String outcome) {
         return SKIPPED_NOT_PENDING.equals(outcome)
                 || SKIPPED_NOT_FOUND.equals(outcome)
-                || SKIPPED_WRONG_CLASS.equals(outcome);
+                || SKIPPED_WRONG_CLASS.equals(outcome)
+                || SKIPPED_WRONG_SECTION.equals(outcome);
     }
 
     @Autowired private LeaveService leaveService;
+    @Autowired private StudentRepository studentRepository;
+
+    /** Class-only confinement — kept for callers that have no section to enforce (an ADMIN
+     *  batch). Equivalent to {@link #applyDecisions(List, LeaveStatus, String, Long,
+     *  HttpServletRequest)} with a null sectionId. */
+    public Map<Long, String> applyDecisions(List<Long> leaveIds,
+                                            LeaveStatus decision,
+                                            String className,
+                                            HttpServletRequest request) {
+        return applyDecisions(leaveIds, decision, className, null, request);
+    }
 
     /**
      * @param className when non-null, a leave outside this class is skipped rather than applied —
      *                  the class confinement for a TEACHER-initiated batch, re-checked here and
      *                  not merely at selection time
+     * @param sectionId when non-null, a leave whose student is not currently in this section is
+     *                  skipped rather than applied. A class name alone is not an authorization
+     *                  boundary once a class is split into sections (Class 12 / Science vs
+     *                  Class 12 / Commerce are different teachers' responsibilities), so the
+     *                  caller's own resolved section — never a client- or model-supplied one —
+     *                  is re-checked here per leave, at apply time. Leave carries no sectionId
+     *                  of its own, so the student's CURRENT section is resolved live, the same
+     *                  way LeaveController's /for-review id filter does.
      * @return leaveId → outcome, in the order given
      */
     public Map<Long, String> applyDecisions(List<Long> leaveIds,
                                             LeaveStatus decision,
                                             String className,
+                                            Long sectionId,
                                             HttpServletRequest request) {
         Map<Long, String> outcomes = new LinkedHashMap<>();
 
@@ -82,6 +107,19 @@ public class LeaveDecisionService {
                             leaveId, leave.getClassName(), className);
                     outcomes.put(leaveId, SKIPPED_WRONG_CLASS);
                     continue;
+                }
+
+                if (sectionId != null) {
+                    Long studentSectionId = studentRepository
+                            .findByStudentIdAndSchoolId(leave.getStudentId(), leave.getSchoolId())
+                            .map(Student::getSectionId)
+                            .orElse(null);
+                    if (!Objects.equals(sectionId, studentSectionId)) {
+                        log.warn("Leave {} belongs to a student in section {}, outside this batch's section {} — skipped.",
+                                leaveId, studentSectionId, sectionId);
+                        outcomes.put(leaveId, SKIPPED_WRONG_SECTION);
+                        continue;
+                    }
                 }
 
                 if (leave.getStatus() != LeaveStatus.PENDING) {

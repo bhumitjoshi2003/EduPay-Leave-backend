@@ -1,9 +1,12 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Leave;
 import com.indraacademy.ias_management.entity.LeaveStatus;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.exception.InvalidLeaveStatusTransitionException;
 import com.indraacademy.ias_management.repository.LeaveRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,10 +35,12 @@ public class LeaveService {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd-MM-yyyy");
 
     @Autowired private LeaveRepository leaveRepository;
+    @Autowired private StudentRepository studentRepository;
     @Autowired private NotificationService notificationService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
 
     @Transactional
     public void applyLeave(Leave leave, HttpServletRequest request){
@@ -238,6 +243,19 @@ public class LeaveService {
                 throw new SecurityException("Access denied: leave does not belong to your school.");
             }
 
+            // This endpoint previously had NO class/section check at all — any teacher could
+            // approve/reject any other class's (or section's) leave request just by knowing the
+            // leaveId. Scoped to the teacher's own class+section, same rule as everywhere else.
+            if (Role.TEACHER.equals(securityUtil.getRole())) {
+                Long studentSectionId = studentRepository.findByStudentIdAndSchoolId(leave.getStudentId(), schoolId)
+                        .map(Student::getSectionId).orElse(null);
+                TeacherClassScopeService.ScopedAccess access = teacherClassScopeService.authorizeAndScopeToStudent(
+                        securityUtil.getRole(), securityUtil.getUsername(), schoolId, leave.getClassName(), studentSectionId);
+                if (!access.allowed()) {
+                    throw new SecurityException(access.errorMessage());
+                }
+            }
+
             // Only a genuine change is applied. A request whose target already matches the
             // leave's current status is a repeat — a double-click, a retried request, or a
             // second caller who raced to the same decision as the first — and is rejected rather
@@ -290,10 +308,17 @@ public class LeaveService {
 
     @Transactional(readOnly = true)
     public Page<Leave> getLeavesFiltered(String className, String studentId, String date, LeaveStatus status, Pageable pageable) {
-        log.info("Filtering leaves. Class: {}, Student ID: {}, Date: {}, Status: {}", className, studentId, date, status);
+        return getLeavesFiltered(className, studentId, date, status, null, pageable);
+    }
+
+    /** @param sectionId when non-null, restricts to leaves whose student is currently in that
+     *  section — see LeaveRepository#findFilteredForManagement. */
+    @Transactional(readOnly = true)
+    public Page<Leave> getLeavesFiltered(String className, String studentId, String date, LeaveStatus status, Long sectionId, Pageable pageable) {
+        log.info("Filtering leaves. Class: {}, Student ID: {}, Date: {}, Status: {}, Section: {}", className, studentId, date, status, sectionId);
         Long schoolId = securityUtil.getSchoolId();
         try {
-            return leaveRepository.findFilteredForManagement(schoolId, className, studentId, date, status, pageable);
+            return leaveRepository.findFilteredForManagement(schoolId, className, studentId, date, status, sectionId, pageable);
         } catch (DataAccessException e) {
             log.error("Data access error during getLeavesFiltered. Class: {}, Student ID: {}, Date: {}, Status: {}", className, studentId, date, status, e);
             throw new RuntimeException("Could not retrieve filtered leaves due to data access issue", e);
@@ -317,13 +342,20 @@ public class LeaveService {
 
     @Transactional(readOnly = true)
     public List<String> getLeavesByDateAndClass(String date, String className) {
+        return getLeavesByDateAndClass(date, className, null);
+    }
+
+    /** @param sectionId when non-null, restricts to leaves whose student is currently in that
+     *  section — see LeaveRepository#findByLeaveDateAndClassNameAndSchoolId. */
+    @Transactional(readOnly = true)
+    public List<String> getLeavesByDateAndClass(String date, String className, Long sectionId) {
         if (date == null || date.trim().isEmpty() || className == null || className.trim().isEmpty()) {
             log.warn("Attempted to get leaves by date/class with null/empty parameters. Date: {}, Class: {}", date, className);
             return Collections.emptyList();
         }
         log.info("Fetching leave student IDs for date: {} and class: {}", date, className);
         try {
-            return leaveRepository.findByLeaveDateAndClassNameAndSchoolId(date, className, securityUtil.getSchoolId());
+            return leaveRepository.findByLeaveDateAndClassNameAndSchoolId(date, className, securityUtil.getSchoolId(), sectionId);
         } catch (DataAccessException e) {
             log.error("Data access error fetching leaves by date {} and class {}", date, className, e);
             throw new RuntimeException("Could not retrieve leaves due to data access issue", e);
@@ -340,12 +372,20 @@ public class LeaveService {
      */
     @Transactional(readOnly = true)
     public List<Leave> getLeavesForReview(String className, String studentId, int limit) {
+        return getLeavesForReview(className, studentId, limit, null);
+    }
+
+    /** @param sectionId when non-null, restricts to leaves whose student is currently in that
+     *  section — see LeaveRepository#findForReview. */
+    @Transactional(readOnly = true)
+    public List<Leave> getLeavesForReview(String className, String studentId, int limit, Long sectionId) {
         Long schoolId = securityUtil.getSchoolId();
         int capped = Math.max(1, Math.min(limit, 100));
         return leaveRepository.findForReview(
                 LeaveStatus.PENDING, schoolId,
                 (className != null && !className.isBlank()) ? className : null,
                 (studentId != null && !studentId.isBlank()) ? studentId : null,
+                sectionId,
                 PageRequest.of(0, capped));
     }
 
