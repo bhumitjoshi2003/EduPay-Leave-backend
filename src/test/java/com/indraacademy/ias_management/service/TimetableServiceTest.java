@@ -167,4 +167,91 @@ class TimetableServiceTest {
 
         verify(timetableRepository, times(1)).deleteById(5L);
     }
+
+    // ── addSimultaneous ("+ Simultaneous" — automatic tag, no admin input) ────────────
+
+    @Test
+    void addSimultaneous_existingHasNoGroup_generatesAndSharesTagWithNewEntry() {
+        TimetableEntry existing = entry("Mathematics", "T1", null);
+        existing.setId(5L);
+        existing.setSchoolId(SCHOOL_ID);
+        existing.setClassId(42L);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+
+        TimetableEntry saved = service.addSimultaneous(5L, "Biology", "T2", request);
+
+        assertThat(existing.getSimultaneousGroup()).isNotBlank();
+        assertThat(saved.getSimultaneousGroup()).isEqualTo(existing.getSimultaneousGroup());
+        assertThat(saved.getSubjectName()).isEqualTo("Biology");
+        assertThat(saved.getTeacherId()).isEqualTo("T2");
+        assertThat(saved.getClassName()).isEqualTo(existing.getClassName());
+        assertThat(saved.getClassId()).isEqualTo(42L);
+        assertThat(saved.getDay()).isEqualTo(existing.getDay());
+        assertThat(saved.getPeriodNumber()).isEqualTo(existing.getPeriodNumber());
+        assertThat(saved.getStartTime()).isEqualTo(existing.getStartTime());
+        assertThat(saved.getEndTime()).isEqualTo(existing.getEndTime());
+        assertThat(saved.getSchoolId()).isEqualTo(SCHOOL_ID);
+
+        // existing was re-saved with its new tag, and the candidate was saved with the same tag
+        verify(timetableRepository, times(2)).save(any(TimetableEntry.class));
+    }
+
+    @Test
+    void addSimultaneous_existingAlreadyHasGroup_reusesTag_doesNotResaveExisting() {
+        TimetableEntry existing = entry("Mathematics", "T1", "MATH_BIO");
+        existing.setId(5L);
+        existing.setSchoolId(SCHOOL_ID);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+
+        TimetableEntry saved = service.addSimultaneous(5L, "Biology", "T2", request);
+
+        assertThat(saved.getSimultaneousGroup()).isEqualTo("MATH_BIO");
+        // existing already had a tag — only the new candidate should be persisted
+        verify(timetableRepository, times(1)).save(any(TimetableEntry.class));
+    }
+
+    @Test
+    void addSimultaneous_validatesCandidateAgainstSharedValidationService() {
+        TimetableEntry existing = entry("Mathematics", "T1", "MATH_BIO");
+        existing.setId(5L);
+        existing.setSchoolId(SCHOOL_ID);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+
+        service.addSimultaneous(5L, "Biology", "T2", request);
+
+        ArgumentCaptor<TimetableEntry> captor = ArgumentCaptor.forClass(TimetableEntry.class);
+        verify(timetableValidationService).validate(captor.capture(), eq(SCHOOL_ID), org.mockito.ArgumentMatchers.isNull());
+        assertThat(captor.getValue().getSimultaneousGroup()).isEqualTo("MATH_BIO");
+        assertThat(captor.getValue().getSubjectName()).isEqualTo("Biology");
+    }
+
+    @Test
+    void addSimultaneous_validationFails_candidateNeverSaved() {
+        TimetableEntry existing = entry("Mathematics", "T1", "MATH_BIO");
+        existing.setId(5L);
+        existing.setSchoolId(SCHOOL_ID);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+        doThrow(new DataIntegrityViolationException("Teacher already has an overlapping period"))
+                .when(timetableValidationService).validate(any(TimetableEntry.class), eq(SCHOOL_ID), org.mockito.ArgumentMatchers.isNull());
+
+        assertThatThrownBy(() -> service.addSimultaneous(5L, "Biology", "T2", request))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        // existing already had a tag (no pre-save needed), and validation rejected the
+        // candidate before it could be persisted
+        verify(timetableRepository, never()).save(any());
+    }
+
+    @Test
+    void addSimultaneous_entryFromAnotherSchool_notFound() {
+        TimetableEntry existing = entry("Mathematics", "T1", null);
+        existing.setId(5L);
+        existing.setSchoolId(999L);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.addSimultaneous(5L, "Biology", "T2", request))
+                .isInstanceOf(NoSuchElementException.class);
+
+        verify(timetableValidationService, never()).validate(any(), anyLong(), any());
+    }
 }

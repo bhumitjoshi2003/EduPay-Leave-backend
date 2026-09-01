@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.TimetableBulkImportDtos;
+import com.indraacademy.ias_management.dto.TimetableDtos;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.TimetableEntry;
 import com.indraacademy.ias_management.repository.StudentRepository;
@@ -119,6 +120,26 @@ public class TimetableController {
         try {
             TimetableEntry saved = timetableService.update(id, entry, request);
             return ResponseEntity.ok(saved);
+        } catch (DataIntegrityViolationException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        }
+    }
+
+    /**
+     * POST /api/timetable/{id}/simultaneous
+     * ADMIN / SUPER_ADMIN only. Adds a second subject to the same slot as entry {id} — the
+     * "+ Simultaneous" action. Class/section/day/period/time are inherited server-side from the
+     * existing entry and the simultaneousGroup tag is generated/reused automatically; the admin
+     * only ever supplies the new subject and teacher. See TimetableService#addSimultaneous.
+     */
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PostMapping("/{id}/simultaneous")
+    public ResponseEntity<?> addSimultaneous(@PathVariable Long id,
+            @Valid @RequestBody TimetableDtos.AddSimultaneousRequest body, HttpServletRequest request) {
+        log.info("POST timetable/{}/simultaneous", id);
+        try {
+            TimetableEntry saved = timetableService.addSimultaneous(id, body.subjectName(), body.teacherId(), request);
+            return ResponseEntity.status(HttpStatus.CREATED).body(saved);
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         }
