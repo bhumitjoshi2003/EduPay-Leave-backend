@@ -11,7 +11,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +25,7 @@ public class TimetableService {
     @Autowired private TimetableRepository timetableRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SectionRepository sectionRepository;
+    @Autowired private TimetableValidationService timetableValidationService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -47,12 +47,7 @@ public class TimetableService {
 
     public TimetableEntry create(TimetableEntry entry, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
-        if (slotExists(schoolId, entry.getClassName(), entry.getSectionId(), entry.getDay(), entry.getPeriodNumber())) {
-            throw new DataIntegrityViolationException(
-                    "Period " + entry.getPeriodNumber() + " on " + entry.getDay()
-                            + " is already assigned for class " + entry.getClassName()
-                            + (entry.getSectionId() != null ? " (section)" : ""));
-        }
+        timetableValidationService.validate(entry, schoolId, null);
 
         entry.setSchoolId(schoolId);
         resolveTeacherName(entry);
@@ -84,20 +79,6 @@ public class TimetableService {
 
         String oldValue = toJson(existing);
 
-        // Check unique constraint only if slot (class/section/day/period) changed
-        boolean slotChanged = !existing.getClassName().equals(incoming.getClassName())
-                || !java.util.Objects.equals(existing.getSectionId(), incoming.getSectionId())
-                || !existing.getDay().equals(incoming.getDay())
-                || !existing.getPeriodNumber().equals(incoming.getPeriodNumber());
-
-        if (slotChanged && slotExistsExcluding(schoolId, incoming.getClassName(), incoming.getSectionId(),
-                incoming.getDay(), incoming.getPeriodNumber(), id)) {
-            throw new DataIntegrityViolationException(
-                    "Period " + incoming.getPeriodNumber() + " on " + incoming.getDay()
-                            + " is already assigned for class " + incoming.getClassName()
-                            + (incoming.getSectionId() != null ? " (section)" : ""));
-        }
-
         existing.setClassName(incoming.getClassName());
         existing.setSectionId(incoming.getSectionId());
         existing.setDay(incoming.getDay());
@@ -106,6 +87,13 @@ public class TimetableService {
         existing.setEndTime(incoming.getEndTime());
         existing.setSubjectName(incoming.getSubjectName());
         existing.setTeacherId(incoming.getTeacherId());
+        existing.setSimultaneousGroup(incoming.getSimultaneousGroup());
+
+        // Always re-validate (slot consistency + teacher conflict) against the merged state,
+        // excluding this entry's own id — simpler and more correct than only checking when the
+        // slot key itself changed, since a teacher-conflict can newly arise even when the slot
+        // key stays the same (e.g. only the teacher or time was edited).
+        timetableValidationService.validate(existing, schoolId, id);
 
         // Re-fetch teacher and section names
         resolveTeacherName(existing);
@@ -148,20 +136,6 @@ public class TimetableService {
                 null,
                 request.getRemoteAddr()
         );
-    }
-
-    private boolean slotExists(Long schoolId, String className, Long sectionId, com.indraacademy.ias_management.entity.Day day, Integer periodNumber) {
-        if (sectionId != null) {
-            return timetableRepository.existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(className, sectionId, day, periodNumber, schoolId);
-        }
-        return timetableRepository.existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(className, day, periodNumber, schoolId);
-    }
-
-    private boolean slotExistsExcluding(Long schoolId, String className, Long sectionId, com.indraacademy.ias_management.entity.Day day, Integer periodNumber, Long excludeId) {
-        if (sectionId != null) {
-            return timetableRepository.existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolIdAndIdNot(className, sectionId, day, periodNumber, schoolId, excludeId);
-        }
-        return timetableRepository.existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolIdAndIdNot(className, day, periodNumber, schoolId, excludeId);
     }
 
     private void resolveTeacherName(TimetableEntry entry) {

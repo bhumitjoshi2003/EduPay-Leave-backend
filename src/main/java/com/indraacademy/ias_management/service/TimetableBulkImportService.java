@@ -19,6 +19,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -49,12 +50,16 @@ import java.util.regex.Pattern;
  *  End Time     | endTime      | yes      | HH:mm, 24-hour, must be after Start Time
  *  Subject      | subjectName  | yes      |
  *  Teacher ID   | teacherId    | yes      | Must match an existing teacher in this school
+ *  Simultaneous Group | simultaneousGroup | no | Blank = normal entry. A shared, admin-defined
+ *                 tag (e.g. "MATH_BIO") lets two or more rows occupy the exact same
+ *                 class+section+day+period+time — see TimetableValidationService.
  *
  * Processing rules:
- * - Each valid row is saved immediately, so a slot already saved earlier in the same file is
- *   visible to the duplicate-slot check on later rows — two rows targeting the same
- *   class/section/day/period are caught exactly like a slot that already existed before the
- *   import, matching TimetableService.create()'s own conflict behavior.
+ * - Each valid row is saved immediately, so a slot/teacher-schedule state already saved earlier
+ *   in the same file is visible to {@link TimetableValidationService} when validating later rows
+ *   — two rows conflicting with each other are caught exactly like a conflict against a row that
+ *   already existed before the import, matching TimetableService.create()'s own behavior. This
+ *   is also how two Simultaneous-Group rows in the same file correctly link to each other.
  * - A row whose Class doesn't match an existing school class is rejected rather than silently
  *   stored as free text: an unmatched class name would create a timetable no admin's class
  *   dropdown could ever surface.
@@ -66,7 +71,7 @@ public class TimetableBulkImportService {
     private static final Logger log = LoggerFactory.getLogger(TimetableBulkImportService.class);
 
     public static final String[] TEMPLATE_HEADERS = {
-            "Class", "Section", "Day", "Period", "Start Time", "End Time", "Subject", "Teacher ID"
+            "Class", "Section", "Day", "Period", "Start Time", "End Time", "Subject", "Teacher ID", "Simultaneous Group"
     };
 
     private static final Pattern TIME_PATTERN = Pattern.compile("^([01]\\d|2[0-3]):[0-5]\\d$");
@@ -75,6 +80,7 @@ public class TimetableBulkImportService {
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SectionRepository sectionRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private TimetableValidationService timetableValidationService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -107,19 +113,18 @@ public class TimetableBulkImportService {
                     if (entry == null) continue; // validation error already recorded
 
                     label = buildLabel(entry);
-                    if (slotExists(schoolId, entry)) {
-                        errors.add(new RowError(rowNum, label,
-                                "Period " + entry.getPeriodNumber() + " on " + entry.getDay()
-                                        + " is already assigned for " + label
-                                        + " — edit it from the Timetable page instead."));
-                        continue;
-                    }
+                    timetableValidationService.validate(entry, schoolId, null);
 
                     entry.setSchoolId(schoolId);
                     TimetableEntry saved = timetableRepository.save(entry);
                     created.add(new RowSuccess(rowNum, label, saved.getId()));
                     log.info("Bulk import: row {} saved (timetableEntryId={})", rowNum, saved.getId());
 
+                } catch (DataIntegrityViolationException e) {
+                    // Expected business-rule rejection (slot conflict, group mismatch, teacher
+                    // double-booking, exact duplicate) — the message is already specific and
+                    // user-facing, not a bug, so it's reported as-is without an "Unexpected" prefix.
+                    errors.add(new RowError(rowNum, label, e.getMessage()));
                 } catch (Exception e) {
                     log.error("Bulk import: unexpected error on row {}", rowNum, e);
                     errors.add(new RowError(rowNum, label, "Unexpected error: " + e.getMessage()));
@@ -148,6 +153,7 @@ public class TimetableBulkImportService {
         String endTime      = getCol(row, columnIndex, "end time");
         String subjectName  = getCol(row, columnIndex, "subject");
         String teacherId    = getCol(row, columnIndex, "teacher id");
+        String simultaneousGroup = getCol(row, columnIndex, "simultaneous group");
 
         if (className.isEmpty()) {
             errors.add(new RowError(rowNum, "row " + rowNum, "Class is required")); return null;
@@ -225,16 +231,8 @@ public class TimetableBulkImportService {
         entry.setSubjectName(subjectName);
         entry.setTeacherId(teacherId);
         entry.setTeacherName(teacher.get().getName());
+        entry.setSimultaneousGroup(simultaneousGroup.isEmpty() ? null : simultaneousGroup);
         return entry;
-    }
-
-    private boolean slotExists(Long schoolId, TimetableEntry entry) {
-        if (entry.getSectionId() != null) {
-            return timetableRepository.existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(
-                    entry.getClassName(), entry.getSectionId(), entry.getDay(), entry.getPeriodNumber(), schoolId);
-        }
-        return timetableRepository.existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(
-                entry.getClassName(), entry.getDay(), entry.getPeriodNumber(), schoolId);
     }
 
     private String buildLabel(TimetableEntry entry) {

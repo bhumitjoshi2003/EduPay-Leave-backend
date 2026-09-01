@@ -22,12 +22,14 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -35,8 +37,12 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for the CSV parsing/validation/orchestration layer of timetable bulk import.
- * {@link TimetableRepository#save} is stubbed to assign an id and return the entry as-is —
- * this is not a test of JPA/Hibernate, just of this service's own row-by-row logic.
+ *
+ * {@code timetableRepository} is backed by a small in-memory fake (an ArrayList populated by the
+ * stubbed {@code save()} and read back by the stubbed {@code findBy...} methods) rather than a
+ * pure mock — this lets within-file conflict detection (two rows in the SAME uploaded CSV)
+ * exercise the real {@link TimetableValidationService} against realistic, evolving state, exactly
+ * as it would run against a real database, instead of hand-sequencing mock return values.
  */
 @ExtendWith(MockitoExtension.class)
 class TimetableBulkImportServiceTest {
@@ -50,16 +56,23 @@ class TimetableBulkImportServiceTest {
     @Mock private HttpServletRequest request;
 
     private TimetableBulkImportService service;
+    private final List<TimetableEntry> savedEntries = new ArrayList<>();
 
     private static final Long SCHOOL_ID = 1L;
 
     @BeforeEach
     void setUp() {
+        savedEntries.clear();
+
+        TimetableValidationService validationService = new TimetableValidationService();
+        ReflectionTestUtils.setField(validationService, "timetableRepository", timetableRepository);
+
         service = new TimetableBulkImportService();
         ReflectionTestUtils.setField(service, "timetableRepository", timetableRepository);
         ReflectionTestUtils.setField(service, "teacherRepository", teacherRepository);
         ReflectionTestUtils.setField(service, "sectionRepository", sectionRepository);
         ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
+        ReflectionTestUtils.setField(service, "timetableValidationService", validationService);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
@@ -74,16 +87,51 @@ class TimetableBulkImportServiceTest {
         tenA.setName("10");
         lenient().when(schoolClassRepository.findBySchoolIdAndName(SCHOOL_ID, "10")).thenReturn(Optional.of(tenA));
 
+        SchoolClass elevenA = new SchoolClass();
+        elevenA.setId(11L);
+        elevenA.setName("11");
+        lenient().when(schoolClassRepository.findBySchoolIdAndName(SCHOOL_ID, "11")).thenReturn(Optional.of(elevenA));
+
+        Section science = new Section();
+        science.setId(77L);
+        science.setName("Science");
+        lenient().when(sectionRepository.findBySchoolIdAndClassIdAndName(SCHOOL_ID, 11L, "Science"))
+                .thenReturn(Optional.of(science));
+
         Teacher teacher = new Teacher();
         teacher.setTeacherId("T1");
         teacher.setName("Jane Doe");
         lenient().when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID)).thenReturn(Optional.of(teacher));
 
+        Teacher teacher2 = new Teacher();
+        teacher2.setTeacherId("T2");
+        teacher2.setName("John Roe");
+        lenient().when(teacherRepository.findByTeacherIdAndSchoolId("T2", SCHOOL_ID)).thenReturn(Optional.of(teacher2));
+
+        // In-memory fake: save() appends and assigns an id; findBy...() reads back from the
+        // same list, so a row saved earlier in the same CSV is visible to later rows' validation
+        // exactly as an already-existing DB row would be.
         lenient().when(timetableRepository.save(any(TimetableEntry.class))).thenAnswer(inv -> {
             TimetableEntry e = inv.getArgument(0);
-            e.setId(100L);
+            e.setId(100L + savedEntries.size());
+            savedEntries.add(e);
             return e;
         });
+        lenient().when(timetableRepository.findByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(
+                any(), any(), any(), any())).thenAnswer(inv -> savedEntries.stream()
+                .filter(e -> e.getClassName().equals(inv.getArgument(0)) && e.getSectionId() == null
+                        && e.getDay() == inv.getArgument(1) && e.getPeriodNumber().equals(inv.getArgument(2)))
+                .collect(Collectors.toList()));
+        lenient().when(timetableRepository.findByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(
+                any(), any(), any(), any(), any())).thenAnswer(inv -> savedEntries.stream()
+                .filter(e -> e.getClassName().equals(inv.getArgument(0)) && Objects.equals(e.getSectionId(), inv.getArgument(1))
+                        && e.getDay() == inv.getArgument(2) && e.getPeriodNumber().equals(inv.getArgument(3)))
+                .collect(Collectors.toList()));
+        lenient().when(timetableRepository.findByTeacherIdAndDayAndSchoolId(any(), any(), any()))
+                .thenAnswer(inv -> savedEntries.stream()
+                        .filter(e -> e.getTeacherId() != null && e.getTeacherId().equals(inv.getArgument(0))
+                                && e.getDay() == inv.getArgument(1))
+                        .collect(Collectors.toList()));
     }
 
     private MockMultipartFile csv(String... dataRows) {
@@ -111,16 +159,17 @@ class TimetableBulkImportServiceTest {
         assertThat(saved.getTeacherId()).isEqualTo("T1");
         assertThat(saved.getTeacherName()).isEqualTo("Jane Doe");
         assertThat(saved.getSectionId()).isNull();
+        assertThat(saved.getSimultaneousGroup()).isNull();
     }
 
     @Test
     void unknownClassIsRejectedRatherThanStoredAsFreeText() {
-        MockMultipartFile file = csv("11,,Monday,1,09:00,09:40,Mathematics,T1");
+        MockMultipartFile file = csv("99,,Monday,1,09:00,09:40,Mathematics,T1");
 
         Result result = service.bulkImport(file, request);
 
         assertThat(result.failed()).isEqualTo(1);
-        assertThat(result.errors().get(0).reason()).isEqualTo("Class '11' not found");
+        assertThat(result.errors().get(0).reason()).isEqualTo("Class '99' not found");
         verify(timetableRepository, never()).save(any());
     }
 
@@ -185,30 +234,50 @@ class TimetableBulkImportServiceTest {
     }
 
     @Test
+    void crossTenantTeacherIsNeverAccepted() {
+        // "T1" is registered for SCHOOL_ID in setUp(); a bulk import running under a DIFFERENT
+        // school must not find it even though the string id matches.
+        when(securityUtil.getSchoolId()).thenReturn(999L);
+        MockMultipartFile file = csv("10,,Monday,1,09:00,09:40,Mathematics,T1");
+        // Class "10" also isn't registered for school 999, so this fails on Class first —
+        // confirming schoolId scoping is applied at every lookup, not just teacher.
+        when(schoolClassRepository.findBySchoolIdAndName(999L, "10")).thenReturn(Optional.empty());
+
+        Result result = service.bulkImport(file, request);
+
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.errors().get(0).reason()).isEqualTo("Class '10' not found");
+        verify(timetableRepository, never()).save(any());
+    }
+
+    @Test
     void slotAlreadyExistingInDbIsRejectedNotOverwritten() {
-        when(timetableRepository.existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(
-                eq("10"), any(), eq(1), eq(SCHOOL_ID))).thenReturn(true);
+        TimetableEntry existing = new TimetableEntry();
+        existing.setId(1L);
+        existing.setClassName("10");
+        existing.setDay(com.indraacademy.ias_management.entity.Day.MONDAY);
+        existing.setPeriodNumber(1);
+        existing.setStartTime("09:00");
+        existing.setEndTime("09:40");
+        existing.setSubjectName("Hindi");
+        existing.setTeacherId("T1");
+        savedEntries.add(existing);
+
         MockMultipartFile file = csv("10,,Monday,1,09:00,09:40,Mathematics,T1");
 
         Result result = service.bulkImport(file, request);
 
         assertThat(result.failed()).isEqualTo(1);
         assertThat(result.errors().get(0).reason()).contains("already assigned");
-        verify(timetableRepository, never()).save(any());
+        // Only the pre-existing row is present — the conflicting row was never saved.
+        assertThat(savedEntries).hasSize(1);
     }
 
     @Test
     void twoRowsTargetingTheSameSlotInTheSameFile_secondRowIsRejected() {
-        // First row: no prior conflict. After it's "saved" (stubbed), the second identical-slot
-        // row must be caught — simulated here by flipping the exists-check after the first save.
-        when(timetableRepository.existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(
-                eq("10"), any(), eq(1), eq(SCHOOL_ID)))
-                .thenReturn(false)
-                .thenReturn(true);
-
         MockMultipartFile file = csv(
                 "10,,Monday,1,09:00,09:40,Mathematics,T1",
-                "10,,Monday,1,10:00,10:40,Science,T1"
+                "10,,Monday,1,10:00,10:40,Science,T2"
         );
 
         Result result = service.bulkImport(file, request);
@@ -216,6 +285,92 @@ class TimetableBulkImportServiceTest {
         assertThat(result.successful()).isEqualTo(1);
         assertThat(result.failed()).isEqualTo(1);
         assertThat(result.errors().get(0).reason()).contains("already assigned");
+    }
+
+    @Test
+    void twoRowsSameSimultaneousGroup_bothSucceed() {
+        MockMultipartFile file = csv(
+                "11,Science,Monday,3,09:15,09:50,Mathematics,T1,MATH_BIO",
+                "11,Science,Monday,3,09:15,09:50,Biology,T2,MATH_BIO"
+        );
+
+        Result result = service.bulkImport(file, request);
+
+        assertThat(result.totalRows()).isEqualTo(2);
+        assertThat(result.successful()).isEqualTo(2);
+        assertThat(result.failed()).isEqualTo(0);
+        assertThat(savedEntries).extracting(TimetableEntry::getSubjectName)
+                .containsExactlyInAnyOrder("Mathematics", "Biology");
+        assertThat(savedEntries).allMatch(e -> "MATH_BIO".equals(e.getSimultaneousGroup()));
+    }
+
+    @Test
+    void differentSimultaneousGroupsInSameSlot_secondRowRejected() {
+        MockMultipartFile file = csv(
+                "11,Science,Monday,3,09:15,09:50,Mathematics,T1,MATH_BIO",
+                "11,Science,Monday,3,09:15,09:50,Artificial Intelligence,T2,AI_MATHEMATICS"
+        );
+
+        Result result = service.bulkImport(file, request);
+
+        assertThat(result.successful()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.errors().get(0).reason()).contains("not part of the same simultaneous group");
+    }
+
+    @Test
+    void groupedPlusUngroupedInSameSlot_rejected() {
+        MockMultipartFile file = csv(
+                "11,Science,Monday,3,09:15,09:50,Mathematics,T1,MATH_BIO",
+                "11,Science,Monday,3,09:15,09:50,Biology,T2"
+        );
+
+        Result result = service.bulkImport(file, request);
+
+        assertThat(result.successful()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(1);
+    }
+
+    @Test
+    void exactDuplicateAssignmentInSameFile_rejected() {
+        MockMultipartFile file = csv(
+                "11,Science,Monday,3,09:15,09:50,Mathematics,T1,MATH_BIO",
+                "11,Science,Monday,3,09:15,09:50,Mathematics,T1,MATH_BIO"
+        );
+
+        Result result = service.bulkImport(file, request);
+
+        assertThat(result.successful()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.errors().get(0).reason()).contains("already exists");
+    }
+
+    @Test
+    void teacherDoubleBookedAcrossDifferentClassesWithinSameFile_rejected() {
+        MockMultipartFile file = csv(
+                "11,Science,Monday,3,09:15,09:50,Mathematics,T1,MATH_BIO",
+                "10,,Monday,5,09:20,10:00,Physics,T1"
+        );
+
+        Result result = service.bulkImport(file, request);
+
+        assertThat(result.successful()).isEqualTo(1);
+        assertThat(result.failed()).isEqualTo(1);
+        assertThat(result.errors().get(0).reason()).contains("overlapping period");
+    }
+
+    @Test
+    void csvWithoutSimultaneousGroupColumnAtAll_stillWorksAsNormalImport() {
+        // Old-format CSV — exactly the header this feature shipped with before this change.
+        String legacyCsv = "Class,Section,Day,Period,Start Time,End Time,Subject,Teacher ID\n"
+                + "10,,Monday,1,09:00,09:40,Mathematics,T1\n";
+        MockMultipartFile file = new MockMultipartFile("file", "legacy.csv", "text/csv",
+                legacyCsv.getBytes(StandardCharsets.UTF_8));
+
+        Result result = service.bulkImport(file, request);
+
+        assertThat(result.successful()).isEqualTo(1);
+        assertThat(savedEntries.get(0).getSimultaneousGroup()).isNull();
     }
 
     @Test
@@ -230,7 +385,7 @@ class TimetableBulkImportServiceTest {
 
     @Test
     void blankRowsAreSkippedAndNotCountedInTotalRows() {
-        MockMultipartFile file = csv("10,,Monday,1,09:00,09:40,Mathematics,T1", ",,,,,,,");
+        MockMultipartFile file = csv("10,,Monday,1,09:00,09:40,Mathematics,T1", ",,,,,,,,");
 
         Result result = service.bulkImport(file, request);
 
@@ -263,12 +418,7 @@ class TimetableBulkImportServiceTest {
         Result result = service.bulkImport(file, request);
 
         assertThat(result.successful()).isEqualTo(1);
-        verify(timetableRepository).existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(
-                eq("10"), eq(55L), any(), eq(1), eq(SCHOOL_ID));
-
-        ArgumentCaptor<TimetableEntry> captor = ArgumentCaptor.forClass(TimetableEntry.class);
-        verify(timetableRepository).save(captor.capture());
-        assertThat(captor.getValue().getSectionId()).isEqualTo(55L);
-        assertThat(captor.getValue().getSectionName()).isEqualTo("A");
+        assertThat(savedEntries.get(0).getSectionId()).isEqualTo(55L);
+        assertThat(savedEntries.get(0).getSectionName()).isEqualTo("A");
     }
 }

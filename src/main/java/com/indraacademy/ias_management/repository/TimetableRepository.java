@@ -22,12 +22,14 @@ public interface TimetableRepository extends JpaRepository<TimetableEntry, Long>
     // ── Teacher schedule ───────────────────────────────────────────────────
     List<TimetableEntry> findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc(String teacherId, Long schoolId);
 
-    // ── Duplicate-slot checks (section-specific) ───────────────────────────
-    boolean existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(String className, Long sectionId, Day day, Integer periodNumber, Long schoolId);
-    boolean existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(String className, Day day, Integer periodNumber, Long schoolId);
+    // ── Slot occupants (section-specific) — used by TimetableValidationService to check
+    //    whether a candidate row may join an existing slot (same or matching simultaneousGroup)
+    //    or must be rejected as a conflict. ───────────────────────────────────────────────
+    List<TimetableEntry> findByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(String className, Long sectionId, Day day, Integer periodNumber, Long schoolId);
+    List<TimetableEntry> findByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(String className, Day day, Integer periodNumber, Long schoolId);
 
-    boolean existsByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolIdAndIdNot(String className, Long sectionId, Day day, Integer periodNumber, Long schoolId, Long id);
-    boolean existsByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolIdAndIdNot(String className, Day day, Integer periodNumber, Long schoolId, Long id);
+    // ── A teacher's schedule for one day — used for cross-class time-overlap conflict checks.
+    List<TimetableEntry> findByTeacherIdAndDayAndSchoolId(String teacherId, Day day, Long schoolId);
 
     List<TimetableEntry> findBySchoolId(Long schoolId);
 }

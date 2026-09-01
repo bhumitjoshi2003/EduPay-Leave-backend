@@ -15,6 +15,7 @@ import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -97,8 +98,14 @@ public class TimetableController {
     @PostMapping
     public ResponseEntity<?> create(@Valid @RequestBody TimetableEntry entry, HttpServletRequest request) {
         log.info("POST timetable: class={}, day={}, period={}", entry.getClassName(), entry.getDay(), entry.getPeriodNumber());
-        TimetableEntry saved = timetableService.create(entry, request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(saved);
+        try {
+            TimetableEntry saved = timetableService.create(entry, request);
+            return ResponseEntity.status(HttpStatus.CREATED).body(saved);
+        } catch (DataIntegrityViolationException e) {
+            // Surfaces the specific reason (slot conflict, group mismatch, teacher double-booking,
+            // etc.) rather than letting GlobalExceptionHandler's generic 409 message swallow it.
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        }
     }
 
     /**
@@ -109,8 +116,12 @@ public class TimetableController {
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @Valid @RequestBody TimetableEntry entry, HttpServletRequest request) {
         log.info("PUT timetable/{}", id);
-        TimetableEntry saved = timetableService.update(id, entry, request);
-        return ResponseEntity.ok(saved);
+        try {
+            TimetableEntry saved = timetableService.update(id, entry, request);
+            return ResponseEntity.ok(saved);
+        } catch (DataIntegrityViolationException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        }
     }
 
     /**
