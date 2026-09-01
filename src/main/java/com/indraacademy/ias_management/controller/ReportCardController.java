@@ -5,9 +5,7 @@ import com.indraacademy.ias_management.dto.*;
 import com.indraacademy.ias_management.dto.VerifyRcDTO;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
-import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.repository.StudentRepository;
-import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.service.ReportCardDataAssembler;
 import com.indraacademy.ias_management.service.ReportCardPdfGenerator;
 import com.indraacademy.ias_management.dto.ClassOverviewDTO;
@@ -17,6 +15,8 @@ import com.indraacademy.ias_management.service.ReportCardTemplateService;
 import com.indraacademy.ias_management.service.RemarksService;
 import com.indraacademy.ias_management.service.EntitlementService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.ScopedAccess;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,10 +45,10 @@ public class ReportCardController {
     @Autowired private ReportCardPublicationService  publicationService;
     @Autowired private ClassOverviewService          classOverviewService;
     @Autowired private StudentRepository             studentRepository;
-    @Autowired private TeacherRepository             teacherRepository;
     @Autowired private SecurityUtil                  securityUtil;
     @Autowired private EntitlementService            entitlementService;
     @Autowired private ParentPortalService            parentPortalService;
+    @Autowired private TeacherClassScopeService       teacherClassScopeService;
 
     // ── Template CRUD ─────────────────────────────────────────────────────
 
@@ -136,8 +136,8 @@ public class ReportCardController {
             @RequestParam Long templateId,
             @RequestParam String session,
             @RequestParam String className) {
-        checkTeacherClassAccess(className);
-        return ResponseEntity.ok(remarksService.getClassRemarks(templateId, session, className));
+        Long sectionId = checkTeacherClassAccess(className);
+        return ResponseEntity.ok(remarksService.getClassRemarks(templateId, session, className, sectionId));
     }
 
     /**
@@ -219,11 +219,12 @@ public class ReportCardController {
             @RequestParam String session,
             @RequestParam String className) {
 
-        checkTeacherClassAccess(className);
+        Long sectionId = checkTeacherClassAccess(className);
 
         Long schoolId = securityUtil.getSchoolId();
-        List<Student> students = studentRepository.findByClassNameAndStatusAndSchoolId(
-                className, StudentStatus.ACTIVE, schoolId);
+        List<Student> students = (sectionId != null)
+                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
+                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(baos)) {
@@ -268,8 +269,8 @@ public class ReportCardController {
             @RequestParam Long templateId,
             @RequestParam String session,
             @RequestParam String className) {
-        checkTeacherClassAccess(className);
-        return ResponseEntity.ok(classOverviewService.getClassOverview(templateId, session, className));
+        Long sectionId = checkTeacherClassAccess(className);
+        return ResponseEntity.ok(classOverviewService.getClassOverview(templateId, session, className, sectionId));
     }
 
     // ── Publishing ────────────────────────────────────────────────────────
@@ -330,31 +331,29 @@ public class ReportCardController {
     // already used correctly by MarkController.checkTeacherClassAccess for the marks module.
 
     /**
-     * For TEACHER callers: verifies their classTeacher field matches the given className.
-     * Throws a 403 ResponseStatusException if access is denied; no-ops otherwise. ADMIN (and,
-     * where applicable, STUDENT) callers are untouched here — their own separate authorization
-     * already happens at each call site.
+     * For TEACHER callers: verifies their classTeacher field matches the given className, and
+     * that their assignment isn't an unresolved legacy one. Throws a 403 ResponseStatusException
+     * if access is denied; no-ops (ADMIN unrestricted) otherwise. Returns the teacher's own
+     * effective sectionId (null for ADMIN, or for a class with no sections) — callers that fetch
+     * a class-wide roster/summary must pass this through to their data layer so a section-scoped
+     * teacher never sees another section's data, not just so they clear this class-level gate.
      */
-    private void checkTeacherClassAccess(String className) {
-        if (!Role.TEACHER.equals(securityUtil.getRole())) return;
+    private Long checkTeacherClassAccess(String className) {
+        if (!Role.TEACHER.equals(securityUtil.getRole())) return null;
 
-        String teacherId = securityUtil.getUsername();
-        Long schoolId = securityUtil.getSchoolId();
-        String teacherClass = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
-                .map(Teacher::getClassTeacher)
-                .orElse(null);
-
-        if (teacherClass == null || !teacherClass.equals(className)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Teachers can only access report card data for their own class.");
+        ScopedAccess access = teacherClassScopeService.authorizeAndScopeToClass(
+                securityUtil.getRole(), securityUtil.getUsername(), securityUtil.getSchoolId(), className, null);
+        if (!access.allowed()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, access.errorMessage());
         }
+        return access.effectiveSectionId();
     }
 
     /**
      * For TEACHER callers: verifies every one of the given studentIds belongs to their own
-     * assigned class. Used for single-student lookups (studentId) and bulk requests
+     * assigned class AND section. Used for single-student lookups (studentId) and bulk requests
      * (RemarksRequest/CoScholasticRequest, which carry a list of studentIds but no className
-     * field directly) — resolves each student's class rather than trusting anything the
+     * field directly) — resolves each student's class/section rather than trusting anything the
      * request itself claims.
      */
     private void checkTeacherOwnsStudents(List<String> studentIds) {
@@ -363,21 +362,15 @@ public class ReportCardController {
 
         String teacherId = securityUtil.getUsername();
         Long schoolId = securityUtil.getSchoolId();
-        String teacherClass = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
-                .map(Teacher::getClassTeacher)
-                .orElse(null);
-        if (teacherClass == null) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Teachers can only access report card data for their own class.");
-        }
 
         for (String studentId : studentIds) {
-            String studentClass = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
-                    .map(Student::getClassName)
-                    .orElse(null);
-            if (!teacherClass.equals(studentClass)) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                        "Teachers can only access report card data for students in their own class.");
+            Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
+            String studentClass = student != null ? student.getClassName() : null;
+            Long studentSectionId = student != null ? student.getSectionId() : null;
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToStudent(
+                    Role.TEACHER, teacherId, schoolId, studentClass, studentSectionId);
+            if (!access.allowed()) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, access.errorMessage());
             }
         }
     }

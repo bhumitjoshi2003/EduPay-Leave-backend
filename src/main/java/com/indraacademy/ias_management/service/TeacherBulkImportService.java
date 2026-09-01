@@ -4,8 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.BulkImportResultDTO;
+import com.indraacademy.ias_management.entity.SchoolClass;
+import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.opencsv.CSVReader;
@@ -28,6 +32,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Handles CSV bulk import of teachers.
@@ -35,15 +40,19 @@ import java.util.Map;
  * Expected CSV header row and field mapping (columns are matched by name, not position —
  * see {@link #buildColumnIndex}, so old/new templates both work regardless of column order):
  *
- *  Column name     | Teacher field  | Required | Notes
- *  ----------------|----------------|----------|------------------------------
- *  Teacher Name    | name           | yes      |
- *  Email           | email          | yes      |
- *  Phone Number    | phoneNumber    | no       |
- *  Date of Birth   | dob            | yes      | yyyy-MM-dd — used as the initial login password (yyyyMMdd)
- *  Gender          | gender         | no       |
- *  Class Teacher   | classTeacher   | no       | class this teacher is class teacher of (e.g. "5", "Play group")
- *  Joining Date    | joiningDate    | yes      | yyyy-MM-dd
+ *  Column name           | Teacher field          | Required | Notes
+ *  ----------------------|------------------------|----------|------------------------------
+ *  Teacher Name          | name                   | yes      |
+ *  Email                 | email                  | yes      |
+ *  Phone Number          | phoneNumber            | no       |
+ *  Date of Birth         | dob                    | yes      | yyyy-MM-dd — used as the initial login password (yyyyMMdd)
+ *  Gender                | gender                 | no       |
+ *  Class Teacher         | classTeacher           | no       | class this teacher is class teacher of (e.g. "5", "Play group")
+ *  Class Teacher Section | classTeacherSectionId  | cond.    | section NAME (e.g. "Science"), resolved against the sections
+ *                          configured for the Class Teacher class. Required when that class has
+ *                          configured sections, must be blank when it has none, and must be blank
+ *                          when Class Teacher itself is blank.
+ *  Joining Date          | joiningDate            | yes      | yyyy-MM-dd
  *
  * Edunexify always generates the Employee ID for every newly imported teacher — a
  * "Teacher ID" column is no longer part of the downloadable template. An OLDER CSV that
@@ -65,7 +74,7 @@ public class TeacherBulkImportService {
      *  generates it. */
     public static final String[] TEMPLATE_HEADERS = {
             "Teacher Name", "Email", "Phone Number",
-            "Date of Birth", "Gender", "Class Teacher", "Joining Date"
+            "Date of Birth", "Gender", "Class Teacher", "Class Teacher Section", "Joining Date"
     };
 
     private static final String LEGACY_ID_COLUMN = "teacher id";
@@ -82,6 +91,8 @@ public class TeacherBulkImportService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private UserRepository userRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private SectionRepository sectionRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private WelcomeEmailService welcomeEmailService;
 
@@ -94,6 +105,7 @@ public class TeacherBulkImportService {
         List<BulkImportResultDTO.RowSuccess> created = new ArrayList<>();
         int successful = 0;
         int totalRows  = 0;
+        Long schoolId = securityUtil.getSchoolId();
 
         try (CSVReader reader = new CSVReader(
                 new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
@@ -114,12 +126,18 @@ public class TeacherBulkImportService {
 
                 String name = getCol(row, columnIndex, "teacher name");
                 try {
-                    Teacher teacher = parseRow(row, columnIndex, rowNum, errors);
+                    Teacher teacher = parseRow(row, columnIndex, rowNum, schoolId, errors);
                     if (teacher == null) continue; // validation error already recorded
 
                     // Each addTeacher call runs in its own @Transactional context —
                     // a failure here does not affect rows already committed. teacherId is
                     // intentionally left unset on `teacher` here; addTeacher() generates it.
+                    // addTeacher() itself calls TeacherService.validateAndNormalizeClassResponsibility()
+                    // before any save, so the class-teacher/section rules this importer cannot
+                    // check from the CSV alone (class must exist; a class WITH sections requires
+                    // one; a class WITHOUT sections allows none) are enforced there and surface
+                    // here as the IllegalArgumentException handled below — the importer
+                    // deliberately does not call that validator a second time itself.
                     Teacher saved = teacherService.addTeacher(teacher, request);
                     createUserAccount(saved.getTeacherId(), saved.getName(), saved.getEmail(),
                             saved.getDob(), Role.TEACHER);
@@ -216,16 +234,27 @@ public class TeacherBulkImportService {
      * Parses a single data row into a Teacher object. teacherId is deliberately left unset —
      * TeacherService.addTeacher() generates it. Any legacy "Teacher ID" column in the CSV is
      * simply never consulted here.
+     *
+     * The "Class Teacher Section" cell holds a section NAME (never a raw section ID — admins
+     * fill these files with human-readable values), resolved here against the sections
+     * configured for the row's "Class Teacher" class. The rules — class must exist, a class
+     * WITH sections requires one, a class WITHOUT sections allows none — are enforced directly
+     * below, mirroring TeacherService.validateAndNormalizeClassResponsibility() (which still
+     * runs again inside addTeacher() as a second line of defense). Checking it here means a
+     * legacy CSV with no "Class Teacher Section" column at all is rejected row-by-row with a
+     * clear reason, rather than only being caught once addTeacher() is reached.
+     *
      * Returns {@code null} and appends to {@code errors} if any validation fails.
      */
     private Teacher parseRow(String[] row, Map<String, Integer> columnIndex, int rowNum,
-                             List<BulkImportResultDTO.RowError> errors) {
+                             Long schoolId, List<BulkImportResultDTO.RowError> errors) {
         String name         = getCol(row, columnIndex, "teacher name");
         String email        = getCol(row, columnIndex, "email");
         String phoneNumber  = getCol(row, columnIndex, "phone number");
         String dobStr       = getCol(row, columnIndex, "date of birth");
         String gender       = getCol(row, columnIndex, "gender");
         String classTeacher = getCol(row, columnIndex, "class teacher");
+        String sectionName  = getCol(row, columnIndex, "class teacher section");
         String joiningStr   = getCol(row, columnIndex, "joining date");
 
         // Required field checks
@@ -266,6 +295,53 @@ public class TeacherBulkImportService {
             return null;
         }
 
+        // Class teacher responsibility: a section only means anything alongside a class, and is
+        // always given by name. Resolution failures are row errors, never a silent drop — an
+        // ambiguous class-teacher assignment is exactly what this column exists to prevent.
+        if (classTeacher.isEmpty() && !sectionName.isEmpty()) {
+            errors.add(new BulkImportResultDTO.RowError(rowNum, name,
+                    "Class Teacher Section '" + sectionName + "' was given without a Class Teacher"));
+            return null;
+        }
+
+        Long classTeacherSectionId = null;
+        if (!classTeacher.isEmpty()) {
+            Optional<SchoolClass> schoolClass = schoolClassRepository.findBySchoolIdAndName(schoolId, classTeacher);
+            if (schoolClass.isEmpty()) {
+                errors.add(new BulkImportResultDTO.RowError(rowNum, name,
+                        "Class '" + classTeacher + "' not found"));
+                return null;
+            }
+            boolean classHasSections = !sectionRepository
+                    .findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(schoolId, schoolClass.get().getId(), true)
+                    .isEmpty();
+            if (classHasSections && sectionName.isEmpty()) {
+                // Caught here rather than left to TeacherService's own validation so a legacy
+                // CSV (no "Class Teacher Section" column at all) is rejected row-by-row with a
+                // clear reason instead of silently reaching addTeacher() first.
+                errors.add(new BulkImportResultDTO.RowError(rowNum, name,
+                        "Class '" + classTeacher + "' has sections configured — Class Teacher Section is required"));
+                return null;
+            }
+            if (!classHasSections && !sectionName.isEmpty()) {
+                errors.add(new BulkImportResultDTO.RowError(rowNum, name,
+                        "Class '" + classTeacher + "' has no configured sections — a section cannot be assigned"));
+                return null;
+            }
+            if (!sectionName.isEmpty()) {
+                // Covers a cross-class section name: it won't resolve against this class's
+                // sections, so it's rejected here by name.
+                Optional<Section> section = sectionRepository.findBySchoolIdAndClassIdAndName(
+                        schoolId, schoolClass.get().getId(), sectionName);
+                if (section.isEmpty()) {
+                    errors.add(new BulkImportResultDTO.RowError(rowNum, name,
+                            "Section '" + sectionName + "' not found for class '" + classTeacher + "'"));
+                    return null;
+                }
+                classTeacherSectionId = section.get().getId();
+            }
+        }
+
         Teacher teacher = new Teacher();
         teacher.setName(name);
         teacher.setEmail(email);
@@ -273,6 +349,7 @@ public class TeacherBulkImportService {
         teacher.setDob(dob);
         teacher.setGender(gender.isEmpty()            ? null : gender);
         teacher.setClassTeacher(classTeacher.isEmpty() ? null : classTeacher);
+        teacher.setClassTeacherSectionId(classTeacherSectionId);
         teacher.setJoiningDate(joiningDate);
         return teacher;
     }

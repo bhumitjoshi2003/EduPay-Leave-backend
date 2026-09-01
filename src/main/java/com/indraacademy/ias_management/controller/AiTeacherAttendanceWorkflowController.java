@@ -2,16 +2,20 @@ package com.indraacademy.ias_management.controller;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
 import com.indraacademy.ias_management.entity.AiTeacherAttendanceReminderBatch;
-import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.AiTeacherAttendanceReminderBatchRepository;
-import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.service.AiReminderBatchService;
 import com.indraacademy.ias_management.service.AttendanceReminderService;
 import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.ScopedAccess;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.TeacherScope;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,6 +32,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.WebUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,11 +48,18 @@ import java.util.stream.Collectors;
  *
  * The load-bearing difference is authorization: every endpoint here additionally enforces that
  * the batch belongs to the SAME teacher who started it (not just "any admin in the school", as
- * the admin variant allows), and className is NEVER accepted from the request body — it is
- * always resolved server-side from the teacher's own classTeacher field (mirroring
- * AiProxyController.resolveClassName), both at start AND re-verified on resume, so a teacher
- * whose class assignment changes after starting a batch cannot still approve it for a class
- * they no longer own.
+ * the admin variant allows), and neither className NOR the section is ever accepted from the
+ * request body — both are always resolved server-side from the teacher's own Teacher row via
+ * {@link com.indraacademy.ias_management.service.TeacherClassScopeService}, both at start AND
+ * re-verified on resume/dispatch, so a teacher whose class or section assignment changes after
+ * starting a batch cannot still approve it for students they no longer own.
+ *
+ * <p>Section scoping matters here specifically because a class name stopped being an
+ * authorization boundary once a class can be split into sections: without it, the class-teacher
+ * of Class 12 / Science could email the parents of Class 12 / Commerce students. Selection at
+ * start is already section-scoped because the graph loads the roster back through
+ * AttendanceController with the teacher's own token; dispatch re-authorizes every studentId
+ * individually, because those ids arrive in the dispatch body rather than from the batch row.
  */
 @RestController
 @RequestMapping("/api/ai/workflows/teacher-attendance-reminders")
@@ -58,6 +70,9 @@ public class AiTeacherAttendanceWorkflowController {
     private static final int MAX_STORED_OUTCOMES = 50;
     static final String CRITERION_BELOW_THRESHOLD = "BELOW_THRESHOLD";
     static final String CRITERION_CONSECUTIVE_ABSENCE = "CONSECUTIVE_ABSENCE";
+    /** Recorded per student when a dispatched id turned out to be outside the requesting
+     *  teacher's own class+section — dropped before sending, counted as neither sent nor failed. */
+    static final String OUT_OF_SCOPE = "skipped_out_of_scope";
 
     @Value("${ai.service.url:http://localhost:8001}")
     private String aiServiceUrl;
@@ -67,7 +82,8 @@ public class AiTeacherAttendanceWorkflowController {
 
     @Autowired private AuthService authService;
     @Autowired private SecurityUtil securityUtil;
-    @Autowired private TeacherRepository teacherRepository;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
+    @Autowired private StudentRepository studentRepository;
     @Autowired private AiTeacherAttendanceReminderBatchRepository batchRepository;
     @Autowired private AttendanceReminderService attendanceReminderService;
     @Autowired private AttendanceService attendanceService;
@@ -111,15 +127,22 @@ public class AiTeacherAttendanceWorkflowController {
         String userId = authService.getUserId();
         Long schoolId = securityUtil.getSchoolId();
 
-        // className is NEVER trusted from the request body — always resolved here, exactly
-        // like AiProxyController.resolveClassName does for /chat requests.
-        String className = teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
-                .map(Teacher::getClassTeacher)
-                .orElse(null);
-        if (className == null || className.isBlank()) {
+        // className AND section are NEVER trusted from the request body — both are resolved
+        // here from the teacher's own Teacher row via TeacherClassScopeService, the same
+        // primitive AttendanceController/LeaveController use. A class name alone is not an
+        // authorization boundary for a sectioned class (Class 12 / Science vs Class 12 /
+        // Commerce), and a legacy assignment whose section was never resolved is BLOCKED
+        // rather than silently treated as "the whole class".
+        TeacherScope scope = teacherClassScopeService.resolveOwnScope(userId, schoolId);
+        if (!scope.hasClassResponsibility()) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(Map.of("error", "You are not assigned as a class teacher, so attendance reminders aren't available to you."));
         }
+        if (scope.sectionRequiredButMissing()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
+        }
+        String className = scope.className();
 
         Cookie accessTokenCookie = WebUtils.getCookie(request, "accessToken");
         if (accessTokenCookie == null) {
@@ -321,24 +344,66 @@ public class AiTeacherAttendanceWorkflowController {
             return ResponseEntity.badRequest().body(Map.of("error", "studentIds and session are required"));
         }
 
+        // The studentIds arrive in the dispatch body, i.e. they originate from the graph — so
+        // each one is re-authorized here against the teacher's OWN class+section, resolved live
+        // from their Teacher row. A class-level match alone is not enough: the roster the graph
+        // selected from is class-named, and a sectioned class (Class 12 / Science vs Class 12 /
+        // Commerce) belongs to two different teachers. This is the same per-student check
+        // MarkController.getStudentMarksForExam and ReportCardController.checkTeacherOwnsStudents
+        // apply. Anything out of scope is dropped and recorded, never emailed.
+        TeacherScope scope = teacherClassScopeService.resolveOwnScope(userId, schoolId);
+        if (scope.sectionRequiredButMissing()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                    "error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
+        }
+        Long effectiveSectionId = scope.sectionId();
+
+        List<String> scopedStudentIds = new ArrayList<>();
+        Map<String, String> outOfScope = new LinkedHashMap<>();
+        for (String studentId : studentIds) {
+            Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
+            String studentClassName = student != null ? student.getClassName() : null;
+            Long studentSectionId = student != null ? student.getSectionId() : null;
+            ScopedAccess access = teacherClassScopeService.authorizeAndScopeToStudent(
+                    Role.TEACHER, userId, schoolId, studentClassName, studentSectionId);
+            if (access.allowed()) {
+                scopedStudentIds.add(studentId);
+            } else {
+                log.warn("AI teacher attendance workflow {}: student {} is outside the requesting teacher's "
+                        + "class/section scope — dropped from dispatch.", workflowId, studentId);
+                outOfScope.put(studentId, OUT_OF_SCOPE);
+            }
+        }
+        if (scopedStudentIds.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                    "error", "None of these students are in your assigned class and section."));
+        }
+
         // For a consecutive-absence batch the email states the actual streak dates, so they are
         // recomputed HERE from the batch's own stored className/minConsecutiveDays rather than
         // accepted from the dispatch body — Spring stays the sole authority on what a parent is
-        // told, exactly as it already is for the attendance percentage.
+        // told, exactly as it already is for the attendance percentage. Scoped to the teacher's
+        // own section too, so the recomputation can never read another section's attendance.
         Map<String, List<String>> recentAbsenceDates = Map.of();
         if (CRITERION_CONSECUTIVE_ABSENCE.equals(batch.getCriterion()) && batch.getMinConsecutiveDays() != null) {
             recentAbsenceDates = attendanceService
-                    .getConsecutiveAbsentees(batch.getClassName(), batch.getMinConsecutiveDays(), null, session)
+                    .getConsecutiveAbsentees(batch.getClassName(), batch.getMinConsecutiveDays(), null, session, effectiveSectionId)
                     .stream()
                     .collect(Collectors.toMap(ConsecutiveAbsenceDTO::getStudentId, ConsecutiveAbsenceDTO::getAbsentDates));
         }
 
-        Map<String, String> outcomes = attendanceReminderService
-                .sendAttendanceReminderEmailsWithOutcomes(studentIds, session, recentAbsenceDates);
+        Map<String, String> sendOutcomes = attendanceReminderService
+                .sendAttendanceReminderEmailsWithOutcomes(scopedStudentIds, session, recentAbsenceDates);
         int sent = 0, failed = 0;
-        for (String outcome : outcomes.values()) {
+        for (String outcome : sendOutcomes.values()) {
             if ("sent".equals(outcome)) sent++; else failed++;
         }
+
+        // Dropped students are recorded alongside the real send results so the stored batch is
+        // an honest account of what happened, but they count as neither sent nor failed — a
+        // refusal to email outside the teacher's section is the check working, not an error.
+        Map<String, String> outcomes = new LinkedHashMap<>(sendOutcomes);
+        outcomes.putAll(outOfScope);
 
         batch.setStatus(failed == 0 ? AiReminderBatchService.SENT
                 : (sent == 0 ? AiReminderBatchService.FAILED : AiReminderBatchService.PARTIALLY_SENT));
@@ -355,8 +420,11 @@ public class AiTeacherAttendanceWorkflowController {
                 "Attendance",
                 null,
                 null,
-                "AI workflow " + workflowId + ": " + sent + " sent, " + failed + " failed, class "
-                        + batch.getClassName() + ", session " + session + ", criterion " + batch.getCriterion()
+                "AI workflow " + workflowId + ": " + sent + " sent, " + failed + " failed, "
+                        + outOfScope.size() + " dropped out-of-scope, class "
+                        + batch.getClassName()
+                        + (effectiveSectionId != null ? " (section " + effectiveSectionId + ")" : "")
+                        + ", session " + session + ", criterion " + batch.getCriterion()
                         + (batch.getMinConsecutiveDays() != null ? " (>=" + batch.getMinConsecutiveDays() + " consecutive days)" : ""),
                 request.getRemoteAddr()
         );
@@ -376,13 +444,17 @@ public class AiTeacherAttendanceWorkflowController {
         if (!Objects.equals(batch.getTeacherUserId(), userId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "This workflow does not belong to you."));
         }
-        // Re-verify current class ownership, not just at start — a teacher's class
-        // reassignment after the batch started must not leave a stale approval capability.
-        String currentClassName = teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
-                .map(Teacher::getClassTeacher)
-                .orElse(null);
-        if (!Objects.equals(batch.getClassName(), currentClassName)) {
+        // Re-verify current class AND section ownership, not just at start — a teacher's class
+        // or section reassignment after the batch started must not leave a stale approval
+        // capability, and a class whose section assignment is missing/ambiguous is blocked
+        // outright rather than falling back to the combined class.
+        TeacherScope scope = teacherClassScopeService.resolveOwnScope(userId, schoolId);
+        if (!Objects.equals(batch.getClassName(), scope.className())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "You are no longer assigned to this class."));
+        }
+        if (scope.sectionRequiredButMissing()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                    "error", TeacherClassScopeService.SECTION_REQUIRED_MESSAGE));
         }
         return null;
     }

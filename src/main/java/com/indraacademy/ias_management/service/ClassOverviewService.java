@@ -32,6 +32,13 @@ public class ClassOverviewService {
     @Autowired private SecurityUtil                 securityUtil;
 
     public ClassOverviewDTO getClassOverview(Long templateId, String session, String className) {
+        return getClassOverview(templateId, session, className, null);
+    }
+
+    /** @param sectionId when non-null, restricts to students in that section only — used for a
+     *  section-scoped class-teacher so they only ever see the overview for their own section,
+     *  not the whole class. Null (ADMIN, or a class with no sections) returns the whole class. */
+    public ClassOverviewDTO getClassOverview(Long templateId, String session, String className, Long sectionId) {
         Long schoolId = securityUtil.getSchoolId();
 
         // ── Template → assessmentGroupId + gradingSystem ───────────────────
@@ -42,8 +49,9 @@ public class ClassOverviewService {
                 ? template.getGradingOverride() : "CBSE";
 
         // ── Students in class ──────────────────────────────────────────────
-        List<Student> classStudents = studentRepository
-                .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        List<Student> classStudents = (sectionId != null)
+                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
+                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
         if (classStudents.isEmpty()) {
             return ClassOverviewDTO.empty(className, session, template.getName());
         }

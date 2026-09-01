@@ -1,9 +1,13 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.LimitType;
+import com.indraacademy.ias_management.entity.SchoolClass;
+import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.dto.TeacherExitRequest;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
@@ -60,6 +64,12 @@ public class TeacherService {
     @Autowired
     private IdGeneratorService idGeneratorService;
 
+    @Autowired
+    private SchoolClassRepository schoolClassRepository;
+
+    @Autowired
+    private SectionRepository sectionRepository;
+
     @Transactional(readOnly = true)
     public Optional<Teacher> getTeacher(String teacherId) {
         if (teacherId == null || teacherId.trim().isEmpty()) {
@@ -97,6 +107,7 @@ public class TeacherService {
 
         try {
             Long schoolId = securityUtil.getSchoolId();
+            validateAndNormalizeClassResponsibility(teacher, schoolId);
             Optional<Teacher> existingTeacher = teacherRepository.findByTeacherIdAndSchoolId(teacher.getTeacherId(), schoolId);
 
             String oldValue = null;
@@ -159,6 +170,7 @@ public class TeacherService {
 
         try {
             Long schoolId = securityUtil.getSchoolId();
+            validateAndNormalizeClassResponsibility(teacher, schoolId);
             try {
                 entitlementService.checkLimit(schoolId, LimitType.STAFF, 1);
             } catch (IllegalStateException e) {
@@ -252,6 +264,61 @@ public class TeacherService {
         auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "REACTIVATE_TEACHER", "Teacher",
                 teacherId, "LEFT", "ACTIVE", httpRequest.getRemoteAddr());
         return saved;
+    }
+
+    /**
+     * Validates and normalizes {@code teacher.classTeacher}/{@code classTeacherSectionId}
+     * in place before save — the single write-time enforcement point shared by manual
+     * create/update ({@link #addTeacher}/{@link #updateTeacher}) and CSV bulk import
+     * ({@link TeacherBulkImportService}). Never trusts the caller's section value; always
+     * re-derives what's actually required/allowed from the canonical SchoolClass/Section data.
+     *
+     * <ul>
+     *   <li>Blank/null classTeacher → both fields cleared (clearing responsibility clears any
+     *       section too).</li>
+     *   <li>classTeacher must name an existing class in this school.</li>
+     *   <li>If that class has configured (active) sections, a section is REQUIRED, and must be
+     *       an active Section belonging to that exact class and school — anything else
+     *       (another class's section, another school's section, an inactive section, or no
+     *       section at all) is rejected outright.</li>
+     *   <li>If that class has no configured sections, any incoming sectionId is rejected (not
+     *       silently dropped) rather than trusted — it can only be stale/incorrect input.</li>
+     * </ul>
+     */
+    public void validateAndNormalizeClassResponsibility(Teacher teacher, Long schoolId) {
+        String classTeacher = teacher.getClassTeacher();
+        if (classTeacher == null || classTeacher.isBlank()) {
+            teacher.setClassTeacher(null);
+            teacher.setClassTeacherSectionId(null);
+            return;
+        }
+
+        SchoolClass schoolClass = schoolClassRepository.findBySchoolIdAndName(schoolId, classTeacher)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Class Teacher Of: class '" + classTeacher + "' does not exist."));
+
+        List<Section> activeSections = sectionRepository
+                .findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(schoolId, schoolClass.getId(), true);
+        Long sectionId = teacher.getClassTeacherSectionId();
+
+        if (!activeSections.isEmpty()) {
+            if (sectionId == null) {
+                throw new IllegalArgumentException(
+                        "Class '" + classTeacher + "' has sections configured — a Section/Group must be selected.");
+            }
+            boolean belongsToClass = activeSections.stream().anyMatch(s -> s.getId().equals(sectionId));
+            if (!belongsToClass) {
+                // Covers all three rejection cases at once: another class's section, another
+                // school's section (won't even be in activeSections, which is already
+                // schoolId-scoped), or an inactive section (excluded by the active=true query).
+                throw new IllegalArgumentException(
+                        "The selected section does not belong to class '" + classTeacher + "' in this school, "
+                                + "or is inactive.");
+            }
+        } else if (sectionId != null) {
+            throw new IllegalArgumentException(
+                    "Class '" + classTeacher + "' has no configured sections — a section cannot be assigned.");
+        }
     }
 
     @Transactional

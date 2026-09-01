@@ -694,6 +694,15 @@ public class AttendanceService {
                                                                int minConsecutiveDays,
                                                                Integer lookbackDays,
                                                                String session) {
+        return getConsecutiveAbsentees(className, minConsecutiveDays, lookbackDays, session, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ConsecutiveAbsenceDTO> getConsecutiveAbsentees(String className,
+                                                               int minConsecutiveDays,
+                                                               Integer lookbackDays,
+                                                               String session,
+                                                               Long sectionId) {
         if (minConsecutiveDays < 1) {
             throw new IllegalArgumentException("minConsecutiveDays must be at least 1");
         }
@@ -732,14 +741,16 @@ public class AttendanceService {
         // Cumulative figures come from the existing session computation so the two views agree.
         Map<String, ClassAttendanceSummaryDTO> sessionByStudent = new HashMap<>();
         if (session != null && !session.isBlank()) {
-            for (ClassAttendanceSummaryDTO row : getClassSummary(className, "year", null, null, session, null)) {
+            for (ClassAttendanceSummaryDTO row : getClassSummary(className, "year", null, null, session, sectionId)) {
                 sessionByStudent.put(row.getStudentId(), row);
             }
         }
 
         // ACTIVE-only — an exited student must never surface in a consecutive-absence report,
         // even if their old attendance rows are still present in the marked-day window above.
-        List<Student> students = studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        List<Student> students = (sectionId != null)
+                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
+                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
         List<ConsecutiveAbsenceDTO> result = new ArrayList<>();
 
         for (Student student : students) {

@@ -6,6 +6,8 @@ import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService;
+import com.indraacademy.ias_management.service.TeacherClassScopeService.TeacherScope;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -74,6 +76,7 @@ public class AiProxyController {
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private AdminRepository adminRepository;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
     @Autowired private ObjectMapper objectMapper;
 
     // RestTemplate is fine here — calls are infrequent and latency-bound by LLM anyway.
@@ -133,9 +136,11 @@ public class AiProxyController {
                     .body(Map.of("error", "Access token missing"));
         }
 
-        // Resolve display name and class from the DB — same pattern as AuthController.
+        // Resolve display name and class scope from the DB — same pattern as AuthController.
+        // The class scope (class AND section) comes from TeacherClassScopeService, so it can
+        // never advertise wider reach than the REST endpoints the AI's tools call back into.
         String name = resolveName(userId, role, schoolId);
-        String className = resolveClassName(userId, role, schoolId);
+        ClassContext classContext = resolveClassContext(userId, role, schoolId);
 
         // Build the payload for the Python AI service.
         Map<String, Object> userCtx = new LinkedHashMap<>();
@@ -143,7 +148,7 @@ public class AiProxyController {
         userCtx.put("role", role);
         userCtx.put("schoolId", schoolId);
         userCtx.put("name", name);
-        userCtx.put("className", className);
+        putClassContext(userCtx, classContext);
 
         Map<String, Object> aiPayload = new LinkedHashMap<>();
         aiPayload.put("message", message);
@@ -220,7 +225,7 @@ public class AiProxyController {
         userCtx.put("role", role);
         userCtx.put("schoolId", schoolId);
         userCtx.put("name", resolveName(userId, role, schoolId));
-        userCtx.put("className", resolveClassName(userId, role, schoolId));
+        putClassContext(userCtx, resolveClassContext(userId, role, schoolId));
 
         Map<String, Object> aiPayload = new LinkedHashMap<>();
         aiPayload.put("message", message);
@@ -314,18 +319,78 @@ public class AiProxyController {
         }
     }
 
-    private String resolveClassName(String userId, String role, Long schoolId) {
+    /**
+     * The caller's authoritative class scope for this chat turn.
+     *
+     * @param className          the class the caller is scoped to, or null when they have none
+     *                           usable
+     * @param sectionId          the section within that class, or null when the class has no
+     *                           configured sections
+     * @param sectionScopeBlocked true for a TEACHER whose class HAS sections but whose own
+     *                           section assignment is missing/ambiguous — they are blocked from
+     *                           class data entirely until an admin resolves it
+     */
+    private record ClassContext(String className, Long sectionId, boolean sectionScopeBlocked) {
+        static final ClassContext NONE = new ClassContext(null, null, false);
+        static final ClassContext BLOCKED = new ClassContext(null, null, true);
+    }
+
+    /**
+     * Resolves the class context handed to the AI service, replacing the old
+     * {@code resolveClassName}, which returned a TEACHER's raw {@code classTeacher} string.
+     *
+     * <p><b>Why this changed.</b> A class name alone stopped being an authorization boundary
+     * once a class can be split into sections — the class-teacher of Class 12 / Science and of
+     * Class 12 / Commerce both have {@code classTeacher = "12"}. The section now comes from
+     * {@link TeacherClassScopeService#resolveOwnScope}, the same primitive every class-scoped
+     * REST endpoint uses, so this context can never disagree with what those endpoints enforce.
+     *
+     * <p><b>What this is and isn't.</b> The actual enforcement is NOT here and must never be:
+     * the AI service's tools call back into our own REST endpoints with the teacher's token,
+     * and those endpoints (AttendanceController, LeaveController, MarkController, …) re-resolve
+     * the teacher's section themselves and refuse anything outside it. This method only makes
+     * the context we advertise match that reality, so the model isn't told it has whole-class
+     * reach that Spring will then refuse. Concretely: a teacher blocked by a missing section
+     * assignment is given a null className, which makes the class-scoped tools decline up front
+     * instead of promising data and returning a bare 403.
+     *
+     * <p>{@code sectionId}/{@code sectionScopeBlocked} are forwarded for the AI service to use
+     * once its own {@code UserContext} schema declares them — until then Pydantic drops them as
+     * unknown fields. They are context, never authority: Python must never decide a teacher's
+     * section from them, only ever be told what Spring already resolved.
+     */
+    private ClassContext resolveClassContext(String userId, String role, Long schoolId) {
         try {
-            return switch (role) {
-                case Role.STUDENT -> studentRepository.findByStudentIdAndSchoolId(userId, schoolId)
-                        .map(s -> s.getClassName()).orElse(null);
-                case Role.TEACHER -> teacherRepository.findByTeacherIdAndSchoolId(userId, schoolId)
-                        .map(t -> t.getClassTeacher()).orElse(null);
-                default -> null;
-            };
+            if (Role.STUDENT.equals(role)) {
+                return studentRepository.findByStudentIdAndSchoolId(userId, schoolId)
+                        .map(s -> new ClassContext(s.getClassName(), s.getSectionId(), false))
+                        .orElse(ClassContext.NONE);
+            }
+            if (Role.TEACHER.equals(role)) {
+                TeacherScope scope = teacherClassScopeService.resolveOwnScope(userId, schoolId);
+                if (!scope.hasClassResponsibility()) {
+                    return ClassContext.NONE;
+                }
+                if (scope.sectionRequiredButMissing()) {
+                    // Never advertise the class: this teacher's authority over it is ambiguous,
+                    // and every class endpoint will refuse them until an admin resolves it.
+                    log.warn("Teacher {} has an unresolved section for class {} — AI chat context "
+                            + "reports no class scope.", userId, scope.className());
+                    return ClassContext.BLOCKED;
+                }
+                return new ClassContext(scope.className(), scope.sectionId(), false);
+            }
+            return ClassContext.NONE;
         } catch (Exception e) {
-            log.warn("Could not resolve className for userId={}: {}", userId, e.getMessage());
-            return null;
+            log.warn("Could not resolve class context for userId={}: {}", userId, e.getMessage());
+            return ClassContext.NONE;
         }
+    }
+
+    /** Adds the resolved class scope to the user context sent to the AI service. */
+    private void putClassContext(Map<String, Object> userCtx, ClassContext ctx) {
+        userCtx.put("className", ctx.className());
+        userCtx.put("sectionId", ctx.sectionId());
+        userCtx.put("sectionScopeBlocked", ctx.sectionScopeBlocked());
     }
 }
