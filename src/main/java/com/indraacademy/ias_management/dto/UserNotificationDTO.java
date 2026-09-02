@@ -9,6 +9,8 @@ import com.indraacademy.ias_management.notification.NotificationPriority;
 @Data
 public class UserNotificationDTO {
     private Long id;
+    /** Explicit recipient inbox-row identifier used by PUT /notification/user/{inboxId}/read. */
+    private Long inboxId;
     private String userId;
     private String title;
     private String message;

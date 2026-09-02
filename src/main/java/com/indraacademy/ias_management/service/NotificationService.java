@@ -329,6 +329,7 @@ public class NotificationService {
     private UserNotificationDTO toDto(UserNotification row) {
         UserNotificationDTO dto = new UserNotificationDTO();
         dto.setId(row.getId());
+        dto.setInboxId(row.getId());
         dto.setUserId(row.getUserId());
         dto.setIsRead(row.getIsRead());
         dto.setCreatedAt(row.getCreatedAt());

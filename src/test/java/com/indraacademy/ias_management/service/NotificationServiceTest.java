@@ -76,6 +76,7 @@ class NotificationServiceTest {
 
         assertThat(result.getTotalElements()).isEqualTo(1);
         assertThat(result.getContent().getFirst().getTitle()).isEqualTo("School update");
+        assertThat(result.getContent().getFirst().getInboxId()).isEqualTo(7L);
         verify(inboxRepository, never()).save(any());
         verify(publisher, never()).publish(any());
     }
