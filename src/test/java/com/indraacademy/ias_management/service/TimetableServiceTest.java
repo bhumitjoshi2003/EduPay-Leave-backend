@@ -45,6 +45,8 @@ class TimetableServiceTest {
     @Mock private TeacherRepository teacherRepository;
     @Mock private SectionRepository sectionRepository;
     @Mock private TimetableValidationService timetableValidationService;
+    @Mock private TeacherClassScopeService teacherClassScopeService;
+    @Mock private com.indraacademy.ias_management.repository.TeacherClassGrantRepository teacherClassGrantRepository;
     @Mock private AuditService auditService;
     @Mock private SecurityUtil securityUtil;
     @Mock private HttpServletRequest request;
@@ -60,6 +62,8 @@ class TimetableServiceTest {
         ReflectionTestUtils.setField(service, "teacherRepository", teacherRepository);
         ReflectionTestUtils.setField(service, "sectionRepository", sectionRepository);
         ReflectionTestUtils.setField(service, "timetableValidationService", timetableValidationService);
+        ReflectionTestUtils.setField(service, "teacherClassScopeService", teacherClassScopeService);
+        ReflectionTestUtils.setField(service, "teacherClassGrantRepository", teacherClassGrantRepository);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
@@ -92,7 +96,7 @@ class TimetableServiceTest {
     void create_validatesThenSaves() {
         TimetableEntry entry = entry("Mathematics", "T1", null);
 
-        TimetableEntry saved = service.create(entry, request);
+        TimetableEntry saved = service.create(entry, "ADMIN", "admin1", request);
 
         verify(timetableValidationService).validate(entry, SCHOOL_ID, null);
         assertThat(saved.getSchoolId()).isEqualTo(SCHOOL_ID);
@@ -105,8 +109,130 @@ class TimetableServiceTest {
         doThrow(new DataIntegrityViolationException("Period already assigned"))
                 .when(timetableValidationService).validate(entry, SCHOOL_ID, null);
 
-        assertThatThrownBy(() -> service.create(entry, request))
+        assertThatThrownBy(() -> service.create(entry, "ADMIN", "admin1", request))
                 .isInstanceOf(DataIntegrityViolationException.class);
+
+        verify(timetableRepository, never()).save(any());
+    }
+
+    // ── create — TEACHER self-service ("+ Add Period" from a teacher's own schedule) ──
+
+    @Test
+    void create_teacherRole_forcesOwnTeacherId_ignoringSpoofedValue() {
+        TimetableEntry entry = entry("Mathematics", "T999", null); // spoofed teacherId
+        entry.setSectionId(5L);
+        TimetableEntry alreadyTeaches = entry("Physics", "T1", null);
+        alreadyTeaches.setSectionId(5L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of(alreadyTeaches));
+
+        service.create(entry, "TEACHER", "T1", request);
+
+        assertThat(entry.getTeacherId()).isEqualTo("T1");
+        verify(timetableValidationService).validate(entry, SCHOOL_ID, null);
+    }
+
+    @Test
+    void create_teacherRole_alreadyTeachesClassAndSection_allowed() {
+        TimetableEntry entry = entry("Mathematics", "T1", null);
+        entry.setSectionId(5L);
+        TimetableEntry alreadyTeaches = entry("Physics", "T1", null);
+        alreadyTeaches.setSectionId(5L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of(alreadyTeaches));
+
+        TimetableEntry saved = service.create(entry, "TEACHER", "T1", request);
+
+        assertThat(saved).isNotNull();
+        verify(teacherClassScopeService, never()).resolveOwnScope(any(), any());
+    }
+
+    @Test
+    void create_teacherRole_isClassTeacherOfExactSection_allowed() {
+        TimetableEntry entry = entry("Mathematics", "T1", null);
+        entry.setClassName("11");
+        entry.setSectionId(5L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of());
+        when(teacherClassScopeService.resolveOwnScope("T1", SCHOOL_ID))
+                .thenReturn(new TeacherClassScopeService.TeacherScope("11", 5L, false));
+
+        TimetableEntry saved = service.create(entry, "TEACHER", "T1", request);
+
+        assertThat(saved).isNotNull();
+        verify(timetableValidationService).validate(entry, SCHOOL_ID, null);
+    }
+
+    @Test
+    void create_teacherRole_notConnectedToClass_rejected() {
+        TimetableEntry entry = entry("Mathematics", "T1", null);
+        entry.setClassName("11");
+        entry.setSectionId(5L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of());
+        when(teacherClassScopeService.resolveOwnScope("T1", SCHOOL_ID))
+                .thenReturn(new TeacherClassScopeService.TeacherScope(null, null, false));
+
+        assertThatThrownBy(() -> service.create(entry, "TEACHER", "T1", request))
+                .isInstanceOf(SecurityException.class);
+
+        verify(timetableValidationService, never()).validate(any(), anyLong(), any());
+        verify(timetableRepository, never()).save(any());
+    }
+
+    @Test
+    void create_teacherRole_legacyAmbiguousClassTeacherAssignment_stillRejected() {
+        // Same class name, but the class-teacher assignment is ambiguous (a sectioned class with
+        // no section on file) — must not be treated as broadened write access.
+        TimetableEntry entry = entry("Mathematics", "T1", null);
+        entry.setClassName("11");
+        entry.setSectionId(5L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of());
+        when(teacherClassScopeService.resolveOwnScope("T1", SCHOOL_ID))
+                .thenReturn(new TeacherClassScopeService.TeacherScope("11", null, true));
+
+        assertThatThrownBy(() -> service.create(entry, "TEACHER", "T1", request))
+                .isInstanceOf(SecurityException.class);
+
+        verify(timetableRepository, never()).save(any());
+    }
+
+    @Test
+    void create_teacherRole_hasAdminGrantForClassAndSection_allowed() {
+        // No existing periods there, not the class-teacher — but an admin explicitly granted
+        // access to exactly this class+section (e.g. the teacher's genuine first period there).
+        TimetableEntry entry = entry("Mathematics", "T1", null);
+        entry.setClassName("12");
+        entry.setSectionId(9L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of());
+        when(teacherClassScopeService.resolveOwnScope("T1", SCHOOL_ID))
+                .thenReturn(new TeacherClassScopeService.TeacherScope(null, null, false));
+        when(teacherClassGrantRepository.existsByTeacherIdAndClassNameAndSectionIdAndSchoolId("T1", "12", 9L, SCHOOL_ID))
+                .thenReturn(true);
+
+        TimetableEntry saved = service.create(entry, "TEACHER", "T1", request);
+
+        assertThat(saved).isNotNull();
+        verify(timetableValidationService).validate(entry, SCHOOL_ID, null);
+    }
+
+    @Test
+    void create_teacherRole_grantExistsForDifferentSection_stillRejected() {
+        TimetableEntry entry = entry("Mathematics", "T1", null);
+        entry.setClassName("12");
+        entry.setSectionId(9L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of());
+        when(teacherClassScopeService.resolveOwnScope("T1", SCHOOL_ID))
+                .thenReturn(new TeacherClassScopeService.TeacherScope(null, null, false));
+        // Grant exists, but for a different section (10L, not the requested 9L)
+        when(teacherClassGrantRepository.existsByTeacherIdAndClassNameAndSectionIdAndSchoolId("T1", "12", 9L, SCHOOL_ID))
+                .thenReturn(false);
+
+        assertThatThrownBy(() -> service.create(entry, "TEACHER", "T1", request))
+                .isInstanceOf(SecurityException.class);
 
         verify(timetableRepository, never()).save(any());
     }
@@ -178,7 +304,7 @@ class TimetableServiceTest {
         existing.setClassId(42L);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
-        TimetableEntry saved = service.addSimultaneous(5L, "Biology", "T2", request);
+        TimetableEntry saved = service.addSimultaneous(5L, "Biology", "T2", "ADMIN", "admin1", request);
 
         assertThat(existing.getSimultaneousGroup()).isNotBlank();
         assertThat(saved.getSimultaneousGroup()).isEqualTo(existing.getSimultaneousGroup());
@@ -203,7 +329,7 @@ class TimetableServiceTest {
         existing.setSchoolId(SCHOOL_ID);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
-        TimetableEntry saved = service.addSimultaneous(5L, "Biology", "T2", request);
+        TimetableEntry saved = service.addSimultaneous(5L, "Biology", "T2", "ADMIN", "admin1", request);
 
         assertThat(saved.getSimultaneousGroup()).isEqualTo("MATH_BIO");
         // existing already had a tag — only the new candidate should be persisted
@@ -217,7 +343,7 @@ class TimetableServiceTest {
         existing.setSchoolId(SCHOOL_ID);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
-        service.addSimultaneous(5L, "Biology", "T2", request);
+        service.addSimultaneous(5L, "Biology", "T2", "ADMIN", "admin1", request);
 
         ArgumentCaptor<TimetableEntry> captor = ArgumentCaptor.forClass(TimetableEntry.class);
         verify(timetableValidationService).validate(captor.capture(), eq(SCHOOL_ID), org.mockito.ArgumentMatchers.isNull());
@@ -234,7 +360,7 @@ class TimetableServiceTest {
         doThrow(new DataIntegrityViolationException("Teacher already has an overlapping period"))
                 .when(timetableValidationService).validate(any(TimetableEntry.class), eq(SCHOOL_ID), org.mockito.ArgumentMatchers.isNull());
 
-        assertThatThrownBy(() -> service.addSimultaneous(5L, "Biology", "T2", request))
+        assertThatThrownBy(() -> service.addSimultaneous(5L, "Biology", "T2", "ADMIN", "admin1", request))
                 .isInstanceOf(DataIntegrityViolationException.class);
 
         // existing already had a tag (no pre-save needed), and validation rejected the
@@ -249,9 +375,46 @@ class TimetableServiceTest {
         existing.setSchoolId(999L);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> service.addSimultaneous(5L, "Biology", "T2", request))
+        assertThatThrownBy(() -> service.addSimultaneous(5L, "Biology", "T2", "ADMIN", "admin1", request))
                 .isInstanceOf(NoSuchElementException.class);
 
         verify(timetableValidationService, never()).validate(any(), anyLong(), any());
+    }
+
+    // ── addSimultaneous — TEACHER self-service ────────────────────────────────────────
+
+    @Test
+    void addSimultaneous_teacherRole_forcesOwnTeacherId_ignoringRequestedTeacherId() {
+        TimetableEntry existing = entry("Mathematics", "T1", "MATH_BIO");
+        existing.setId(5L);
+        existing.setSchoolId(SCHOOL_ID);
+        existing.setSectionId(5L);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+        TimetableEntry alreadyTeaches = entry("Physics", "T1", null);
+        alreadyTeaches.setSectionId(5L);
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of(alreadyTeaches));
+
+        TimetableEntry saved = service.addSimultaneous(5L, "Biology", "T999" /* spoofed */, "TEACHER", "T1", request);
+
+        assertThat(saved.getTeacherId()).isEqualTo("T1");
+    }
+
+    @Test
+    void addSimultaneous_teacherRole_notConnectedToExistingEntrysClass_rejected() {
+        TimetableEntry existing = entry("Mathematics", "T2", "MATH_BIO");
+        existing.setId(5L);
+        existing.setSchoolId(SCHOOL_ID);
+        existing.setSectionId(5L);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+        when(timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc("T1", SCHOOL_ID))
+                .thenReturn(java.util.List.of());
+        when(teacherClassScopeService.resolveOwnScope("T1", SCHOOL_ID))
+                .thenReturn(new TeacherClassScopeService.TeacherScope(null, null, false));
+
+        assertThatThrownBy(() -> service.addSimultaneous(5L, "Biology", "T1", "TEACHER", "T1", request))
+                .isInstanceOf(SecurityException.class);
+
+        verify(timetableRepository, never()).save(any());
     }
 }

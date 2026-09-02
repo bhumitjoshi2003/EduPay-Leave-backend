@@ -93,19 +93,23 @@ public class TimetableController {
 
     /**
      * POST /api/timetable
-     * ADMIN / SUPER_ADMIN only.
+     * ADMIN / SUPER_ADMIN: any teacher, any class. TEACHER: may only add themselves into a
+     * class/section they already teach or are the class-teacher of — enforced server-side in
+     * TimetableService#create, not just by this role gate.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
     @PostMapping
     public ResponseEntity<?> create(@Valid @RequestBody TimetableEntry entry, HttpServletRequest request) {
         log.info("POST timetable: class={}, day={}, period={}", entry.getClassName(), entry.getDay(), entry.getPeriodNumber());
         try {
-            TimetableEntry saved = timetableService.create(entry, request);
+            TimetableEntry saved = timetableService.create(entry, authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.status(HttpStatus.CREATED).body(saved);
         } catch (DataIntegrityViolationException e) {
             // Surfaces the specific reason (slot conflict, group mismatch, teacher double-booking,
             // etc.) rather than letting GlobalExceptionHandler's generic 409 message swallow it.
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
         }
     }
 
@@ -127,21 +131,26 @@ public class TimetableController {
 
     /**
      * POST /api/timetable/{id}/simultaneous
-     * ADMIN / SUPER_ADMIN only. Adds a second subject to the same slot as entry {id} — the
-     * "+ Simultaneous" action. Class/section/day/period/time are inherited server-side from the
-     * existing entry and the simultaneousGroup tag is generated/reused automatically; the admin
-     * only ever supplies the new subject and teacher. See TimetableService#addSimultaneous.
+     * ADMIN / SUPER_ADMIN: any teacher. TEACHER: always assigned to themselves regardless of
+     * {@code body.teacherId}, and must already teach or be the class-teacher of entry {id}'s
+     * class/section — enforced server-side in TimetableService#addSimultaneous. Adds a second
+     * subject to the same slot as entry {id} — the "+ Simultaneous" action. Class/section/day
+     * /period/time are inherited server-side from the existing entry and the simultaneousGroup
+     * tag is generated/reused automatically.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
     @PostMapping("/{id}/simultaneous")
     public ResponseEntity<?> addSimultaneous(@PathVariable Long id,
             @Valid @RequestBody TimetableDtos.AddSimultaneousRequest body, HttpServletRequest request) {
         log.info("POST timetable/{}/simultaneous", id);
         try {
-            TimetableEntry saved = timetableService.addSimultaneous(id, body.subjectName(), body.teacherId(), request);
+            TimetableEntry saved = timetableService.addSimultaneous(id, body.subjectName(), body.teacherId(),
+                    authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.status(HttpStatus.CREATED).body(saved);
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
         }
     }
 

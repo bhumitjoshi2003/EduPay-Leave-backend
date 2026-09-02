@@ -2,8 +2,10 @@ package com.indraacademy.ias_management.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.TimetableEntry;
 import com.indraacademy.ias_management.repository.SectionRepository;
+import com.indraacademy.ias_management.repository.TeacherClassGrantRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.TimetableRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -26,6 +28,8 @@ public class TimetableService {
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SectionRepository sectionRepository;
     @Autowired private TimetableValidationService timetableValidationService;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
+    @Autowired private TeacherClassGrantRepository teacherClassGrantRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -45,8 +49,22 @@ public class TimetableService {
         return timetableRepository.findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc(teacherId, securityUtil.getSchoolId());
     }
 
-    public TimetableEntry create(TimetableEntry entry, HttpServletRequest request) {
+    /**
+     * @param role            the caller's role — ADMIN/SUPER_ADMIN may create a period for any
+     *                        teacher in any class; TEACHER may only add themselves into a class
+     *                        or section they already have a real relationship with (see
+     *                        {@link #authorizeTeacherWrite}), and their teacherId is always
+     *                        forced to their own id regardless of what {@code entry} carries.
+     * @param currentTeacherId the caller's own teacherId; ignored unless role is TEACHER.
+     */
+    public TimetableEntry create(TimetableEntry entry, String role, String currentTeacherId, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
+
+        if (Role.TEACHER.equals(role)) {
+            entry.setTeacherId(currentTeacherId);
+            authorizeTeacherWrite(currentTeacherId, schoolId, entry.getClassName(), entry.getSectionId());
+        }
+
         timetableValidationService.validate(entry, schoolId, null);
 
         entry.setSchoolId(schoolId);
@@ -127,13 +145,24 @@ public class TimetableService {
      * is the third subject joining an existing pair), that tag is reused as-is. Either way, the
      * admin never sees or types this value — see TimetableEntry#simultaneousGroup and
      * TimetableValidationService for why the tag exists at all.
+     *
+     * @param requestedTeacherId the teacher to assign the new subject to; only honored for
+     *                           ADMIN/SUPER_ADMIN — a TEACHER caller is always assigned to
+     *                           themselves (see {@code currentTeacherId}), and must already have
+     *                           a relationship with the existing entry's class/section.
      */
     @Transactional
-    public TimetableEntry addSimultaneous(Long existingId, String subjectName, String teacherId, HttpServletRequest request) {
+    public TimetableEntry addSimultaneous(Long existingId, String subjectName, String requestedTeacherId,
+            String role, String currentTeacherId, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         TimetableEntry existing = timetableRepository.findById(existingId)
                 .filter(e -> schoolId.equals(e.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Timetable entry not found: " + existingId));
+
+        String teacherId = Role.TEACHER.equals(role) ? currentTeacherId : requestedTeacherId;
+        if (Role.TEACHER.equals(role)) {
+            authorizeTeacherWrite(currentTeacherId, schoolId, existing.getClassName(), existing.getSectionId());
+        }
 
         String group = existing.getSimultaneousGroup();
         if (group == null || group.isBlank()) {
@@ -207,6 +236,38 @@ public class TimetableService {
                 null,
                 request.getRemoteAddr()
         );
+    }
+
+    /**
+     * TEACHER-only guard for manual timetable writes (create / addSimultaneous): a teacher may
+     * only add a period into a class+section they already have a real relationship with — they
+     * already teach there (an existing timetable entry names them), they're its class-teacher
+     * (and that assignment isn't a legacy-ambiguous one still missing a required section — see
+     * TeacherClassScopeService), or an admin has explicitly granted them access to it (see
+     * TeacherClassGrantService — for a class/section with neither of the above yet, e.g. a
+     * teacher's genuinely first period there that the admin hasn't entered). ADMIN/SUPER_ADMIN
+     * never call this.
+     */
+    private void authorizeTeacherWrite(String teacherId, Long schoolId, String className, Long sectionId) {
+        boolean alreadyTeachesHere = timetableRepository
+                .findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc(teacherId, schoolId).stream()
+                .anyMatch(e -> e.getClassName().equals(className) && java.util.Objects.equals(e.getSectionId(), sectionId));
+        if (alreadyTeachesHere) return;
+
+        TeacherClassScopeService.TeacherScope scope = teacherClassScopeService.resolveOwnScope(teacherId, schoolId);
+        boolean isOwnClassTeacherSlot = scope.hasClassResponsibility()
+                && !scope.sectionRequiredButMissing()
+                && className.equals(scope.className())
+                && java.util.Objects.equals(scope.sectionId(), sectionId);
+        if (isOwnClassTeacherSlot) return;
+
+        boolean hasAdminGrant = teacherClassGrantRepository
+                .existsByTeacherIdAndClassNameAndSectionIdAndSchoolId(teacherId, className, sectionId, schoolId);
+        if (hasAdminGrant) return;
+
+        throw new SecurityException(
+                "You can only add periods for a class or section you already teach, are the class-teacher of, "
+                        + "or have been granted access to. Ask an admin to grant you access to this class.");
     }
 
     private void resolveTeacherName(TimetableEntry entry) {
