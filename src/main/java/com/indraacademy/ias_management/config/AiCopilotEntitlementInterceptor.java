@@ -82,5 +82,6 @@ public class AiCopilotEntitlementInterceptor implements HandlerInterceptor {
                 || path.equals("/api/dashboard/attendance-trend")) return "ANALYTICS";
 
         return null;
+
     }
 }
