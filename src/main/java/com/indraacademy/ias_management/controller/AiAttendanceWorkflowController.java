@@ -269,7 +269,8 @@ public class AiAttendanceWorkflowController {
             return ResponseEntity.badRequest().body(Map.of("error", "studentIds and session are required"));
         }
 
-        Map<String, String> outcomes = attendanceReminderService.sendAttendanceReminderEmailsWithOutcomes(studentIds, session);
+        Map<String, String> outcomes = attendanceReminderService
+                .sendAttendanceReminderEmailsWithOutcomes(studentIds, session, workflowId);
         int sent = 0, failed = 0;
         for (String outcome : outcomes.values()) {
             if ("sent".equals(outcome)) sent++; else failed++;

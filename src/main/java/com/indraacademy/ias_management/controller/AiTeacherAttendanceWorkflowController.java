@@ -393,7 +393,7 @@ public class AiTeacherAttendanceWorkflowController {
         }
 
         Map<String, String> sendOutcomes = attendanceReminderService
-                .sendAttendanceReminderEmailsWithOutcomes(scopedStudentIds, session, recentAbsenceDates);
+                .sendAttendanceReminderEmailsWithOutcomes(scopedStudentIds, session, recentAbsenceDates, workflowId);
         int sent = 0, failed = 0;
         for (String outcome : sendOutcomes.values()) {
             if ("sent".equals(outcome)) sent++; else failed++;

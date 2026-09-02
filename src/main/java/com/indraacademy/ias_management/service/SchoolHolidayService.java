@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.dto.SchoolHolidayDTO;
 import com.indraacademy.ias_management.entity.SchoolHoliday;
 import com.indraacademy.ias_management.repository.SchoolHolidayRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.Set;
 
 @Service
 public class SchoolHolidayService {
@@ -21,6 +23,7 @@ public class SchoolHolidayService {
 
     @Autowired private SchoolHolidayRepository repository;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private BusinessNotificationService businessNotifications;
 
     public List<SchoolHolidayDTO> getHolidays(String academicYear) {
         Long schoolId = securityUtil.getSchoolId();
@@ -64,6 +67,14 @@ public class SchoolHolidayService {
         holiday.setAcademicYear(dto.getAcademicYear());
 
         SchoolHoliday saved = repository.save(holiday);
+        if (saved.isAffectsAll()) {
+            businessNotifications.publish(schoolId, NotificationEventCode.HOLIDAY_PUBLISHED,
+                    NotificationCategory.EVENT_CALENDAR, "School Holiday: " + saved.getName(),
+                    "A school holiday is scheduled from " + saved.getStartDate() + " to " + saved.getEndDate() + ".",
+                    new NotificationAudience(NotificationAudienceType.WHOLE_SCHOOL, null), "SchoolHoliday",
+                    saved.getId().toString(), "/dashboard/holiday-calendar", securityUtil.getUsername(),
+                    "holiday:" + saved.getId() + ":published", Set.of(ExternalDeliveryChannel.PUSH));
+        }
         log.info("Created holiday '{}' ({} to {}) for school {}", saved.getName(), saved.getStartDate(), saved.getEndDate(), schoolId);
         return toDTO(saved);
     }

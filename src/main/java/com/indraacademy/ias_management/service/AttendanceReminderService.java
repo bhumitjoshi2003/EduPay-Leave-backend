@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Set;
 
 /**
  * AttendanceReminderService — sends the low-attendance warning email, the attendance
@@ -39,7 +41,7 @@ public class AttendanceReminderService {
     @Autowired private AttendanceService attendanceService;
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
-    @Autowired private EmailService emailService;
+    @Autowired private BusinessNotificationService businessNotifications;
     @Autowired private SecurityUtil securityUtil;
 
     /** Mirrors FeeReminderService.ReminderOutcome — same reasoning: a caller needs to know
@@ -55,7 +57,12 @@ public class AttendanceReminderService {
      * as FeeReminderService.sendReminderEmailSync, used only by the AI-workflow dispatch path.
      */
     public Map<String, String> sendAttendanceReminderEmailsWithOutcomes(List<String> studentIds, String session) {
-        return sendAttendanceReminderEmailsWithOutcomes(studentIds, session, Map.of());
+        return sendAttendanceReminderEmailsWithOutcomes(studentIds, session, Map.of(), null);
+    }
+
+    public Map<String, String> sendAttendanceReminderEmailsWithOutcomes(List<String> studentIds, String session,
+                                                                       String workflowId) {
+        return sendAttendanceReminderEmailsWithOutcomes(studentIds, session, Map.of(), workflowId);
     }
 
     /**
@@ -75,6 +82,12 @@ public class AttendanceReminderService {
      */
     public Map<String, String> sendAttendanceReminderEmailsWithOutcomes(
             List<String> studentIds, String session, Map<String, List<String>> recentAbsenceDatesByStudent) {
+        return sendAttendanceReminderEmailsWithOutcomes(studentIds, session, recentAbsenceDatesByStudent, null);
+    }
+
+    public Map<String, String> sendAttendanceReminderEmailsWithOutcomes(
+            List<String> studentIds, String session, Map<String, List<String>> recentAbsenceDatesByStudent,
+            String workflowId) {
         Map<String, String> outcomes = new LinkedHashMap<>();
         Map<String, List<String>> absenceDates =
                 recentAbsenceDatesByStudent != null ? recentAbsenceDatesByStudent : Map.of();
@@ -98,7 +111,7 @@ public class AttendanceReminderService {
         for (String studentId : studentIds) {
             try {
                 ReminderOutcome outcome = sendReminderEmailSync(studentId, session, byStudentId.get(studentId),
-                        absenceDates.get(studentId));
+                        absenceDates.get(studentId), workflowId);
                 outcomes.put(studentId, outcome.key());
             } catch (Exception e) {
                 log.error("Failed to send attendance reminder for student {}: {}", studentId, e.getMessage());
@@ -116,7 +129,7 @@ public class AttendanceReminderService {
      * the candidate list was first built.
      */
     private ReminderOutcome sendReminderEmailSync(String studentId, String session, ClassAttendanceSummaryDTO attendance,
-                                          List<String> recentAbsenceDates) {
+                                          List<String> recentAbsenceDates, String workflowId) {
         if (attendance == null) {
             log.warn("Cannot send attendance reminder: no attendance summary row for student {} in session {}.", studentId, session);
             return ReminderOutcome.FAILED;
@@ -142,11 +155,21 @@ public class AttendanceReminderService {
         String subject = "Attendance Warning – " + session;
         String htmlBody = buildAttendanceReminderHtml(studentName, session, schoolName, attendance, recentAbsenceDates);
 
-        boolean sent = emailService.sendHtmlEmailSync(email, subject, htmlBody);
-        if (sent) {
-            log.info("Attendance reminder sent (sync) to student {} ({})", studentId, email);
-        }
-        return sent ? ReminderOutcome.SENT : ReminderOutcome.FAILED;
+        boolean consecutiveAbsence = recentAbsenceDates != null && !recentAbsenceDates.isEmpty();
+        NotificationEventCode eventCode = consecutiveAbsence
+                ? NotificationEventCode.STUDENT_ABSENT : NotificationEventCode.ATTENDANCE_LOW;
+        String key = "attendance:" + securityUtil.getSchoolId() + ":" + studentId + ":" + session + ":"
+                + (workflowId == null ? "manual:" + LocalDate.now() : "workflow:" + workflowId);
+        businessNotifications.studentAndParents(securityUtil.getSchoolId(), studentId,
+                NotificationAudienceType.STUDENT_WITH_ATTENDANCE_PARENTS, eventCode,
+                NotificationCategory.ATTENDANCE, subject,
+                consecutiveAbsence
+                        ? "Recent consecutive absences need your attention. Review the attendance details."
+                        : "Attendance has fallen below the required threshold. Review the attendance details.",
+                "Attendance", studentId, "/dashboard/attendance-summary", "SYSTEM", key,
+                Set.of(ExternalDeliveryChannel.PUSH, ExternalDeliveryChannel.EMAIL));
+        log.info("Attendance notification queued for student {}", studentId);
+        return ReminderOutcome.SENT;
     }
 
     // ─── Email template ───────────────────────────────────────────────────────

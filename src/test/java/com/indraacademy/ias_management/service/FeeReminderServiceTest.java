@@ -52,8 +52,8 @@ class FeeReminderServiceTest {
     @Mock private StudentFeesService studentFeesService;
     @Mock private PaymentRepository paymentRepository;
     @Mock private SecurityUtil securityUtil;
-    @Mock private EmailService emailService;
     @Mock private AuditService auditService;
+    @Mock private BusinessNotificationService businessNotifications;
     @Mock private HttpServletRequest request;
 
     private FeeReminderService service;
@@ -71,8 +71,8 @@ class FeeReminderServiceTest {
         ReflectionTestUtils.setField(service, "studentFeesService", studentFeesService);
         ReflectionTestUtils.setField(service, "paymentRepository", paymentRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
-        ReflectionTestUtils.setField(service, "emailService", emailService);
         ReflectionTestUtils.setField(service, "auditService", auditService);
+        ReflectionTestUtils.setField(service, "businessNotifications", businessNotifications);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         School school = new School();
@@ -247,7 +247,6 @@ class FeeReminderServiceTest {
         FeeReminderService.ReminderOutcome outcome = service.sendReminder("S3", SESSION, request);
 
         assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
-        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
         verify(auditService, never()).log(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
@@ -259,7 +258,6 @@ class FeeReminderServiceTest {
         FeeReminderService.ReminderOutcome outcome = service.sendReminder("S4", SESSION, request);
 
         assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
-        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
     }
 
     @Test
@@ -270,7 +268,6 @@ class FeeReminderServiceTest {
         FeeReminderService.ReminderOutcome outcome = service.sendReminder("S5", SESSION, request);
 
         assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
-        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
     }
 
     @Test
@@ -281,7 +278,6 @@ class FeeReminderServiceTest {
         FeeReminderService.ReminderOutcome outcome = service.sendReminder("S6", SESSION, request);
 
         assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SKIPPED_NOT_ACTIVE);
-        verify(emailService, never()).sendHtmlEmail(any(), any(), any());
     }
 
     @Test
@@ -294,7 +290,8 @@ class FeeReminderServiceTest {
         FeeReminderService.ReminderOutcome outcome = service.sendReminder("S7", SESSION, request);
 
         assertThat(outcome).isEqualTo(FeeReminderService.ReminderOutcome.SENT);
-        verify(emailService).sendHtmlEmail(eq("parent@example.com"), any(), any());
+        verify(businessNotifications).studentAndParents(anyLong(), anyString(), any(), any(), any(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anySet());
         verify(auditService).log(any(), any(), eq("SEND_FEE_REMINDER"), any(), eq("S7"), any(), any(), any());
     }
 
@@ -312,8 +309,9 @@ class FeeReminderServiceTest {
 
         assertThat(result.sent()).isEqualTo(1);
         assertThat(result.skipped()).containsExactly(Map.of("studentId", "EXITED", "reason", "skipped_not_active"));
-        // Exactly one email — the exited student's stale ID must never reach the mail system.
-        verify(emailService, times(1)).sendHtmlEmail(any(), any(), any());
+        // Exactly one notification — the exited student's stale ID must never reach the recipient resolver.
+        verify(businessNotifications, times(1)).studentAndParents(anyLong(), anyString(), any(), any(), any(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anySet());
     }
 
     @Test
@@ -324,6 +322,5 @@ class FeeReminderServiceTest {
         Map<String, String> outcomes = service.sendReminderEmailsWithOutcomes(List.of("EXITED"), SESSION);
 
         assertThat(outcomes).containsEntry("EXITED", "skipped_not_active");
-        verify(emailService, never()).sendHtmlEmailSync(any(), any(), any());
     }
 }

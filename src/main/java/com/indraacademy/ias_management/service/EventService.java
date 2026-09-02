@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.entity.Event;
 import com.indraacademy.ias_management.repository.EventRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
@@ -18,6 +19,7 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Service
 public class EventService {
@@ -28,6 +30,7 @@ public class EventService {
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private BusinessNotificationService businessNotifications;
 
     public Event createEvent(Event event, HttpServletRequest request) {
 
@@ -50,6 +53,14 @@ public class EventService {
 
             Event savedEvent = eventRepository.save(event);
 
+            NotificationAudience audience = eventAudience(savedEvent.getTargetAudience());
+            businessNotifications.publish(savedEvent.getSchoolId(), NotificationEventCode.EVENT_PUBLISHED,
+                    NotificationCategory.EVENT_CALENDAR, "New Event: " + savedEvent.getTitle(),
+                    "A new school event has been published for " + savedEvent.getStartDate() + ".",
+                    audience, "Event", savedEvent.getId().toString(), "/dashboard/event-calendar",
+                    securityUtil.getUsername(), "event:" + savedEvent.getId() + ":published",
+                    Set.of(ExternalDeliveryChannel.PUSH));
+
             auditService.log(
                     securityUtil.getUsername(),
                     securityUtil.getRole(),
@@ -68,6 +79,19 @@ public class EventService {
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private NotificationAudience eventAudience(List<String> values) {
+        List<String> audiences = values == null ? List.of() : values.stream()
+                .filter(java.util.Objects::nonNull).map(String::trim).map(String::toUpperCase).toList();
+        if (audiences.contains("ALL") || (audiences.contains("STUDENTS") && audiences.contains("TEACHERS"))) {
+            return new NotificationAudience(NotificationAudienceType.WHOLE_SCHOOL, null);
+        }
+        if (audiences.contains("TEACHERS")) return new NotificationAudience(NotificationAudienceType.TEACHERS, null);
+        if (audiences.contains("STUDENTS")) return new NotificationAudience(NotificationAudienceType.STUDENTS, null);
+        String className = audiences.stream().findFirst().orElseThrow(
+                () -> new IllegalArgumentException("Event target audience is required."));
+        return new NotificationAudience(NotificationAudienceType.CLASS, className);
     }
 
     @Transactional(readOnly = true)

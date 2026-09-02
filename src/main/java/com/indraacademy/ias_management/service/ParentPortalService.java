@@ -23,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -321,6 +323,63 @@ public class ParentPortalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "This parent account does not have " + permission.name().toLowerCase().replace('_', ' ') + " access");
         }
+    }
+
+    /**
+     * Canonical recipient resolver for internal school workflows such as notification
+     * publication. It deliberately applies the same relationship dates, active-parent,
+     * tenant and exited-student rules as the Parent Portal authorization path.
+     */
+    @Transactional(readOnly = true)
+    public List<String> findActiveParentIdsForStudents(Long schoolId,
+                                                       Collection<String> studentIds,
+                                                       LocalDate asOf) {
+        return findActiveParentIdsForStudents(schoolId, studentIds, asOf, null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<String> findActiveParentIdsForStudents(Long schoolId,
+                                                       Collection<String> studentIds,
+                                                       LocalDate asOf,
+                                                       ChildPermission requiredPermission) {
+        if (schoolId == null || studentIds == null || studentIds.isEmpty()) {
+            return List.of();
+        }
+        LocalDate effectiveDate = asOf == null ? LocalDate.now() : asOf;
+        LinkedHashSet<String> parentIds = new LinkedHashSet<>();
+        for (String studentId : studentIds) {
+            boolean eligibleStudent = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                    .map(student -> student.getStatus() == null || !student.getStatus().isExitStatus())
+                    .orElse(false);
+            if (!eligibleStudent) continue;
+
+            relationshipRepository.findBySchoolIdAndStudentIdOrderByPrimaryGuardianDesc(schoolId, studentId)
+                    .stream()
+                    .filter(ParentStudentRelationship::isActive)
+                    .filter(link -> !link.getEffectiveFrom().isAfter(effectiveDate))
+                    .filter(link -> link.getEffectiveUntil() == null
+                            || !link.getEffectiveUntil().isBefore(effectiveDate))
+                    .filter(link -> hasPermission(link, requiredPermission))
+                    .map(ParentStudentRelationship::getParentId)
+                    .filter(parentId -> parentRepository.findByParentIdAndSchoolId(parentId, schoolId)
+                            .map(Parent::isActive).orElse(false))
+                    .filter(parentId -> userRepository
+                            .findByUserIdAndSchoolIdAndActiveTrue(parentId, schoolId).isPresent())
+                    .forEach(parentIds::add);
+        }
+        return List.copyOf(parentIds);
+    }
+
+    private boolean hasPermission(ParentStudentRelationship link, ChildPermission permission) {
+        if (permission == null) return true;
+        return switch (permission) {
+            case ATTENDANCE -> link.isCanViewAttendance();
+            case FEES -> link.isCanViewFees();
+            case PAY_FEES -> link.isCanPayFees() && link.isCanViewFees();
+            case RESULTS -> link.isCanViewResults();
+            case TIMETABLE -> link.isCanViewTimetable();
+            case MANAGE_LEAVE -> link.isCanManageLeave();
+        };
     }
 
     private ParentStudentRelationship activeChildLink(String studentId) {
