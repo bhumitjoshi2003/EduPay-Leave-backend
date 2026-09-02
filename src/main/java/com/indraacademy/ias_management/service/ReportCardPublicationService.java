@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.repository.ReportCardPublicationRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class ReportCardPublicationService {
@@ -32,6 +34,7 @@ public class ReportCardPublicationService {
     @Autowired private StudentRepository                                           studentRepository;
     @Autowired private ReportCardEmailBlastService                                 blastService;
     @Autowired private SecurityUtil                                                securityUtil;
+    @Autowired private BusinessNotificationService                                businessNotifications;
     @Autowired private com.indraacademy.ias_management.repository.SchoolRepository schoolRepository;
 
     // ── Status ─────────────────────────────────────────────────────────────
@@ -76,6 +79,19 @@ public class ReportCardPublicationService {
             pub.setVerificationToken(java.util.UUID.randomUUID().toString());
         }
         pub = pubRepo.save(pub);
+
+        List<Student> recipients = studentRepository
+                .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        String publicationKey = pub.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        for (Student student : recipients) {
+            businessNotifications.studentAndParents(schoolId, student.getStudentId(),
+                    NotificationAudienceType.STUDENT_WITH_RESULT_PARENTS,
+                    NotificationEventCode.REPORT_CARD_READY, NotificationCategory.ACADEMICS_RESULTS,
+                    "Report Card Available", "Your report card for " + session + " is now available.",
+                    "ReportCardPublication", String.valueOf(pub.getId()), "/dashboard/report-card", username,
+                    "report-card:" + pub.getId() + ":" + publicationKey + ":" + student.getStudentId(),
+                    Set.of(ExternalDeliveryChannel.PUSH));
+        }
 
         log.info("Report card published: template={} session={} class={} by={}",
                  templateId, session, className, username);

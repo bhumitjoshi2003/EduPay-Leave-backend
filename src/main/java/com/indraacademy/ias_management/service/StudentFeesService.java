@@ -20,6 +20,7 @@ import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentOneTimeFeeChargedRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
@@ -59,6 +60,7 @@ public class StudentFeesService {
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Autowired private AllocationRefundRepository allocationRefundRepository;
+    @Autowired private BusinessNotificationService businessNotifications;
 
     private static final Set<String> VALID_MANUAL_PAYMENT_MODES = Set.of("CASH", "CHEQUE", "BANK_TRANSFER", "UPI", "OTHER");
 
@@ -499,6 +501,14 @@ public class StudentFeesService {
         // already set above, which is what makes the touched rows' manuallyPaid/
         // manualPaymentReceived correctly derive as "manual" inside markFeesAsPaid.
         markFeesAsPaid(payment);
+
+        businessNotifications.studentAndParents(schoolId, studentId,
+                NotificationAudienceType.STUDENT_WITH_FEE_PARENTS,
+                NotificationEventCode.PAYMENT_SUCCESS, NotificationCategory.FEES_PAYMENTS,
+                "Payment Recorded", "Your fee payment has been recorded successfully.",
+                "Payment", String.valueOf(payment.getId()), "/dashboard/payment-history",
+                securityUtil.getUsername(), "payment-success:" + payment.getPaymentId(),
+                Set.of(ExternalDeliveryChannel.PUSH));
 
         try {
             Map<String, Object> details = new LinkedHashMap<>();

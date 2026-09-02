@@ -7,9 +7,13 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "user_notifications", indexes = {
-    @Index(name = "idx_user_notifications_user_read", columnList = "user_id, is_read")
-})
+@Table(name = "user_notifications",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_user_notifications_school_user_notification",
+                columnNames = {"school_id", "user_id", "notification_id"}),
+        indexes = {
+            @Index(name = "idx_user_notifications_user_read", columnList = "user_id, is_read")
+        })
 @Data
 public class UserNotification {
 
@@ -33,6 +37,9 @@ public class UserNotification {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "read_at")
+    private LocalDateTime readAt;
 
     @PrePersist
     protected void onCreate() {
@@ -80,8 +87,12 @@ public class UserNotification {
     }
 
     public void setIsRead(Boolean read) {
-        isRead = read;
+        isRead = Boolean.TRUE.equals(read);
+        if (Boolean.TRUE.equals(isRead) && readAt == null) readAt = LocalDateTime.now();
+        if (!Boolean.TRUE.equals(isRead)) readAt = null;
     }
+
+    public void markRead() { setIsRead(true); }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;

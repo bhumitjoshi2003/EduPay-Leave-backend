@@ -61,6 +61,7 @@ class StudentFeesServiceTest {
     @Mock private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Mock private AllocationRefundRepository allocationRefundRepository;
     @Mock private StudentFeesLineItemRepository studentFeesLineItemRepository;
+    @Mock private BusinessNotificationService businessNotifications;
 
     private StudentFeesService service;
 
@@ -79,6 +80,7 @@ class StudentFeesServiceTest {
         ReflectionTestUtils.setField(service, "paymentAllocationRepository", paymentAllocationRepository);
         ReflectionTestUtils.setField(service, "allocationRefundRepository", allocationRefundRepository);
         ReflectionTestUtils.setField(service, "studentFeesLineItemRepository", studentFeesLineItemRepository);
+        ReflectionTestUtils.setField(service, "businessNotifications", businessNotifications);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
 
         // Default: a fresh StudentFees row has no prior allocations/reversals — tests that

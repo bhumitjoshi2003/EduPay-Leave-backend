@@ -1,46 +1,40 @@
 package com.indraacademy.ias_management.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.UserNotificationDTO;
 import com.indraacademy.ias_management.entity.Notification;
-import com.indraacademy.ias_management.entity.Parent;
-import com.indraacademy.ias_management.entity.ParentStudentRelationship;
-import com.indraacademy.ias_management.entity.Student;
-import com.indraacademy.ias_management.entity.StudentStatus;
-import com.indraacademy.ias_management.entity.Teacher;
-import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.repository.NotificationRepository;
-import com.indraacademy.ias_management.repository.ParentRepository;
-import com.indraacademy.ias_management.repository.ParentStudentRelationshipRepository;
-import com.indraacademy.ias_management.repository.StudentRepository;
-import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.JsonProcessingException;
-
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
-import java.time.LocalDate;
 import java.time.Period;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
+/**
+ * Owns the durable in-app notification inbox. Recipient membership is resolved
+ * once, when a notification is published; inbox reads never mutate data.
+ */
 @Service
 public class NotificationService {
 
@@ -48,50 +42,66 @@ public class NotificationService {
 
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private UserNotificationRepository userNotificationRepository;
-    @Autowired private StudentRepository studentRepository;
-    @Autowired private TeacherRepository teacherRepository;
-    @Autowired private ParentStudentRelationshipRepository parentStudentRelationshipRepository;
-    @Autowired private ParentRepository parentRepository;
+    @Autowired private SchoolRepository schoolRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
-    @Autowired private FcmService fcmService;
+    @Autowired private NotificationPublisher notificationPublisher;
 
-    @Transactional
-    public Notification createBroadNotification(Notification notification,
-                                                HttpServletRequest request) {
-
-        if (notification == null || notification.getTitle() == null || notification.getMessage() == null) {
-            throw new IllegalArgumentException("Notification object and its title/message must not be null.");
+    public Long resolveTargetSchoolId(Long requestedSchoolId) {
+        if ("SUPER_ADMIN".equalsIgnoreCase(securityUtil.getRole())) {
+            if (requestedSchoolId == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "An explicit schoolId is required for SUPER_ADMIN notification operations.");
+            }
+            if (!schoolRepository.existsById(requestedSchoolId)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Target school does not exist.");
+            }
+            return requestedSchoolId;
         }
 
+        Long authenticatedSchoolId = requireAuthenticatedSchool();
+        if (requestedSchoolId != null && !Objects.equals(requestedSchoolId, authenticatedSchoolId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "A school administrator cannot operate on another school's notifications.");
+        }
+        return authenticatedSchoolId;
+    }
+
+    public Notification createBroadNotification(Notification notification, HttpServletRequest request) {
+        return createBroadNotification(notification, null, request);
+    }
+
+    public Notification createBroadNotification(Notification notification,
+                                                Long requestedSchoolId,
+                                                HttpServletRequest request) {
+        if (notification == null || isBlank(notification.getTitle()) || isBlank(notification.getMessage())
+                || isBlank(notification.getAudience())) {
+            throw new IllegalArgumentException("Notification title, message, and audience are required.");
+        }
+
+        Long schoolId = resolveTargetSchoolId(requestedSchoolId);
         try {
-            notification.setCreatedBy(securityUtil.getUsername());
-            notification.setCreatedAt(LocalDateTime.now());
-            notification.setSchoolId(securityUtil.getSchoolId());
-            if (notification.getChannel() == null) {
-                notification.setChannel("PUSH");
+            NotificationPublishRequest publishRequest = new NotificationPublishRequest(
+                    schoolId,
+                    eventCodeFor(notification),
+                    categoryFor(notification),
+                    notification.getPriority() == null ? NotificationPriority.NORMAL : notification.getPriority(),
+                    notification.getTitle(), notification.getMessage(), audienceFor(notification.getAudience()),
+                    notification.getSourceEntityType(), notification.getSourceEntityId(),
+                    notification.getActionRoute(), notification.getActionMetadata(), securityUtil.getUsername(),
+                    notification.getExpiresAt(), notification.getIdempotencyKey(), channelsFor(notification));
+            NotificationPublication publication = notificationPublisher.publish(publishRequest);
+            Notification saved = publication.notification();
+
+            if (!publication.duplicate()) {
+                auditService.log(
+                        securityUtil.getUsername(), securityUtil.getRole(), "CREATE_NOTIFICATION",
+                        "Notification", saved.getId().toString(), null,
+                        objectMapper.writeValueAsString(saved), request.getRemoteAddr());
             }
 
-            Notification savedNotification = notificationRepository.save(notification);
-
-            auditService.log(
-                    securityUtil.getUsername(),
-                    securityUtil.getRole(),
-                    "CREATE_NOTIFICATION",
-                    "Notification",
-                    savedNotification.getId().toString(),
-                    null,
-                    objectMapper.writeValueAsString(savedNotification),
-                    request.getRemoteAddr()
-            );
-
-            // Send FCM push to all targeted users
-            sendFcmForAudience(savedNotification.getAudience(),
-                    savedNotification.getTitle(), savedNotification.getMessage());
-
-            return savedNotification;
-
+            return saved;
         } catch (DataAccessException e) {
             throw new RuntimeException("Could not create broad notification", e);
         } catch (JsonProcessingException e) {
@@ -99,283 +109,104 @@ public class NotificationService {
         }
     }
 
-    @Transactional
     public UserNotification createAutoGeneratedIndividualNotification(
             String title, String message, String type, String userId,
             String relatedEntityType, String relatedEntityId) {
-
-        if (title == null || message == null || userId == null) {
-            log.warn("Attempted to create individual notification with missing required fields for user: {}", userId);
-            throw new IllegalArgumentException("Title, message, and user ID are required for individual notification.");
+        if (isBlank(title) || isBlank(message) || isBlank(userId)) {
+            throw new IllegalArgumentException("Title, message, and user ID are required.");
         }
-        log.info("Creating individual notification for user: {} with title: {}", userId, title);
 
-        try {
-            Long schoolId = securityUtil.getSchoolId();
-            // 1. Create and save the Notification entity
-            Notification notification = new Notification();
-            notification.setTitle(title);
-            notification.setMessage(message);
-            notification.setType(type);
-            notification.setAudience(userId);
-            notification.setCreatedAt(LocalDateTime.now());
-            notification.setSchoolId(schoolId);
-            notification.setChannel("PUSH");
-            Notification savedNotification = notificationRepository.save(notification);
-
-            // 2. Create and save the UserNotification entity
-            UserNotification userNotification = new UserNotification();
-            userNotification.setUserId(userId);
-            userNotification.setNotification(savedNotification);
-            userNotification.setIsRead(false);
-            userNotification.setCreatedAt(LocalDateTime.now());
-            userNotification.setSchoolId(schoolId);
-
-            UserNotification savedUserNotification = userNotificationRepository.save(userNotification);
-            log.info("Individual notification created successfully for user: {}. Notification ID: {}", userId, savedNotification.getId());
-
-            // Send FCM push to the individual user (pass schoolId explicitly — @Async loses ThreadLocal)
-            fcmService.sendToUser(userId, schoolId, title, message);
-
-            return savedUserNotification;
-        } catch (DataAccessException e) {
-            log.error("Data access error during individual notification creation for user: {}", userId, e);
-            throw new RuntimeException("Could not create individual notification due to data access issue", e);
-        }
+        Long schoolId = requireAuthenticatedSchool();
+        NotificationEventCode eventCode = eventCodeFor(type);
+        NotificationPublication publication = notificationPublisher.publish(new NotificationPublishRequest(
+                schoolId, eventCode, categoryFor(eventCode), NotificationPriority.NORMAL,
+                title, message, NotificationAudience.directUser(userId), relatedEntityType, relatedEntityId,
+                null, null, securityUtil.getUsername(), null, null, Set.of(ExternalDeliveryChannel.PUSH)));
+        return publication.recipients().stream().findFirst()
+                .orElseThrow(() -> new IllegalStateException("Direct notification did not produce an inbox recipient."));
     }
 
-
-    @Transactional
+    /** Reading the inbox never creates or changes recipient rows. */
+    @Transactional(readOnly = true)
     public Page<UserNotificationDTO> getNotificationsForUser(String userId, String userRole, Pageable pageable) {
-        if (userId == null || userRole == null) {
-            log.warn("Attempted to fetch notifications with null user ID or role.");
-            return Page.empty(pageable);
-        }
-        log.info("Fetching notifications for user: {} with role: {}", userId, userRole);
+        return getNotificationsForUser(userId, userRole, null, null, pageable);
+    }
 
-        // Resolve extra context needed for audience matching
-        String studentClassName = null;
-        String teacherAssignedClass = null;
-        Set<String> parentStudentClasses = Collections.emptySet();
-
-        if ("STUDENT".equalsIgnoreCase(userRole)) {
-            try {
-                studentClassName = studentRepository.findByStudentIdAndSchoolId(userId, securityUtil.getSchoolId())
-                        .map(Student::getClassName)
-                        .orElse(null);
-            } catch (DataAccessException e) {
-                log.warn("Could not resolve class name for student: {}", userId, e);
-            }
-        } else if ("TEACHER".equalsIgnoreCase(userRole)) {
-            try {
-                teacherAssignedClass = teacherRepository.findByTeacherIdAndSchoolId(userId, securityUtil.getSchoolId())
-                        .map(Teacher::getClassTeacher)
-                        .orElse(null);
-            } catch (DataAccessException e) {
-                log.warn("Could not resolve assigned class for teacher: {}", userId, e);
-            }
-        } else if ("PARENT".equalsIgnoreCase(userRole)) {
-            try {
-                LocalDate today = LocalDate.now();
-                Long schoolId = securityUtil.getSchoolId();
-                parentStudentClasses = parentStudentRelationshipRepository
-                        .findBySchoolIdAndParentIdOrderByPrimaryGuardianDescStudentIdAsc(schoolId, userId).stream()
-                        .filter(ParentStudentRelationship::isActive)
-                        .filter(link -> !link.getEffectiveFrom().isAfter(today))
-                        .filter(link -> link.getEffectiveUntil() == null || !link.getEffectiveUntil().isBefore(today))
-                        .map(ParentStudentRelationship::getStudentId)
-                        .map(studentId -> studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null))
-                        .filter(java.util.Objects::nonNull)
-                        .map(Student::getClassName)
-                        .filter(java.util.Objects::nonNull)
-                        .collect(Collectors.toSet());
-            } catch (DataAccessException e) {
-                log.warn("Could not resolve linked classes for parent: {}", userId, e);
-            }
-        }
-        final String resolvedClassName = studentClassName;
-        final String resolvedTeacherClass = teacherAssignedClass;
-        final Set<String> resolvedParentClasses = parentStudentClasses;
-
-        List<UserNotification> userNotifications;
-        List<Notification> broadNotifications;
-
-        Long schoolId = securityUtil.getSchoolId();
-
-        try {
-            // 1. Fetch existing user-specific notifications
-            userNotifications = new ArrayList<>(userNotificationRepository.findByUserIdAndSchoolIdOrderByCreatedAtDesc(userId, schoolId));
-
-            // 2. Fetch broad/general notifications applicable to this user
-            broadNotifications = notificationRepository.findBySchoolIdAndCreatedByIsNotNull(schoolId).stream()
-                    .filter(notification -> {
-                        String audience = notification.getAudience();
-                        if (audience == null) return false;
-
-                        if ("STUDENT".equalsIgnoreCase(userRole)) {
-                            return "ALL".equalsIgnoreCase(audience)
-                                    || "STUDENTS".equalsIgnoreCase(audience)
-                                    || userId.equals(audience)
-                                    || (resolvedClassName != null && audience.equalsIgnoreCase("CLASS:" + resolvedClassName))
-                                    || (resolvedClassName != null && audience.equalsIgnoreCase("CLASS_WITH_TEACHER:" + resolvedClassName));
-                        } else if ("TEACHER".equalsIgnoreCase(userRole)) {
-                            return "ALL".equalsIgnoreCase(audience)
-                                    || "TEACHERS".equalsIgnoreCase(audience)
-                                    || userId.equals(audience)
-                                    || (resolvedTeacherClass != null && audience.equalsIgnoreCase("CLASS_WITH_TEACHER:" + resolvedTeacherClass));
-                        } else if ("PARENT".equalsIgnoreCase(userRole)) {
-                            return "ALL".equalsIgnoreCase(audience)
-                                    || "STUDENTS".equalsIgnoreCase(audience)
-                                    || userId.equals(audience)
-                                    || resolvedParentClasses.stream().anyMatch(className ->
-                                            audience.equalsIgnoreCase("CLASS:" + className)
-                                                    || audience.equalsIgnoreCase("CLASS_WITH_TEACHER:" + className));
-                        }
-                        return false;
-                    })
-                    .toList();
-        } catch (DataAccessException e) {
-            log.error("Data access error during notification fetch for user: {}", userId, e);
-            throw new RuntimeException("Could not retrieve notifications due to data access issue", e);
-        }
-
-        // 3. Create UserNotification entries for applicable broad notifications if they don't exist yet
-        int newNotificationsCount = 0;
-        for (Notification broadNotif : broadNotifications) {
-            try {
-                if (!userNotificationRepository.existsByUserIdAndSchoolIdAndNotificationId(userId, schoolId, broadNotif.getId())) {
-                    UserNotification newUserNotif = new UserNotification();
-                    newUserNotif.setUserId(userId);
-                    newUserNotif.setNotification(broadNotif);
-                    newUserNotif.setIsRead(false);
-                    newUserNotif.setCreatedAt(broadNotif.getCreatedAt());
-                    newUserNotif.setSchoolId(schoolId);
-                    userNotifications.add(userNotificationRepository.save(newUserNotif));
-                    newNotificationsCount++;
-                }
-            } catch (DataAccessException e) {
-                log.error("Data access error creating UserNotification for broad notification ID: {} for user: {}", broadNotif.getId(), userId, e);
-            }
-        }
-        log.debug("Created {} new UserNotification entries for user {}.", newNotificationsCount, userId);
-
-        // 4. Paginated DB query — sync is complete so all applicable entries now exist
-        Page<UserNotification> page = userNotificationRepository
-                .findByUserIdAndSchoolIdOrderByCreatedAtDesc(userId, schoolId, pageable);
-
-        // 5. Convert to DTOs
-        return page.map(userNotif -> {
-            UserNotificationDTO dto = new UserNotificationDTO();
-            dto.setId(userNotif.getId());
-            dto.setUserId(userNotif.getUserId());
-            dto.setIsRead(userNotif.getIsRead());
-            dto.setCreatedAt(userNotif.getCreatedAt());
-
-            Notification notification = userNotif.getNotification();
-            if (notification != null) {
-                dto.setTitle(notification.getTitle());
-                dto.setMessage(notification.getMessage());
-                dto.setType(notification.getType());
-            }
-            return dto;
-        });
+    @Transactional(readOnly = true)
+    public Page<UserNotificationDTO> getNotificationsForUser(String userId, String userRole, Boolean isRead,
+                                                              NotificationCategory category, Pageable pageable) {
+        if (isBlank(userId) || isBlank(userRole)) return Page.empty(pageable);
+        return userNotificationRepository
+                .findInbox(userId, requireAuthenticatedSchool(), isRead, category, pageable)
+                .map(this::toDto);
     }
 
     @Transactional(readOnly = true)
     public long getUnreadNotificationCount(String userId, String userRole) {
-        if (userId == null) {
-            log.warn("Attempted to get unread count with null user ID.");
-            return 0;
-        }
-        log.info("Counting unread notifications for user: {}", userId);
-        try {
-            return userNotificationRepository.countByUserIdAndSchoolIdAndIsReadFalse(userId, securityUtil.getSchoolId());
-        } catch (DataAccessException e) {
-            log.error("Data access error counting unread notifications for user: {}", userId, e);
-            throw new RuntimeException("Could not retrieve unread notification count due to data access issue", e);
-        }
+        if (isBlank(userId)) return 0;
+        return userNotificationRepository.countByUserIdAndSchoolIdAndIsReadFalse(
+                userId, requireAuthenticatedSchool());
     }
-
 
     @Transactional
     public void markAllNotificationsAsRead(String userId) {
-        if (userId == null) {
-            log.warn("Attempted to mark notifications as read with null user ID.");
-            return;
-        }
-        log.info("Marking all unread notifications as read for user: {}", userId);
-
-        try {
-            List<UserNotification> unread = userNotificationRepository.findByUserIdAndSchoolIdAndIsReadFalseOrderByCreatedAtDesc(userId, securityUtil.getSchoolId());
-            for (UserNotification un : unread) {
-                un.setIsRead(true);
-                userNotificationRepository.save(un);
-            }
-            log.info("Marked {} notifications as read for user: {}", unread.size(), userId);
-        } catch (DataAccessException e) {
-            log.error("Data access error marking notifications as read for user: {}", userId, e);
-            throw new RuntimeException("Could not mark notifications as read due to data access issue", e);
-        }
-    }
-
-    // --- Admin-specific methods (CRUD for broad notifications) ---
-
-    @Transactional(readOnly = true)
-    public Optional<Notification> getNotificationById(Long id) {
-        if (id == null) {
-            log.warn("Attempted to get notification with null ID.");
-            return Optional.empty();
-        }
-        log.info("Fetching notification by ID: {}", id);
-        try {
-            Long schoolId = securityUtil.getSchoolId();
-            return notificationRepository.findByIdAndSchoolId(id, schoolId);
-        } catch (DataAccessException e) {
-            log.error("Data access error fetching notification ID: {}", id, e);
-            throw new RuntimeException("Could not retrieve notification due to data access issue", e);
-        }
+        if (isBlank(userId)) return;
+        userNotificationRepository.markAllRead(userId, requireAuthenticatedSchool());
     }
 
     @Transactional
-    public Notification updateNotification(Long id,
-                                           Notification updatedNotification,
-                                           HttpServletRequest request) {
+    public void markNotificationAsRead(String userId, Long inboxId) {
+        if (isBlank(userId) || inboxId == null) throw new IllegalArgumentException("User and notification are required.");
+        UserNotification row = userNotificationRepository.findByIdAndUserIdAndSchoolId(
+                        inboxId, userId, requireAuthenticatedSchool())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Notification not found."));
+        row.markRead();
+        userNotificationRepository.save(row);
+    }
 
-        if (id == null || updatedNotification == null) {
+    @Transactional(readOnly = true)
+    public Optional<Notification> getNotificationById(Long id) {
+        return getNotificationById(id, null);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Notification> getNotificationById(Long id, Long requestedSchoolId) {
+        if (id == null) return Optional.empty();
+        return notificationRepository.findByIdAndSchoolId(id, resolveTargetSchoolId(requestedSchoolId));
+    }
+
+    @Transactional
+    public Notification updateNotification(Long id, Notification updated, HttpServletRequest request) {
+        return updateNotification(id, updated, null, request);
+    }
+
+    @Transactional
+    public Notification updateNotification(Long id, Notification updated,
+                                           Long requestedSchoolId, HttpServletRequest request) {
+        if (id == null || updated == null) {
             throw new IllegalArgumentException("Notification ID and details must not be null.");
+        }
+        Long schoolId = resolveTargetSchoolId(requestedSchoolId);
+        Notification existing = notificationRepository.findByIdAndSchoolId(id, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
+
+        if (updated.getAudience() != null && !updated.getAudience().equalsIgnoreCase(existing.getAudience())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "A published notification's audience cannot be changed. Publish a new notification instead.");
         }
 
         try {
-            Long schoolId = securityUtil.getSchoolId();
-            Notification notification = notificationRepository.findByIdAndSchoolId(id, schoolId)
-                    .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
-
-            String oldValue = objectMapper.writeValueAsString(notification);
-
-            notification.setTitle(updatedNotification.getTitle());
-            notification.setMessage(updatedNotification.getMessage());
-            notification.setType(updatedNotification.getType());
-            notification.setAudience(updatedNotification.getAudience());
-
-            notification.setCreatedBy(securityUtil.getUsername()); // acting as updatedBy
-
-            Notification savedNotification = notificationRepository.save(notification);
-
+            String oldValue = objectMapper.writeValueAsString(existing);
+            existing.setTitle(updated.getTitle());
+            existing.setMessage(updated.getMessage());
+            existing.setType(updated.getType());
+            existing.setCreatedBy(securityUtil.getUsername());
+            Notification saved = notificationRepository.save(existing);
             auditService.logUpdate(
-                    securityUtil.getUsername(),
-                    securityUtil.getRole(),
-                    "UPDATE_NOTIFICATION",
-                    "Notification",
-                    id.toString(),
-                    oldValue,
-                    objectMapper.writeValueAsString(savedNotification),
-                    request.getRemoteAddr()
-            );
-
-            return savedNotification;
-
-        } catch (DataAccessException e) {
-            throw new RuntimeException("Could not update notification", e);
+                    securityUtil.getUsername(), securityUtil.getRole(), "UPDATE_NOTIFICATION",
+                    "Notification", id.toString(), oldValue,
+                    objectMapper.writeValueAsString(saved), request.getRemoteAddr());
+            return saved;
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
@@ -383,33 +214,21 @@ public class NotificationService {
 
     @Transactional
     public void deleteNotification(Long id, HttpServletRequest request) {
+        deleteNotification(id, null, request);
+    }
 
-        if (id == null) {
-            throw new IllegalArgumentException("Notification ID must not be null.");
-        }
-
+    @Transactional
+    public void deleteNotification(Long id, Long requestedSchoolId, HttpServletRequest request) {
+        if (id == null) throw new IllegalArgumentException("Notification ID must not be null.");
+        Notification existing = notificationRepository.findByIdAndSchoolId(
+                        id, resolveTargetSchoolId(requestedSchoolId))
+                .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
         try {
-            Long schoolId = securityUtil.getSchoolId();
-            Notification notification = notificationRepository.findByIdAndSchoolId(id, schoolId)
-                    .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
-
-            String oldValue = objectMapper.writeValueAsString(notification);
-
-            notificationRepository.deleteById(id);
-
+            String oldValue = objectMapper.writeValueAsString(existing);
+            notificationRepository.delete(existing);
             auditService.log(
-                    securityUtil.getUsername(),
-                    securityUtil.getRole(),
-                    "DELETE_NOTIFICATION",
-                    "Notification",
-                    id.toString(),
-                    oldValue,
-                    null,
-                    request.getRemoteAddr()
-            );
-
-        } catch (DataAccessException e) {
-            throw new RuntimeException("Could not delete notification", e);
+                    securityUtil.getUsername(), securityUtil.getRole(), "DELETE_NOTIFICATION",
+                    "Notification", id.toString(), oldValue, null, request.getRemoteAddr());
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
@@ -417,28 +236,23 @@ public class NotificationService {
 
     @Transactional(readOnly = true)
     public List<Notification> getAllBroadNotifications() {
-        log.info("Fetching all broad notifications.");
-        try {
-            return notificationRepository.findBySchoolIdAndCreatedByIsNotNull(securityUtil.getSchoolId()).stream()
-                    .filter(n -> n.getAudience() != null)
-                    .collect(Collectors.toList());
-        } catch (DataAccessException e) {
-            log.error("Data access error fetching all broad notifications.", e);
-            throw new RuntimeException("Could not retrieve broad notifications due to data access issue", e);
-        }
+        return getAllBroadNotifications(null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Notification> getAllBroadNotifications(Long requestedSchoolId) {
+        return notificationRepository
+                .findBySchoolIdAndCreatedByIsNotNull(resolveTargetSchoolId(requestedSchoolId)).stream()
+                .filter(n -> n.getAudience() != null)
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public Page<Notification> getAllNotifications(Pageable pageable) {
-        log.info("Fetching all notifications with a creator.");
-        try {
-            return notificationRepository.findBySchoolIdAndCreatedByIsNotNull(securityUtil.getSchoolId(), pageable);
-        } catch (DataAccessException e) {
-            log.error("Data access error fetching all notifications.", e);
-            throw new RuntimeException("Could not retrieve all notifications due to data access issue", e);
-        }
+        return getAllNotifications(pageable, null);
     }
 
+    /* Legacy immediate FCM audience dispatch removed in favor of durable recipient snapshots.
     // ─── FCM audience resolution ──────────────────────────────────────────────
 
     /**
@@ -451,6 +265,7 @@ public class NotificationService {
      *   "CLASS_WITH_TEACHER:X"  → active students in class X + class teacher of X
      *   <any other value>       → treated as a single userId
      */
+    /*
     private void sendFcmForAudience(String audience, String title, String body) {
         if (audience == null || audience.isBlank()) return;
 
@@ -504,40 +319,121 @@ public class NotificationService {
         } catch (Exception e) {
             log.warn("FCM audience dispatch failed for audience '{}': {}", audience, e.getMessage());
         }
+    */
+    @Transactional(readOnly = true)
+    public Page<Notification> getAllNotifications(Pageable pageable, Long requestedSchoolId) {
+        return notificationRepository.findBySchoolIdAndCreatedByIsNotNull(
+                resolveTargetSchoolId(requestedSchoolId), pageable);
     }
 
-    private List<String> activeParentIdsForStudents(List<String> studentIds, Long schoolId) {
-        LocalDate today = LocalDate.now();
-        return studentIds.stream()
-                .flatMap(studentId -> parentStudentRelationshipRepository
-                        .findBySchoolIdAndStudentIdOrderByPrimaryGuardianDesc(schoolId, studentId).stream())
-                .filter(ParentStudentRelationship::isActive)
-                .filter(link -> !link.getEffectiveFrom().isAfter(today))
-                .filter(link -> link.getEffectiveUntil() == null || !link.getEffectiveUntil().isBefore(today))
-                .map(ParentStudentRelationship::getParentId)
-                .filter(parentId -> parentRepository.findByParentIdAndSchoolId(parentId, schoolId)
-                        .map(Parent::isActive).orElse(false))
-                .distinct()
-                .toList();
+    private UserNotificationDTO toDto(UserNotification row) {
+        UserNotificationDTO dto = new UserNotificationDTO();
+        dto.setId(row.getId());
+        dto.setUserId(row.getUserId());
+        dto.setIsRead(row.getIsRead());
+        dto.setCreatedAt(row.getCreatedAt());
+        dto.setReadAt(row.getReadAt());
+        if (row.getNotification() != null) {
+            dto.setTitle(row.getNotification().getTitle());
+            dto.setMessage(row.getNotification().getMessage());
+            dto.setType(row.getNotification().getType());
+            dto.setEventCode(row.getNotification().getEventCode());
+            dto.setCategory(row.getNotification().getCategory());
+            dto.setPriority(row.getNotification().getPriority());
+            dto.setSourceEntityType(row.getNotification().getSourceEntityType());
+            dto.setSourceEntityId(row.getNotification().getSourceEntityId());
+            dto.setActionRoute(row.getNotification().getActionRoute());
+            dto.setActionMetadata(row.getNotification().getActionMetadata());
+            dto.setExpiresAt(row.getNotification().getExpiresAt());
+        }
+        return dto;
+    }
+
+    private NotificationAudience audienceFor(String audience) {
+        String value = audience.trim();
+        String normalized = value.toUpperCase(Locale.ROOT);
+        if ("ALL".equals(normalized)) return new NotificationAudience(NotificationAudienceType.WHOLE_SCHOOL, null);
+        if ("STUDENTS".equals(normalized)) return new NotificationAudience(NotificationAudienceType.STUDENTS, null);
+        if ("TEACHERS".equals(normalized)) return new NotificationAudience(NotificationAudienceType.TEACHERS, null);
+        if ("PARENTS".equals(normalized)) return new NotificationAudience(NotificationAudienceType.PARENTS, null);
+        if (normalized.startsWith("CLASS_WITH_TEACHER:")) return new NotificationAudience(
+                NotificationAudienceType.CLASS_WITH_TEACHER, value.substring("CLASS_WITH_TEACHER:".length()).trim());
+        if (normalized.startsWith("CLASS:")) return new NotificationAudience(
+                NotificationAudienceType.CLASS, value.substring("CLASS:".length()).trim());
+        if (normalized.startsWith("ROLE:")) return new NotificationAudience(
+                NotificationAudienceType.ROLE, value.substring("ROLE:".length()).trim());
+        return NotificationAudience.directUser(value);
+    }
+
+    private Set<ExternalDeliveryChannel> channelsFor(Notification notification) {
+        if (notification.getChannel() == null) return Set.of(ExternalDeliveryChannel.PUSH);
+        return switch (notification.getChannel().toUpperCase(Locale.ROOT)) {
+            case "IN_APP" -> Set.of();
+            case "EMAIL" -> Set.of(ExternalDeliveryChannel.EMAIL);
+            case "BOTH" -> Set.of(ExternalDeliveryChannel.PUSH, ExternalDeliveryChannel.EMAIL);
+            default -> Set.of(ExternalDeliveryChannel.PUSH);
+        };
+    }
+
+    private NotificationEventCode eventCodeFor(Notification notification) {
+        return notification.getEventCode() == null ? eventCodeFor(notification.getType()) : notification.getEventCode();
+    }
+
+    private NotificationEventCode eventCodeFor(String type) {
+        if (type == null) return NotificationEventCode.LEGACY_NOTIFICATION;
+        String normalized = type.toUpperCase(Locale.ROOT);
+        if (normalized.contains("NOTICE")) return NotificationEventCode.NOTICE_PUBLISHED;
+        if (normalized.contains("LEAVE") && normalized.contains("APPROV")) return NotificationEventCode.LEAVE_APPROVED;
+        if (normalized.contains("LEAVE") && normalized.contains("REJECT")) return NotificationEventCode.LEAVE_REJECTED;
+        if (normalized.contains("LEAVE")) return NotificationEventCode.LEAVE_SUBMITTED;
+        if (normalized.contains("PAYMENT")) return NotificationEventCode.PAYMENT_SUCCESS;
+        if (normalized.contains("FEE")) return NotificationEventCode.FEE_REMINDER;
+        if (normalized.contains("ATTENDANCE")) return NotificationEventCode.ATTENDANCE_REMINDER;
+        if (normalized.contains("SECURITY") || normalized.contains("PASSWORD")) return NotificationEventCode.ACCOUNT_SECURITY;
+        return NotificationEventCode.LEGACY_NOTIFICATION;
+    }
+
+    private NotificationCategory categoryFor(Notification notification) {
+        return notification.getCategory() == null ? categoryFor(eventCodeFor(notification)) : notification.getCategory();
+    }
+
+    private NotificationCategory categoryFor(NotificationEventCode code) {
+        return switch (code) {
+            case NOTICE_PUBLISHED -> NotificationCategory.NOTICE_ANNOUNCEMENT;
+            case LEAVE_SUBMITTED, LEAVE_APPROVED, LEAVE_REJECTED, LEAVE_CANCELLED -> NotificationCategory.LEAVE;
+            case PAYMENT_SUCCESS, PAYMENT_REFUNDED, FEE_DUE, FEE_OVERDUE, FEE_REMINDER -> NotificationCategory.FEES_PAYMENTS;
+            case STUDENT_ABSENT, ATTENDANCE_LOW, ATTENDANCE_REMINDER -> NotificationCategory.ATTENDANCE;
+            case REPORT_CARD_READY -> NotificationCategory.ACADEMICS_RESULTS;
+            case EVENT_PUBLISHED, HOLIDAY_PUBLISHED -> NotificationCategory.EVENT_CALENDAR;
+            case ACCOUNT_SECURITY -> NotificationCategory.ACCOUNT_SECURITY;
+            default -> NotificationCategory.SYSTEM_ADMIN;
+        };
+    }
+
+    private Long requireAuthenticatedSchool() {
+        Long schoolId = securityUtil.getSchoolId();
+        if (schoolId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "An authenticated school context is required.");
+        }
+        return schoolId;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     @Scheduled(cron = "0 0 2 * * ?")
     @Transactional
     public void cleanupOldNotifications() {
-        // NOTE: This scheduler runs platform-wide (all schools) intentionally
-        log.info("Starting scheduled cleanup of old notifications.");
+        // Intentional platform-wide retention job; public CRUD remains tenant-scoped.
+        LocalDateTime oneMonthAgo = LocalDateTime.now().minus(Period.ofMonths(1));
         try {
-            LocalDateTime oneMonthAgo = LocalDateTime.now().minus(Period.ofMonths(1));
             List<Notification> oldNotifications = notificationRepository.findByCreatedAtBefore(oneMonthAgo);
-
-            for (Notification notification : oldNotifications) {
-                // Ensure proper cascade/manual deletion of UserNotification first if necessary,
-                // though JPA cascade annotations should handle it.
-                notificationRepository.delete(notification);
-            }
+            notificationRepository.deleteAll(oldNotifications);
             log.info("Cleaned up {} old notifications created before {}", oldNotifications.size(), oneMonthAgo);
         } catch (DataAccessException e) {
-            log.error("Data access error during scheduled notification cleanup.", e);
+            log.error("Data access error during scheduled notification cleanup", e);
         }
     }
 }

@@ -21,6 +21,7 @@ import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
@@ -66,6 +67,7 @@ public class PaymentService {
     @Autowired private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Autowired private AllocationRefundRepository allocationRefundRepository;
     @Autowired private StudentFeesLineItemRepository studentFeesLineItemRepository;
+    @Autowired private BusinessNotificationService businessNotifications;
 
     @Transactional(readOnly = true)
     public PaymentResponseDTO getPaymentHistoryDetails(String paymentId) {
@@ -444,6 +446,13 @@ public class PaymentService {
         long totalRefundedNowPaise = alreadyRefundedPaise + request.getAmount();
         payment.setStatus(totalRefundedNowPaise >= payment.getAmountPaid() ? "refunded" : "partially_refunded");
         paymentRepository.save(payment);
+
+        businessNotifications.studentAndParents(schoolId, payment.getStudentId(),
+                NotificationAudienceType.STUDENT_WITH_FEE_PARENTS,
+                NotificationEventCode.PAYMENT_REFUNDED, NotificationCategory.FEES_PAYMENTS,
+                "Payment Refund Processed", "A refund for your fee payment has been processed.",
+                "Refund", String.valueOf(refund.getId()), "/dashboard/payment-history", actorUsername,
+                "payment-refund:" + refund.getId(), java.util.Set.of(ExternalDeliveryChannel.PUSH));
 
         try {
             Map<String, Object> details = new LinkedHashMap<>();

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
@@ -24,4 +25,5 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     Page<Notification> findBySchoolIdAndCreatedByIsNotNull(Long schoolId, Pageable pageable);
 
     java.util.Optional<Notification> findByIdAndSchoolId(Long id, Long schoolId);
+    Optional<Notification> findBySchoolIdAndIdempotencyKey(Long schoolId, String idempotencyKey);
 }

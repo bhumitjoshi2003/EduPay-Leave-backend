@@ -2,11 +2,8 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Notification;
-import com.indraacademy.ias_management.service.EmailService;
 import com.indraacademy.ias_management.service.EntitlementService;
 import com.indraacademy.ias_management.service.NotificationService;
-import com.indraacademy.ias_management.service.SchoolService;
-import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,10 +20,7 @@ public class NoticeController {
 
     private static final Logger log = LoggerFactory.getLogger(NoticeController.class);
 
-    @Autowired private EmailService emailService;
     @Autowired private NotificationService notificationService;
-    @Autowired private SchoolService schoolService;
-    @Autowired private SecurityUtil securityUtil;
     @Autowired private EntitlementService entitlementService;
 
     /**
@@ -49,6 +43,7 @@ public class NoticeController {
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping("/notice")
     public ResponseEntity<?> sendNotice(@RequestBody Map<String, Object> requestBody,
+                                        @RequestParam(required = false) Long schoolId,
                                         HttpServletRequest request) {
         String title        = (String) requestBody.get("title");
         String subject      = (String) requestBody.get("subject");
@@ -73,39 +68,23 @@ public class NoticeController {
         if (sendEmail && (subject == null || subject.isBlank())) {
             return ResponseEntity.badRequest().body("subject is required when deliveryMode is EMAIL or BOTH.");
         }
-        if (sendEmail) {
-            entitlementService.requireFeature(securityUtil.getSchoolId(), "BULK_COMMUNICATIONS");
-        }
+        Long targetSchoolId = notificationService.resolveTargetSchoolId(schoolId);
+        if (sendEmail) entitlementService.requireFeature(targetSchoolId, "BULK_COMMUNICATIONS");
 
-        // --- Email dispatch ---
-        if (sendEmail) {
-            String schoolName = schoolService.getSettings().getName();
-            Long schoolId = securityUtil.getSchoolId();
-            if ("ALL_TEACHERS".equalsIgnoreCase(targetClass)) {
-                emailService.sendBulkEmailToTeachers(subject, body, schoolName, schoolId);
-                log.info("Bulk email sent to all teachers of school {}.", schoolId);
-            } else if (targetClass.toUpperCase().startsWith("CLASS_WITH_TEACHER:")) {
-                String className = targetClass.substring("CLASS_WITH_TEACHER:".length()).trim();
-                emailService.sendBulkEmailToClassWithTeacher(subject, body, className, schoolName, schoolId);
-                log.info("Bulk email sent to class {} and their class teacher (school {}).", className, schoolId);
-            } else {
-                // "All" or a specific class name → students only
-                emailService.sendBulkEmailToClass(subject, body, targetClass, schoolName, schoolId);
-                log.info("Bulk email sent to class: {} (school {}).", targetClass, schoolId);
-            }
-        }
-
-        // --- In-app notification ---
-        if (saveInApp) {
-            String audience = resolveAudience(targetClass);
-            Notification notification = new Notification();
-            notification.setTitle(title);
-            notification.setMessage(body);
-            notification.setType("NOTICE");
-            notification.setAudience(audience);
-            notificationService.createBroadNotification(notification, request);
-            log.info("In-app notification saved with audience: {}", audience);
-        }
+        String audience = resolveAudience(targetClass);
+        Notification notification = new Notification();
+        notification.setTitle(sendEmail ? subject : title);
+        notification.setMessage(body);
+        notification.setType("NOTICE");
+        notification.setAudience(audience);
+        notification.setChannel(deliveryMode);
+        notification.setSourceEntityType("Notice");
+        notification.setActionRoute("/dashboard/notice");
+        notification.setIdempotencyKey("notice:" + targetSchoolId + ":"
+                + java.util.UUID.nameUUIDFromBytes((title + "|" + body + "|" + audience)
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        notificationService.createBroadNotification(notification, targetSchoolId, request);
+        log.info("Canonical notice publication queued with audience: {}", audience);
 
         return ResponseEntity.ok(Map.of("message", "Notice sent successfully."));
     }

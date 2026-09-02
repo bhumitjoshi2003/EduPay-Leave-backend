@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @RestController
@@ -41,16 +42,20 @@ public class DeviceTokenController {
         Optional<DeviceToken> existing = deviceTokenRepository.findByToken(token);
         if (existing.isPresent()) {
             DeviceToken dt = existing.get();
-            if (userId.equals(dt.getUserId())) {
+            Long schoolId = securityUtil.getSchoolId();
+            if (userId.equals(dt.getUserId()) && Objects.equals(schoolId, dt.getSchoolId())) {
                 // Same user, same token — nothing to do
                 return ResponseEntity.ok(Map.of("message", "Token registered."));
             }
-            // Different user on the same device — delete the old row so the
-            // previous user's account is no longer reachable via this device,
-            // then fall through to insert a fresh row for the new user.
-            deviceTokenRepository.deleteByToken(token);
-            log.info("Deleted stale FCM token that belonged to user {} before re-registering for user {}",
-                    dt.getUserId(), userId);
+            // Possession of the current device token permits the authenticated
+            // account to claim it. Update in place; never perform a client-driven
+            // unscoped delete of another user's row.
+            dt.setUserId(userId);
+            dt.setSchoolId(schoolId);
+            dt.setCreatedAt(LocalDateTime.now());
+            deviceTokenRepository.save(dt);
+            log.info("Reassigned FCM token to authenticated user {} in school {}", userId, schoolId);
+            return ResponseEntity.ok(Map.of("message", "Token registered."));
         }
 
         DeviceToken newToken = new DeviceToken(userId, token, LocalDateTime.now());
@@ -71,8 +76,10 @@ public class DeviceTokenController {
             return ResponseEntity.badRequest().body("Missing 'token' field.");
         }
 
-        deviceTokenRepository.deleteByToken(token);
-        log.info("Removed FCM token for user {}", authService.getUserId());
+        String userId = authService.getUserId();
+        Long schoolId = securityUtil.getSchoolId();
+        long removed = deviceTokenRepository.deleteByTokenAndUserIdAndSchoolId(token, userId, schoolId);
+        log.info("Scoped FCM token removal for user {} in school {} (removed={})", userId, schoolId, removed);
         return ResponseEntity.ok(Map.of("message", "Token removed."));
     }
 }

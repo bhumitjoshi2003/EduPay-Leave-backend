@@ -56,6 +56,7 @@ class PaymentServiceTest {
     @Mock private AllocationRefundRepository allocationRefundRepository;
     @Mock private FeeCalculationService feeCalculationService;
     @Mock private StudentFeesLineItemRepository studentFeesLineItemRepository;
+    @Mock private BusinessNotificationService businessNotifications;
 
     private PaymentService service;
 
@@ -76,6 +77,7 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(service, "allocationRefundRepository", allocationRefundRepository);
         ReflectionTestUtils.setField(service, "feeCalculationService", feeCalculationService);
         ReflectionTestUtils.setField(service, "studentFeesLineItemRepository", studentFeesLineItemRepository);
+        ReflectionTestUtils.setField(service, "businessNotifications", businessNotifications);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         // Default: no allocation ledger for this payment (the pre-ledger/"legacy" case) —

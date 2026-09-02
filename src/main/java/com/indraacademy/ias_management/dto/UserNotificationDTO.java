@@ -2,6 +2,9 @@ package com.indraacademy.ias_management.dto;
 
 import lombok.Data;
 import java.time.LocalDateTime;
+import com.indraacademy.ias_management.notification.NotificationCategory;
+import com.indraacademy.ias_management.notification.NotificationEventCode;
+import com.indraacademy.ias_management.notification.NotificationPriority;
 
 @Data
 public class UserNotificationDTO {
@@ -13,6 +16,15 @@ public class UserNotificationDTO {
 
     private Boolean isRead;
     private LocalDateTime createdAt;
+    private LocalDateTime readAt;
+    private NotificationEventCode eventCode;
+    private NotificationCategory category;
+    private NotificationPriority priority;
+    private String sourceEntityType;
+    private String sourceEntityId;
+    private String actionRoute;
+    private String actionMetadata;
+    private LocalDateTime expiresAt;
 
     public Long getId() {
         return id;

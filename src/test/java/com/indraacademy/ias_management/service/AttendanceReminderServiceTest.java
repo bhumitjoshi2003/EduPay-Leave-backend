@@ -5,11 +5,11 @@ import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.notification.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -17,19 +17,16 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Captures the exact HTML body AttendanceReminderService builds and sends, independent of
- * whether the underlying SMTP call actually succeeds — added after live E2E testing hit real
- * "Authentication failed" errors from placeholder dev SMTP credentials, which correctly proves
- * the send *path* works but says nothing about whether the email *content* is correct. This is
- * that missing check: assert on the real rendered HTML via an ArgumentCaptor on EmailService,
- * the same technique used to distinguish "content is right, transport failed" from "content is
- * wrong" without depending on the environment actually having working SMTP.
+ * Asserts the exact wording AttendanceReminderService publishes through BusinessNotificationService
+ * (title, body, event code, audience) for each reminder scenario, plus the exit-status and
+ * missing-email guards that must skip a candidate before any notification is published.
  */
 @ExtendWith(MockitoExtension.class)
 class AttendanceReminderServiceTest {
@@ -37,7 +34,7 @@ class AttendanceReminderServiceTest {
     @Mock private AttendanceService attendanceService;
     @Mock private StudentRepository studentRepository;
     @Mock private SchoolRepository schoolRepository;
-    @Mock private EmailService emailService;
+    @Mock private BusinessNotificationService businessNotifications;
     @Mock private SecurityUtil securityUtil;
 
     private AttendanceReminderService service;
@@ -52,12 +49,12 @@ class AttendanceReminderServiceTest {
         ReflectionTestUtils.setField(service, "attendanceService", attendanceService);
         ReflectionTestUtils.setField(service, "studentRepository", studentRepository);
         ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
-        ReflectionTestUtils.setField(service, "emailService", emailService);
+        ReflectionTestUtils.setField(service, "businessNotifications", businessNotifications);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
     }
 
     @Test
-    void sendAttendanceReminderEmailsWithOutcomes_buildsCorrectHtmlContent_regardlessOfSendOutcome() {
+    void sendAttendanceReminderEmailsWithOutcomes_publishesLowAttendanceEvent() {
         when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
 
         ClassAttendanceSummaryDTO summaryRow = new ClassAttendanceSummaryDTO(
@@ -77,31 +74,14 @@ class AttendanceReminderServiceTest {
         school.setName("E2E Test School 2");
         when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
 
-        // Content correctness must not depend on whether the SMTP send itself succeeds —
-        // mirrors production, where sendHtmlEmailSync can genuinely fail (bad credentials,
-        // network) with a perfectly correct email body already built.
-        when(emailService.sendHtmlEmailSync(anyString(), anyString(), anyString())).thenReturn(false);
-
         Map<String, String> outcomes = service.sendAttendanceReminderEmailsWithOutcomes(List.of(STUDENT_ID), SESSION);
-        assertThat(outcomes).containsEntry(STUDENT_ID, "failed");
-
-        ArgumentCaptor<String> toCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> subjectCaptor = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<String> htmlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendHtmlEmailSync(toCaptor.capture(), subjectCaptor.capture(), htmlCaptor.capture());
-
-        assertThat(toCaptor.getValue()).isEqualTo("jordan.test@example.com");
-        assertThat(subjectCaptor.getValue()).isEqualTo("Attendance Warning – " + SESSION);
-
-        String html = htmlCaptor.getValue();
-        assertThat(html)
-                .contains("Jordan Test Student")
-                .contains("E2E Test School 2")
-                .contains(SESSION)
-                .contains("30.0%")
-                .contains("3 of 10 working days present")
-                .contains("Attendance Warning")
-                .doesNotContain("null");
+        assertThat(outcomes).containsEntry(STUDENT_ID, "sent");
+        verify(businessNotifications).studentAndParents(eq(SCHOOL_ID), eq(STUDENT_ID),
+                eq(NotificationAudienceType.STUDENT_WITH_ATTENDANCE_PARENTS),
+                eq(NotificationEventCode.ATTENDANCE_LOW), eq(NotificationCategory.ATTENDANCE),
+                eq("Attendance Warning – " + SESSION), contains("fallen below"), eq("Attendance"),
+                eq(STUDENT_ID), eq("/dashboard/attendance-summary"), eq("SYSTEM"),
+                contains("manual:"), eq(Set.of(ExternalDeliveryChannel.PUSH, ExternalDeliveryChannel.EMAIL)));
     }
 
     /**
@@ -130,23 +110,15 @@ class AttendanceReminderServiceTest {
         School school = new School();
         school.setName("E2E Test School 2");
         when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
-        when(emailService.sendHtmlEmailSync(anyString(), anyString(), anyString())).thenReturn(true);
-
         service.sendAttendanceReminderEmailsWithOutcomes(
                 List.of(STUDENT_ID), SESSION,
                 Map.of(STUDENT_ID, List.of("2026-08-12", "2026-08-13", "2026-08-14")));
 
-        ArgumentCaptor<String> htmlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendHtmlEmailSync(anyString(), anyString(), htmlCaptor.capture());
-        String html = htmlCaptor.getValue();
-
-        assertThat(html)
-                .contains("3 consecutive school days")
-                .contains("12, 13 &amp; 14 Aug")     // collapsed month, human-readable
-                .contains("Recent absences:")
-                .contains("85.0%")                   // cumulative context still shown
-                .doesNotContain("fallen below")      // the false claim, absent
-                .doesNotContain("null");
+        verify(businessNotifications).studentAndParents(eq(SCHOOL_ID), eq(STUDENT_ID),
+                eq(NotificationAudienceType.STUDENT_WITH_ATTENDANCE_PARENTS),
+                eq(NotificationEventCode.STUDENT_ABSENT), eq(NotificationCategory.ATTENDANCE),
+                anyString(), contains("consecutive absences"), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anySet());
     }
 
     /** The percentage-selected batch keeps its original wording untouched. */
@@ -170,19 +142,12 @@ class AttendanceReminderServiceTest {
         School school = new School();
         school.setName("E2E Test School 2");
         when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
-        when(emailService.sendHtmlEmailSync(anyString(), anyString(), anyString())).thenReturn(true);
-
         service.sendAttendanceReminderEmailsWithOutcomes(List.of(STUDENT_ID), SESSION);
-
-        ArgumentCaptor<String> htmlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendHtmlEmailSync(anyString(), anyString(), htmlCaptor.capture());
-        String html = htmlCaptor.getValue();
-
-        assertThat(html)
-                .contains("fallen below the school's required threshold")
-                .doesNotContain("consecutive school days")
-                .doesNotContain("Recent absences:")
-                .doesNotContain("null");
+        verify(businessNotifications).studentAndParents(eq(SCHOOL_ID), eq(STUDENT_ID),
+                eq(NotificationAudienceType.STUDENT_WITH_ATTENDANCE_PARENTS),
+                eq(NotificationEventCode.ATTENDANCE_LOW), eq(NotificationCategory.ATTENDANCE),
+                anyString(), contains("fallen below"), anyString(), anyString(), anyString(),
+                anyString(), anyString(), anySet());
     }
 
     @Test
@@ -195,7 +160,6 @@ class AttendanceReminderServiceTest {
         Map<String, String> outcomes = service.sendAttendanceReminderEmailsWithOutcomes(List.of(STUDENT_ID), SESSION);
 
         assertThat(outcomes).containsEntry(STUDENT_ID, "failed");
-        verifyNoInteractions(emailService);
     }
 
     @Test
@@ -220,7 +184,6 @@ class AttendanceReminderServiceTest {
         // Specific outcome, not a bare "failed" — mirrors FeeReminderService's ReminderOutcome
         // vocabulary so a caller can tell "no email on file" apart from a real send failure.
         assertThat(outcomes).containsEntry(STUDENT_ID, "skipped_no_email");
-        verifyNoInteractions(emailService);
     }
 
     // ─── Exit-status enforcement (defense in depth: not just candidate-list filtering) ───
@@ -245,7 +208,6 @@ class AttendanceReminderServiceTest {
         Map<String, String> outcomes = service.sendAttendanceReminderEmailsWithOutcomes(List.of(STUDENT_ID), SESSION);
 
         assertThat(outcomes).containsEntry(STUDENT_ID, "skipped_not_active");
-        verifyNoInteractions(emailService);
     }
 
     /**
@@ -284,14 +246,12 @@ class AttendanceReminderServiceTest {
         withdrawn.setStatus(com.indraacademy.ias_management.entity.StudentStatus.WITHDRAWN);
         when(studentRepository.findByStudentIdAndSchoolId(withdrawnId, SCHOOL_ID)).thenReturn(Optional.of(withdrawn));
 
-        when(emailService.sendHtmlEmailSync(anyString(), anyString(), anyString())).thenReturn(true);
-
         Map<String, String> outcomes = service.sendAttendanceReminderEmailsWithOutcomes(
                 List.of(activeId, withdrawnId), SESSION);
 
         assertThat(outcomes).containsEntry(activeId, "sent");
         assertThat(outcomes).containsEntry(withdrawnId, "skipped_not_active");
-        verify(emailService, times(1)).sendHtmlEmailSync(anyString(), anyString(), anyString());
-        verify(emailService, never()).sendHtmlEmailSync(eq("withdrawn@example.com"), anyString(), anyString());
+        verify(businessNotifications, times(1)).studentAndParents(eq(SCHOOL_ID), eq(activeId), any(), any(), any(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anySet());
     }
 }

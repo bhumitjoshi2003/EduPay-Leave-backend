@@ -11,6 +11,7 @@ import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.notification.*;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -39,7 +40,7 @@ public class FeeReminderService {
     @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private PaymentRepository paymentRepository;
-    @Autowired private EmailService emailService;
+    @Autowired private BusinessNotificationService businessNotifications;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
 
@@ -96,8 +97,9 @@ public class FeeReminderService {
             String subject = "Fee Payment Reminder – " + monthName + " (" + fee.getYear() + ")";
             String studentName = student.getName() != null ? student.getName() : "Student";
             String htmlBody = buildFeeReminderHtml(studentName, monthName, fee.getYear(), schoolName);
-            log.info("Triggering scheduled reminder email to: {}", email);
-            emailService.sendHtmlEmail(email, subject, htmlBody);
+            publishFeeReminder(fee.getSchoolId(), student.getStudentId(), NotificationEventCode.FEE_DUE,
+                    subject, "School fees for " + monthName + " are due. Please review the fee details.",
+                    "fee-due:" + fee.getSchoolId() + ":" + student.getStudentId() + ":" + fee.getYear() + ":" + fee.getMonth());
         }, () -> log.error("Database Error: Student ID {} not found in Student table.", fee.getStudentId()));
     }
 
@@ -297,10 +299,16 @@ public class FeeReminderService {
      * that method's Javadoc). A caller promising per-student outcomes needs the real thing.
      */
     public Map<String, String> sendReminderEmailsWithOutcomes(List<String> studentIds, String session) {
+        return sendReminderEmailsWithOutcomes(studentIds, session, null);
+    }
+
+    public Map<String, String> sendReminderEmailsWithOutcomes(List<String> studentIds, String session,
+                                                              String workflowId) {
         Map<String, String> outcomes = new LinkedHashMap<>();
         for (String studentId : studentIds) {
             try {
-                SendResult result = sendReminderEmailSync(studentId, session);
+                SendResult result = publishOverdueReminder(studentId, session,
+                        workflowId == null ? "manual:" + LocalDate.now() : "workflow:" + workflowId);
                 outcomes.put(studentId, result.outcome().key());
             } catch (Exception e) {
                 log.error("Failed to send workflow reminder for student {}: {}", studentId, e.getMessage());
@@ -382,10 +390,7 @@ public class FeeReminderService {
             log.warn("Cannot send reminder to student {}: {}", studentId, result.skipOutcome());
             return new SendResult(result.skipOutcome(), null);
         }
-        ReminderEmailContent content = result.content();
-        emailService.sendHtmlEmail(content.email(), content.subject(), content.htmlBody());
-        log.info("Fee reminder sent to student {} ({})", studentId, content.email());
-        return new SendResult(ReminderOutcome.SENT, content.monthList());
+        return publishOverdueReminder(studentId, session, "manual:" + LocalDate.now());
     }
 
     /**
@@ -396,18 +401,29 @@ public class FeeReminderService {
      * single/bulk-send endpoints, which keep their existing fast, fire-and-forget behavior.
      */
     private SendResult sendReminderEmailSync(String studentId, String session) {
+        return publishOverdueReminder(studentId, session, "manual:" + LocalDate.now());
+    }
+
+    private SendResult publishOverdueReminder(String studentId, String session, String dispatchKey) {
         ReminderBuildResult result = buildReminderEmailContent(studentId, session);
-        if (!result.isEligible()) {
-            log.warn("Cannot send reminder (sync) to student {}: {}", studentId, result.skipOutcome());
-            return new SendResult(result.skipOutcome(), null);
-        }
+        if (!result.isEligible()) return new SendResult(result.skipOutcome(), null);
         ReminderEmailContent content = result.content();
-        boolean sent = emailService.sendHtmlEmailSync(content.email(), content.subject(), content.htmlBody());
-        if (sent) {
-            log.info("Fee reminder sent (sync) to student {} ({})", studentId, content.email());
-            return new SendResult(ReminderOutcome.SENT, content.monthList());
-        }
-        return new SendResult(ReminderOutcome.FAILED, null);
+        Long schoolId = securityUtil.getSchoolId();
+        publishFeeReminder(schoolId, studentId, NotificationEventCode.FEE_OVERDUE,
+                content.subject(), "Fees for " + content.monthList() + " are overdue. Please review the fee details.",
+                "fee-overdue:" + schoolId + ":" + studentId + ":" + session + ":" + dispatchKey);
+        return new SendResult(ReminderOutcome.SENT, content.monthList());
+    }
+
+    private void publishFeeReminder(Long schoolId, String studentId, NotificationEventCode eventCode,
+                                    String title, String message, String idempotencyKey) {
+        businessNotifications.studentAndParents(schoolId, studentId,
+                NotificationAudienceType.STUDENT_WITH_FEE_PARENTS, eventCode,
+                NotificationCategory.FEES_PAYMENTS, title, message, "StudentFees", studentId,
+                "/dashboard/fees", "SYSTEM", idempotencyKey,
+                eventCode == NotificationEventCode.FEE_OVERDUE
+                        ? Set.of(ExternalDeliveryChannel.PUSH, ExternalDeliveryChannel.EMAIL)
+                        : Set.of(ExternalDeliveryChannel.PUSH));
     }
 
     // ─── Email template ───────────────────────────────────────────────────────

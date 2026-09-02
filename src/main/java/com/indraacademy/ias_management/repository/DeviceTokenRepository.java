@@ -20,4 +20,7 @@ public interface DeviceTokenRepository extends JpaRepository<DeviceToken, Long> 
 
     @Transactional
     void deleteByToken(String token);
+
+    @Transactional
+    long deleteByTokenAndUserIdAndSchoolId(String token, String userId, Long schoolId);
 }

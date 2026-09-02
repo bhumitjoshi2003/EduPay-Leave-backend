@@ -3,6 +3,8 @@ package com.indraacademy.ias_management.repository;
 import com.indraacademy.ias_management.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -14,4 +16,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     Optional<User> findUserByUserId(String userId);
     Optional<User> findFirstBySchoolIdAndRole(Long schoolId, String role);
+    Optional<User> findByUserIdAndSchoolIdAndActiveTrue(String userId, Long schoolId);
+    List<User> findBySchoolIdAndActiveTrueAndUserIdIn(Long schoolId, Collection<String> userIds);
+    List<User> findBySchoolIdAndRoleAndActiveTrue(Long schoolId, String role);
+    List<User> findBySchoolIdAndActiveTrue(Long schoolId);
 }

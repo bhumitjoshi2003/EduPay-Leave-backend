@@ -30,18 +30,21 @@ public class NotificationController {
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PostMapping
-    public ResponseEntity<?> createNotification(@Valid @RequestBody Notification notification, HttpServletRequest request) {
+    public ResponseEntity<?> createNotification(@Valid @RequestBody Notification notification,
+                                                @RequestParam(required = false) Long schoolId,
+                                                HttpServletRequest request) {
         log.info("Request to create broad notification with title: {}", notification.getTitle());
-        Notification createdNotification = notificationService.createBroadNotification(notification, request);
+        Notification createdNotification = notificationService.createBroadNotification(notification, schoolId, request);
         log.info("Notification created successfully with ID: {}", createdNotification.getId());
         return new ResponseEntity<>(createdNotification, HttpStatus.CREATED);
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
-    public ResponseEntity<?> getNotificationById(@PathVariable Long id) {
+    public ResponseEntity<?> getNotificationById(@PathVariable Long id,
+                                                 @RequestParam(required = false) Long schoolId) {
         log.info("Fetching notification with ID: {}", id);
-        Optional<Notification> notification = notificationService.getNotificationById(id);
+        Optional<Notification> notification = notificationService.getNotificationById(id, schoolId);
         if (notification.isPresent()) {
             return ResponseEntity.ok(notification.get());
         }
@@ -52,36 +55,46 @@ public class NotificationController {
 
     @GetMapping("/user")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Page<UserNotificationDTO>> getUserNotifications(Pageable pageable) {
+    public ResponseEntity<Page<UserNotificationDTO>> getUserNotifications(
+            @RequestParam(required = false) Boolean isRead,
+            @RequestParam(required = false) com.indraacademy.ias_management.notification.NotificationCategory category,
+            Pageable pageable) {
         String userId = authService.getUserId();
         String userRole = authService.getRole();
         log.info("Fetching notifications for userId: {} with role: {}", userId, userRole);
-        Page<UserNotificationDTO> userNotifications = notificationService.getNotificationsForUser(userId, userRole, pageable);
+        Page<UserNotificationDTO> userNotifications = notificationService
+                .getNotificationsForUser(userId, userRole, isRead, category, pageable);
         return new ResponseEntity<>(userNotifications, HttpStatus.OK);
     }
 
     @GetMapping("/all")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
-    public ResponseEntity<Page<Notification>> getAllNotifications(Pageable pageable) {
+    public ResponseEntity<Page<Notification>> getAllNotifications(Pageable pageable,
+                                                                  @RequestParam(required = false) Long schoolId) {
         log.info("Fetching all notifications.");
-        Page<Notification> notifications = notificationService.getAllNotifications(pageable);
+        Page<Notification> notifications = notificationService.getAllNotifications(pageable, schoolId);
         return new ResponseEntity<>(notifications, HttpStatus.OK);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @PutMapping("/{id}")
-    public ResponseEntity<Notification> updateNotification(@PathVariable Long id, @Valid @RequestBody Notification notification, HttpServletRequest request) {
+    public ResponseEntity<Notification> updateNotification(@PathVariable Long id,
+                                                           @Valid @RequestBody Notification notification,
+                                                           @RequestParam(required = false) Long schoolId,
+                                                           HttpServletRequest request) {
         log.info("Updating notification with ID: {}", id);
-        Notification savedNotification = notificationService.updateNotification(id, notification, request);
+        Notification savedNotification = notificationService.updateNotification(id, notification, schoolId, request);
         log.info("Notification updated successfully with ID: {}", id);
         return new ResponseEntity<>(savedNotification, HttpStatus.OK);
     }
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteNotification(@PathVariable Long id, HttpServletRequest request) {
+    public ResponseEntity<Void> deleteNotification(@PathVariable Long id,
+                                                   @RequestParam(required = false) Long schoolId,
+                                                   HttpServletRequest request) {
         log.warn("Request to delete notification with ID: {}", id);
-        notificationService.deleteNotification(id, request);
+        notificationService.deleteNotification(id, schoolId, request);
         log.info("Notification deleted successfully with ID: {}", id);
         return new ResponseEntity<>(HttpStatus.NO_CONTENT);
     }
@@ -103,5 +116,12 @@ public class NotificationController {
         log.info("Marking all notifications as read for user ID {}", userId);
         notificationService.markAllNotificationsAsRead(userId);
         return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    }
+
+    @PutMapping("/user/{inboxId}/read")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> markNotificationAsRead(@PathVariable Long inboxId) {
+        notificationService.markNotificationAsRead(authService.getUserId(), inboxId);
+        return ResponseEntity.noContent().build();
     }
 }

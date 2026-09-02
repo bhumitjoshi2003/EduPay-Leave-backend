@@ -31,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,7 +58,7 @@ class ParentPortalServiceTest {
         service = new ParentPortalService(parentRepository, relationshipRepository, studentRepository,
                 userRepository, passwordEncoder, securityUtil, entitlementService,
                 idGeneratorService, passwordResetService, schoolRepository);
-        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
     }
 
     @Test
@@ -132,6 +133,93 @@ class ParentPortalServiceTest {
 
         assertThat(profile.children()).isEmpty();
         assertThat(profile.parent().linkedChildren()).isZero();
+    }
+
+    @Test
+    void notificationRecipientResolverIncludesOnlyActiveEffectiveParents() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Student student = activeStudent("STU_001");
+        ParentStudentRelationship active = relationship(1L, "STU_001", true);
+        active.setEffectiveFrom(today.minusDays(1));
+        ParentStudentRelationship inactive = relationship(2L, "STU_001", false);
+        inactive.setParentId("PAR_INACTIVE_LINK");
+        Parent inactiveParent = parent();
+        inactiveParent.setParentId("PAR_DISABLED");
+        inactiveParent.setActive(false);
+        ParentStudentRelationship disabledParentLink = relationship(3L, "STU_001", true);
+        disabledParentLink.setParentId("PAR_DISABLED");
+
+        when(studentRepository.findByStudentIdAndSchoolId("STU_001", SCHOOL_ID))
+                .thenReturn(Optional.of(student));
+        when(relationshipRepository.findBySchoolIdAndStudentIdOrderByPrimaryGuardianDesc(SCHOOL_ID, "STU_001"))
+                .thenReturn(List.of(active, inactive, disabledParentLink));
+        when(parentRepository.findByParentIdAndSchoolId(PARENT_ID, SCHOOL_ID))
+                .thenReturn(Optional.of(parent()));
+        User activeParentUser = new User();
+        activeParentUser.setUserId(PARENT_ID);
+        activeParentUser.setSchoolId(SCHOOL_ID);
+        activeParentUser.setActive(true);
+        when(userRepository.findByUserIdAndSchoolIdAndActiveTrue(PARENT_ID, SCHOOL_ID))
+                .thenReturn(Optional.of(activeParentUser));
+        when(parentRepository.findByParentIdAndSchoolId("PAR_DISABLED", SCHOOL_ID))
+                .thenReturn(Optional.of(inactiveParent));
+
+        assertThat(service.findActiveParentIdsForStudents(SCHOOL_ID, List.of("STU_001"), today))
+                .containsExactly(PARENT_ID);
+    }
+
+    @Test
+    void notificationRecipientResolverExcludesParentWithDisabledLogin() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        ParentStudentRelationship active = relationship(1L, "STU_001", true);
+        active.setEffectiveFrom(today.minusDays(1));
+
+        when(studentRepository.findByStudentIdAndSchoolId("STU_001", SCHOOL_ID))
+                .thenReturn(Optional.of(activeStudent("STU_001")));
+        when(relationshipRepository.findBySchoolIdAndStudentIdOrderByPrimaryGuardianDesc(SCHOOL_ID, "STU_001"))
+                .thenReturn(List.of(active));
+        when(parentRepository.findByParentIdAndSchoolId(PARENT_ID, SCHOOL_ID))
+                .thenReturn(Optional.of(parent()));
+        when(userRepository.findByUserIdAndSchoolIdAndActiveTrue(PARENT_ID, SCHOOL_ID))
+                .thenReturn(Optional.empty());
+
+        assertThat(service.findActiveParentIdsForStudents(SCHOOL_ID, List.of("STU_001"), today))
+                .isEmpty();
+    }
+
+    @Test
+    void notificationRecipientResolverExcludesFutureAndExpiredRelationships() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        ParentStudentRelationship future = relationship(1L, "STU_001", true);
+        future.setEffectiveFrom(today.plusDays(1));
+        ParentStudentRelationship expired = relationship(2L, "STU_001", true);
+        expired.setEffectiveFrom(today.minusMonths(1));
+        expired.setEffectiveUntil(today.minusDays(1));
+
+        when(studentRepository.findByStudentIdAndSchoolId("STU_001", SCHOOL_ID))
+                .thenReturn(Optional.of(activeStudent("STU_001")));
+        when(relationshipRepository.findBySchoolIdAndStudentIdOrderByPrimaryGuardianDesc(SCHOOL_ID, "STU_001"))
+                .thenReturn(List.of(future, expired));
+
+        assertThat(service.findActiveParentIdsForStudents(SCHOOL_ID, List.of("STU_001"), today))
+                .isEmpty();
+        verify(parentRepository, never()).findByParentIdAndSchoolId(anyString(), any());
+    }
+
+    @Test
+    void notificationRecipientResolverExcludesExitedAndCrossSchoolStudents() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Student withdrawn = activeStudent("STU_EXITED");
+        withdrawn.setStatus(StudentStatus.WITHDRAWN);
+        when(studentRepository.findByStudentIdAndSchoolId("STU_EXITED", SCHOOL_ID))
+                .thenReturn(Optional.of(withdrawn));
+        when(studentRepository.findByStudentIdAndSchoolId("STU_OTHER_SCHOOL", SCHOOL_ID))
+                .thenReturn(Optional.empty());
+
+        assertThat(service.findActiveParentIdsForStudents(
+                SCHOOL_ID, List.of("STU_EXITED", "STU_OTHER_SCHOOL"), today)).isEmpty();
+        verify(relationshipRepository, never())
+                .findBySchoolIdAndStudentIdOrderByPrimaryGuardianDesc(any(), anyString());
     }
 
     // ─── createParent (Option A onboarding) ────────────────────────────────
@@ -235,5 +323,13 @@ class ParentPortalServiceTest {
         relationship.setEffectiveFrom(LocalDate.now().minusDays(1));
         relationship.setActive(active);
         return relationship;
+    }
+
+    private Student activeStudent(String studentId) {
+        Student student = new Student();
+        student.setStudentId(studentId);
+        student.setSchoolId(SCHOOL_ID);
+        student.setStatus(StudentStatus.ACTIVE);
+        return student;
     }
 }

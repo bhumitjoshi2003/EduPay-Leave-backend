@@ -8,6 +8,7 @@ import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.InternetAddress;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
@@ -97,6 +98,26 @@ public class EmailService {
         } catch (Exception e) {
             log.error("Unexpected error while sending HTML email (sync) to: {}: {}", to, e.getMessage());
             return false;
+        }
+    }
+
+    /** Provider call for the durable notification worker. Unlike legacy helpers, failures are not swallowed. */
+    public void sendNotificationEmailOrThrow(String to, String subject, String htmlBody) {
+        if (to == null || to.isBlank() || subject == null || htmlBody == null) {
+            throw new IllegalArgumentException("Email recipient, subject and body are required");
+        }
+        try {
+            InternetAddress address = new InternetAddress(to, true);
+            address.validate();
+            MimeMessage message = javaMailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(emailSender);
+            helper.setTo(address);
+            helper.setSubject(subject);
+            helper.setText(htmlBody, true);
+            javaMailSender.send(message);
+        } catch (MessagingException | MailException failure) {
+            throw new NotificationEmailDeliveryException("Notification email provider failed", failure);
         }
     }
 
