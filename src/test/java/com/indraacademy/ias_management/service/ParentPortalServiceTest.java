@@ -148,6 +148,13 @@ class ParentPortalServiceTest {
         inactiveParent.setActive(false);
         ParentStudentRelationship disabledParentLink = relationship(3L, "STU_001", true);
         disabledParentLink.setParentId("PAR_DISABLED");
+        // relationship()'s default effectiveFrom is LocalDate.now().minusDays(1) — real wall-clock
+        // time, not this test's fixed `today`. Once real time passes `today`, that default falls
+        // after `today` and the effective-date window filter excludes this link before the
+        // production code ever reaches the parentRepository/userRepository disabled-parent check,
+        // silently making the stub below permanently unreachable (not just flaky) instead of
+        // actually exercising the exclusion path this test is named for.
+        disabledParentLink.setEffectiveFrom(today.minusDays(1));
 
         when(studentRepository.findByStudentIdAndSchoolId("STU_001", SCHOOL_ID))
                 .thenReturn(Optional.of(student));

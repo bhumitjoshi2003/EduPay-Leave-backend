@@ -220,11 +220,17 @@ public class NotificationService {
     @Transactional
     public void deleteNotification(Long id, Long requestedSchoolId, HttpServletRequest request) {
         if (id == null) throw new IllegalArgumentException("Notification ID must not be null.");
-        Notification existing = notificationRepository.findByIdAndSchoolId(
-                        id, resolveTargetSchoolId(requestedSchoolId))
+        Long schoolId = resolveTargetSchoolId(requestedSchoolId);
+        Notification existing = notificationRepository.findByIdAndSchoolId(id, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Notification not found with ID: " + id));
         try {
             String oldValue = objectMapper.writeValueAsString(existing);
+            // user_notifications has no DB-level cascade from notifications (unlike
+            // notification_deliveries, which cascades both directly and via user_notifications'
+            // own FK) — delete the inbox rows first so the FK constraint doesn't reject the
+            // notification delete. This only removes Edunexify's own records; it never touches
+            // an email/push that was already sent to a recipient.
+            userNotificationRepository.deleteByNotificationIdAndSchoolId(id, schoolId);
             notificationRepository.delete(existing);
             auditService.log(
                     securityUtil.getUsername(), securityUtil.getRole(), "DELETE_NOTIFICATION",

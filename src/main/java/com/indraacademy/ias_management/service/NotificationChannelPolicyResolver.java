@@ -33,8 +33,14 @@ public class NotificationChannelPolicyResolver {
         EnumSet<ExternalDeliveryChannel> result = EnumSet.noneOf(ExternalDeliveryChannel.class);
         for (ExternalDeliveryChannel channel : requested) {
             NotificationChannel setting = configured.get(channel.name());
-            // Existing schools historically have PUSH enabled even when no row was seeded.
-            boolean enabled = setting != null ? setting.isEnabled() : channel == ExternalDeliveryChannel.PUSH;
+            // Existing schools historically have PUSH and EMAIL enabled even when no row was
+            // seeded — notification_channels has never actually been seeded for any school
+            // (NotificationChannelService.seedDefaultsForSchool has no caller), so this branch
+            // is the only thing standing between "the Notice Board's Email/Both option" and
+            // every non-mandatory-category email being silently dropped before a single
+            // NotificationDelivery row is ever created.
+            boolean enabled = setting != null ? setting.isEnabled()
+                    : channel == ExternalDeliveryChannel.PUSH || channel == ExternalDeliveryChannel.EMAIL;
             if (enabled) result.add(channel);
         }
         return result;

@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
@@ -30,6 +31,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
@@ -176,6 +179,40 @@ class NotificationServiceTest {
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("does not exist");
         verify(publisher, never()).publish(any());
+    }
+
+    /**
+     * Regression: user_notifications.notification_id has no DB-level cascade from notifications
+     * (unlike notification_deliveries, which does cascade). Deleting a notification that still
+     * has real recipient inbox rows used to go straight to notificationRepository.delete(existing)
+     * with no cleanup first, which threw a FK violation against real PostgreSQL for any notice
+     * that ever reached a recipient — i.e., virtually every real published notice. The inbox rows
+     * must be removed first, in the same transaction, before the notification itself is deleted.
+     */
+    @Test
+    void deletingNotificationWithRealRecipientsClearsInboxRowsBeforeTheNotificationItself() {
+        Notification existing = notification(91L);
+        when(notificationRepository.findByIdAndSchoolId(91L, 2L)).thenReturn(Optional.of(existing));
+
+        service.deleteNotification(91L, servletRequest);
+
+        InOrder order = inOrder(inboxRepository, notificationRepository);
+        order.verify(inboxRepository).deleteByNotificationIdAndSchoolId(91L, 2L);
+        order.verify(notificationRepository).delete(existing);
+        verify(auditService).log(eq("admin-2"), eq("ADMIN"), eq("DELETE_NOTIFICATION"),
+                eq("Notification"), eq("91"), any(), any(), eq("127.0.0.1"));
+    }
+
+    @Test
+    void deleteRejectsANotificationThatBelongsToAnotherSchool() {
+        when(notificationRepository.findByIdAndSchoolId(91L, 2L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.deleteNotification(91L, servletRequest))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        verify(inboxRepository, never()).deleteByNotificationIdAndSchoolId(any(), any());
+        verify(notificationRepository, never()).delete(any());
+        verify(auditService, never()).log(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     private Notification legacyNotification(String audience) {

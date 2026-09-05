@@ -18,15 +18,36 @@ import static org.mockito.Mockito.when;
 class NotificationChannelPolicyResolverTest {
     @Mock NotificationChannelRepository repository;
 
+    /**
+     * Regression: notification_channels has never actually been seeded for any school
+     * (NotificationChannelService.seedDefaultsForSchool has no caller — confirmed live
+     * against the dev DB, every school's table is empty). Before this fix, EMAIL silently
+     * defaulted to disabled here, so every Notice Board notice sent with deliveryMode
+     * EMAIL/BOTH created zero EMAIL NotificationDelivery rows — nothing was ever attempted
+     * against Brevo, despite the Notice Board UI presenting Email as a working option and
+     * the notice creation call itself reporting success. Confirmed live end-to-end after
+     * the fix: real NotificationDelivery rows are created and reach SENT via the real
+     * Brevo SMTP relay.
+     */
     @Test
-    void preservesLegacyPushDefaultButDoesNotEnableEmailWithoutConfiguration() {
+    void defaultsBothPushAndEmailEnabledWhenSchoolHasNoConfiguredChannels() {
         when(repository.findBySchoolId(2L)).thenReturn(List.of());
         var resolver = new NotificationChannelPolicyResolver(repository);
 
         assertThat(resolver.resolve(2L, NotificationEventCode.NOTICE_PUBLISHED,
                 NotificationCategory.NOTICE_ANNOUNCEMENT,
                 Set.of(ExternalDeliveryChannel.PUSH, ExternalDeliveryChannel.EMAIL)))
-                .containsExactly(ExternalDeliveryChannel.PUSH);
+                .containsExactlyInAnyOrder(ExternalDeliveryChannel.PUSH, ExternalDeliveryChannel.EMAIL);
+    }
+
+    @Test
+    void emailOnlyRequestIsNotSilentlyDroppedForAnUnconfiguredSchool() {
+        when(repository.findBySchoolId(2L)).thenReturn(List.of());
+        var resolver = new NotificationChannelPolicyResolver(repository);
+
+        assertThat(resolver.resolve(2L, NotificationEventCode.NOTICE_PUBLISHED,
+                NotificationCategory.NOTICE_ANNOUNCEMENT, Set.of(ExternalDeliveryChannel.EMAIL)))
+                .containsExactly(ExternalDeliveryChannel.EMAIL);
     }
 
     @Test

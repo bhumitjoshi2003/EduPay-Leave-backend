@@ -50,4 +50,13 @@ public interface UserNotificationRepository extends JpaRepository<UserNotificati
     @Query("update UserNotification u set u.isRead = true, u.readAt = CURRENT_TIMESTAMP " +
             "where u.userId = :userId and u.schoolId = :schoolId and u.isRead = false")
     int markAllRead(String userId, Long schoolId);
+
+    /** Must run before deleting the owning Notification — user_notifications.notification_id
+     *  has no DB-level cascade (unlike notification_deliveries, which does cascade, including
+     *  transitively via this table's own user_notification_id FK). Scoped by schoolId as a
+     *  second tenant check alongside the caller having already resolved the Notification via
+     *  findByIdAndSchoolId. */
+    @Modifying
+    @Query("delete from UserNotification u where u.notification.id = :notificationId and u.schoolId = :schoolId")
+    int deleteByNotificationIdAndSchoolId(@Param("notificationId") Long notificationId, @Param("schoolId") Long schoolId);
 }
