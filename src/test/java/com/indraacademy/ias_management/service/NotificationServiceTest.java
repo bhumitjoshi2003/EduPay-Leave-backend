@@ -215,6 +215,23 @@ class NotificationServiceTest {
         verify(auditService, never()).log(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
+    @Test
+    void postedNoticesListOnlyRequestsNoticeBoardPublications() {
+        var pageable = PageRequest.of(0, 10);
+        Notification notice = notification(91L);
+        when(notificationRepository.findBySchoolIdAndEventCodeAndCreatedByIsNotNull(
+                2L, com.indraacademy.ias_management.notification.NotificationEventCode.NOTICE_PUBLISHED, pageable))
+                .thenReturn(new PageImpl<>(List.of(notice), pageable, 1));
+
+        var result = service.getAllNotifications(pageable, null);
+
+        assertThat(result.getContent()).containsExactly(notice);
+        // A business/system notification (e.g. a leave event) is published with its own
+        // eventCode — LEAVE_SUBMITTED, not NOTICE_PUBLISHED — so it is never a candidate row
+        // for this query regardless of who triggered it or whether createdBy is set.
+        verify(notificationRepository, never()).findBySchoolIdAndCreatedByIsNotNull(any());
+    }
+
     private Notification legacyNotification(String audience) {
         Notification notification = notification(null);
         notification.setAudience(audience);

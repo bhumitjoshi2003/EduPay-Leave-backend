@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.repository;
 
 import com.indraacademy.ias_management.entity.Notification;
+import com.indraacademy.ias_management.notification.NotificationEventCode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -22,7 +23,14 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     List<Notification> findBySchoolIdAndCreatedByIsNotNull(Long schoolId);
 
-    Page<Notification> findBySchoolIdAndCreatedByIsNotNull(Long schoolId, Pageable pageable);
+    // Admin's Posted Notices list — restricted to notices actually published through the
+    // Notice Board. createdBy is set on every notification (manual and system-generated
+    // alike, since it just records the acting user), so it can't distinguish a deliberately
+    // posted notice from an operational one like a leave approval; eventCode can, since only
+    // NotificationService.createBroadNotification() (the Notice Board publish path) produces
+    // NOTICE_PUBLISHED.
+    Page<Notification> findBySchoolIdAndEventCodeAndCreatedByIsNotNull(
+            Long schoolId, NotificationEventCode eventCode, Pageable pageable);
 
     java.util.Optional<Notification> findByIdAndSchoolId(Long id, Long schoolId);
     Optional<Notification> findBySchoolIdAndIdempotencyKey(Long schoolId, String idempotencyKey);

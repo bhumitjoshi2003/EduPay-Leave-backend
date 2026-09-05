@@ -328,8 +328,8 @@ public class NotificationService {
     */
     @Transactional(readOnly = true)
     public Page<Notification> getAllNotifications(Pageable pageable, Long requestedSchoolId) {
-        return notificationRepository.findBySchoolIdAndCreatedByIsNotNull(
-                resolveTargetSchoolId(requestedSchoolId), pageable);
+        return notificationRepository.findBySchoolIdAndEventCodeAndCreatedByIsNotNull(
+                resolveTargetSchoolId(requestedSchoolId), NotificationEventCode.NOTICE_PUBLISHED, pageable);
     }
 
     private UserNotificationDTO toDto(UserNotification row) {
