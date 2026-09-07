@@ -27,7 +27,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
-/** PostgreSQL-only coverage for V53's restrictive section-history relationship. */
+/** PostgreSQL-only coverage for the section-deletion protection policy: V53's restrictive
+ *  student-enrollment relationship, and (Phase F5B.1) the equivalent explicit guards added for
+ *  V54's {@code class_teacher_responsibility} FK, V55's {@code timetable_entry} FK, and the
+ *  three no-FK-but-still-live-or-historical references (teacher_class_grant, Teacher's live
+ *  classTeacherSectionId, attendance). */
 @DataJpaTest(properties = {
         "spring.flyway.enabled=true",
         "spring.jpa.hibernate.ddl-auto=validate",
@@ -78,7 +82,9 @@ class SectionDeletionPostgresIT {
 
     @AfterEach
     void removeAnyCommittedFixtures() {
+        jdbc.update("DELETE FROM attendance WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM timetable_entry WHERE school_id=?", SCHOOL);
+        jdbc.update("DELETE FROM class_teacher_responsibility WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM teacher_class_grant WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM teacher WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM student_enrollment WHERE school_id=?", SCHOOL);
@@ -149,16 +155,59 @@ class SectionDeletionPostgresIT {
     }
 
     @Test
-    void timetableAndTeacherReferencesRetainExistingNonFkBehavior() {
-        jdbc.update("INSERT INTO teacher (teacher_id,school_id,name,status,class_teacher,class_teacher_section_id) VALUES ('SECTION-TEACHER-PG',?,'Teacher','ACTIVE','10',?)", SCHOOL, FREE_SECTION);
-        jdbc.update("INSERT INTO teacher_class_grant (school_id,teacher_id,class_name,class_id,section_id,section_name,created_at) VALUES (?,'SECTION-TEACHER-PG','10',?,?,'B',CURRENT_TIMESTAMP)", SCHOOL, CLASS, FREE_SECTION);
+    void timetableEntryReferenceBlocksSectionDeletion() {
         jdbc.update("INSERT INTO timetable_entry (school_id,class_name,class_id,section_id,section_name,day,period_number,start_time,end_time,subject_name) VALUES (?,'10',?,?,'B','MONDAY',99,'20:00','20:30','Synthetic')", SCHOOL, CLASS, FREE_SECTION);
 
-        assertThat(service.deleteSection(FREE_SECTION, request)).isZero();
-        entityManager.flush();
-        assertThat(jdbc.queryForObject("SELECT class_teacher_section_id FROM teacher WHERE school_id=? AND teacher_id='SECTION-TEACHER-PG'", Long.class, SCHOOL)).isEqualTo(FREE_SECTION);
-        assertThat(jdbc.queryForObject("SELECT section_id FROM teacher_class_grant WHERE school_id=? AND teacher_id='SECTION-TEACHER-PG'", Long.class, SCHOOL)).isEqualTo(FREE_SECTION);
+        assertThatThrownBy(() -> service.deleteSection(FREE_SECTION, request))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("timetable entries reference it");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM section WHERE school_id=? AND id=?", Integer.class, SCHOOL, FREE_SECTION)).isOne();
         assertThat(jdbc.queryForObject("SELECT section_id FROM timetable_entry WHERE school_id=? AND subject_name='Synthetic'", Long.class, SCHOOL)).isEqualTo(FREE_SECTION);
+    }
+
+    @Test
+    void classTeacherResponsibilityReferenceBlocksSectionDeletion() {
+        jdbc.update("INSERT INTO teacher (teacher_id,school_id,name,status) VALUES ('SECTION-TEACHER-PG',?,'Teacher','ACTIVE')", SCHOOL);
+        jdbc.update("INSERT INTO class_teacher_responsibility (school_id,academic_session_id,class_id,section_id,teacher_id) VALUES (?,?,?,?,'SECTION-TEACHER-PG')", SCHOOL, SESSION, CLASS, FREE_SECTION);
+
+        assertThatThrownBy(() -> service.deleteSection(FREE_SECTION, request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("class-teacher responsibility configuration references it");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM section WHERE school_id=? AND id=?", Integer.class, SCHOOL, FREE_SECTION)).isOne();
+        assertThat(jdbc.queryForObject("SELECT section_id FROM class_teacher_responsibility WHERE school_id=? AND teacher_id='SECTION-TEACHER-PG'", Long.class, SCHOOL)).isEqualTo(FREE_SECTION);
+    }
+
+    @Test
+    void teacherClassGrantReferenceBlocksSectionDeletion() {
+        jdbc.update("INSERT INTO teacher (teacher_id,school_id,name,status) VALUES ('SECTION-TEACHER-PG',?,'Teacher','ACTIVE')", SCHOOL);
+        jdbc.update("INSERT INTO teacher_class_grant (school_id,teacher_id,class_name,class_id,section_id,section_name,created_at) VALUES (?,'SECTION-TEACHER-PG','10',?,?,'B',CURRENT_TIMESTAMP)", SCHOOL, CLASS, FREE_SECTION);
+
+        assertThatThrownBy(() -> service.deleteSection(FREE_SECTION, request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("active self-service grant for it");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM section WHERE school_id=? AND id=?", Integer.class, SCHOOL, FREE_SECTION)).isOne();
+        assertThat(jdbc.queryForObject("SELECT section_id FROM teacher_class_grant WHERE school_id=? AND teacher_id='SECTION-TEACHER-PG'", Long.class, SCHOOL)).isEqualTo(FREE_SECTION);
+    }
+
+    @Test
+    void liveClassTeacherSectionReferenceBlocksSectionDeletion() {
+        jdbc.update("INSERT INTO teacher (teacher_id,school_id,name,status,class_teacher,class_teacher_section_id) VALUES ('SECTION-TEACHER-PG',?,'Teacher','ACTIVE','10',?)", SCHOOL, FREE_SECTION);
+
+        assertThatThrownBy(() -> service.deleteSection(FREE_SECTION, request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("assigned as its class-teacher");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM section WHERE school_id=? AND id=?", Integer.class, SCHOOL, FREE_SECTION)).isOne();
+        assertThat(jdbc.queryForObject("SELECT class_teacher_section_id FROM teacher WHERE school_id=? AND teacher_id='SECTION-TEACHER-PG'", Long.class, SCHOOL)).isEqualTo(FREE_SECTION);
+    }
+
+    @Test
+    void attendanceReferenceBlocksSectionDeletion() {
+        jdbc.update("INSERT INTO attendance (school_id,student_id,date,class_name,class_id,section_id,charge_paid) VALUES (?,?,DATE '2026-06-01','10',?,?,false)", SCHOOL, STUDENT, CLASS, FREE_SECTION);
+
+        assertThatThrownBy(() -> service.deleteSection(FREE_SECTION, request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("attendance history references it");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM section WHERE school_id=? AND id=?", Integer.class, SCHOOL, FREE_SECTION)).isOne();
+        assertThat(jdbc.queryForObject("SELECT section_id FROM attendance WHERE school_id=? AND student_id=?", Long.class, SCHOOL, STUDENT)).isEqualTo(FREE_SECTION);
     }
 
     @Test

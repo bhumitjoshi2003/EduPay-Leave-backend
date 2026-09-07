@@ -14,17 +14,25 @@ import java.util.Objects;
  * both {@link TimetableService} (manual create/update) and {@link TimetableBulkImportService}
  * (CSV import), so the two paths can never drift out of sync.
  *
+ * <p>Phase F3: every check here is scoped to one explicit {@code academicSessionId}. A candidate
+ * is validated only against other rows in the SAME session — an identical class/section/day
+ * /period/teacher/time combination in a different session is never a conflict, and a legacy row
+ * with {@code academicSessionId = NULL} can never match (or be matched by) a session-scoped
+ * candidate, since SQL equality against a non-null bound parameter never returns a NULL row.
+ *
  * <p>Slot rule: a candidate row may occupy a class+section+day+period slot that's already
- * occupied by other rows ONLY if all of them share the identical, non-blank
+ * occupied by other rows in the same session ONLY if all of them share the identical, non-blank
  * {@code simultaneousGroup} tag and the identical start/end time — this is the explicit signal
  * that distinguishes an intentional simultaneous/elective pairing (e.g. Mathematics/Biology,
  * both tagged "MATH_BIO") from an accidental duplicate. A blank/null group is always
  * strictly one-per-slot, exactly today's original behavior.
  *
- * <p>Teacher rule: independent of the slot rule — a teacher may never have two rows on the same
- * day whose start/end times overlap, regardless of class, section, period number, or
- * simultaneousGroup (a teacher literally cannot teach two places at once, even if the school
- * intentionally scheduled two subjects as "simultaneous" for the students).
+ * <p>Teacher rule: independent of the slot rule — within the same session, a teacher may never
+ * have two rows on the same day whose start/end times overlap, regardless of class, section,
+ * period number, or simultaneousGroup (a teacher literally cannot teach two places at once, even
+ * if the school intentionally scheduled two subjects as "simultaneous" for the students). The
+ * same teacher/day/time combination in a DIFFERENT session is not a conflict — that's simply the
+ * same weekly slot recurring in a different academic year.
  */
 @Service
 public class TimetableValidationService {
@@ -32,18 +40,26 @@ public class TimetableValidationService {
     @Autowired private TimetableRepository timetableRepository;
 
     /**
-     * Validates a candidate entry against existing slot occupants and the teacher's schedule.
-     * Throws {@link DataIntegrityViolationException} with a specific, human-readable message on
-     * any violation. Call with {@code excludeId} set to the entry's own id when updating an
-     * existing row (so it never conflicts with itself); {@code null} when creating.
+     * Validates a candidate entry against existing slot occupants and the teacher's schedule,
+     * scoped to {@code academicSessionId}. Throws {@link DataIntegrityViolationException} with a
+     * specific, human-readable message on any violation. Call with {@code excludeId} set to the
+     * entry's own id when updating an existing row (so it never conflicts with itself);
+     * {@code null} when creating. {@code candidate.getClassId()} must be set (canonical) — this
+     * method never matches by className.
      */
-    public void validate(TimetableEntry candidate, Long schoolId, Long excludeId) {
-        validateSlot(candidate, schoolId, excludeId);
-        validateTeacherConflict(candidate, schoolId, excludeId);
+    public void validate(TimetableEntry candidate, Long schoolId, Long academicSessionId, Long excludeId) {
+        if (academicSessionId == null) {
+            throw new IllegalArgumentException("academicSessionId is required for session-scoped validation");
+        }
+        if (candidate.getClassId() == null) {
+            throw new IllegalArgumentException("classId is required for session-scoped validation");
+        }
+        validateSlot(candidate, schoolId, academicSessionId, excludeId);
+        validateTeacherConflict(candidate, schoolId, academicSessionId, excludeId);
     }
 
-    private void validateSlot(TimetableEntry candidate, Long schoolId, Long excludeId) {
-        List<TimetableEntry> existingInSlot = new java.util.ArrayList<>(fetchSlot(candidate, schoolId));
+    private void validateSlot(TimetableEntry candidate, Long schoolId, Long academicSessionId, Long excludeId) {
+        List<TimetableEntry> existingInSlot = new java.util.ArrayList<>(fetchSlot(candidate, schoolId, academicSessionId));
         existingInSlot.removeIf(e -> excludeId != null && excludeId.equals(e.getId()));
         if (existingInSlot.isEmpty()) return; // first entry in this slot — always fine
 
@@ -74,10 +90,10 @@ public class TimetableValidationService {
         }
     }
 
-    private void validateTeacherConflict(TimetableEntry candidate, Long schoolId, Long excludeId) {
+    private void validateTeacherConflict(TimetableEntry candidate, Long schoolId, Long academicSessionId, Long excludeId) {
         if (candidate.getTeacherId() == null || candidate.getTeacherId().isBlank()) return;
-        List<TimetableEntry> teacherDayEntries = timetableRepository.findByTeacherIdAndDayAndSchoolId(
-                candidate.getTeacherId(), candidate.getDay(), schoolId);
+        List<TimetableEntry> teacherDayEntries = timetableRepository.findByAcademicSessionIdAndTeacherIdAndDayAndSchoolId(
+                academicSessionId, candidate.getTeacherId(), candidate.getDay(), schoolId);
         for (TimetableEntry other : teacherDayEntries) {
             if (excludeId != null && excludeId.equals(other.getId())) continue;
             if (overlaps(candidate.getStartTime(), candidate.getEndTime(), other.getStartTime(), other.getEndTime())) {
@@ -95,14 +111,14 @@ public class TimetableValidationService {
         return startA.compareTo(endB) < 0 && startB.compareTo(endA) < 0;
     }
 
-    private List<TimetableEntry> fetchSlot(TimetableEntry candidate, Long schoolId) {
+    private List<TimetableEntry> fetchSlot(TimetableEntry candidate, Long schoolId, Long academicSessionId) {
         if (candidate.getSectionId() != null) {
-            return timetableRepository.findByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(
-                    candidate.getClassName(), candidate.getSectionId(), candidate.getDay(),
+            return timetableRepository.findByAcademicSessionIdAndClassIdAndSectionIdAndDayAndPeriodNumberAndSchoolId(
+                    academicSessionId, candidate.getClassId(), candidate.getSectionId(), candidate.getDay(),
                     candidate.getPeriodNumber(), schoolId);
         }
-        return timetableRepository.findByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(
-                candidate.getClassName(), candidate.getDay(), candidate.getPeriodNumber(), schoolId);
+        return timetableRepository.findByAcademicSessionIdAndClassIdAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(
+                academicSessionId, candidate.getClassId(), candidate.getDay(), candidate.getPeriodNumber(), schoolId);
     }
 
     private String slotLabel(TimetableEntry entry) {

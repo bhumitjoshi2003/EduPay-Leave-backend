@@ -10,7 +10,9 @@ public class TimetableBulkImportDtos {
     /** One period successfully created. */
     public record RowSuccess(int row, String label, Long entryId) {}
 
-    public record Result(int totalRows, int successful, int failed,
+    /** {@code academicSessionId} is echoed on every result so an admin reviewing the report can
+     *  never mistake which session/year the import targeted — see TimetableBulkImportService. */
+    public record Result(Long academicSessionId, int totalRows, int successful, int failed,
                           List<RowError> errors, List<RowSuccess> created) {}
 
     private TimetableBulkImportDtos() {}

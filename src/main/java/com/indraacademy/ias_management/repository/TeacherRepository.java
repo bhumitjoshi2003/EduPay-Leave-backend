@@ -28,7 +28,18 @@ public interface TeacherRepository extends JpaRepository<Teacher, String> {
 
     List<Teacher> findByClassTeacherAndClassTeacherSectionIdIsNullAndSchoolId(String className, Long schoolId);
 
+    /** Phase F4: every teacher currently holding ANY live class-teacher scope — the complete
+     *  "currently live" set that activation must reconcile against, so a teacher whose live
+     *  assignment isn't backed by the current session's configuration gets cleared rather than
+     *  silently left stale. */
+    List<Teacher> findBySchoolIdAndClassTeacherIsNotNull(Long schoolId);
+
     long countBySchoolId(Long schoolId);
 
     long countBySchoolIdAndStatus(Long schoolId, TeacherStatus status);
+
+    /** Phase F5B.1: is any teacher's LIVE class-teacher scope currently pinned to this section? —
+     *  used by {@code SectionService#deleteSection} to fail closed rather than leave
+     *  {@code TeacherClassScopeService} reading a dangling {@code classTeacherSectionId}. */
+    boolean existsBySchoolIdAndClassTeacherSectionId(Long schoolId, Long sectionId);
 }

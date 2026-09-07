@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
@@ -70,7 +71,15 @@ public class TeacherClassScopeService {
 
     public TeacherScope resolveOwnScope(String teacherId, Long schoolId) {
         Teacher teacher = teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId).orElse(null);
-        String className = teacher != null ? teacher.getClassTeacher() : null;
+        // Fail-closed at the canonical boundary: a teacher who isn't operationally ACTIVE (most
+        // notably LEFT) never gets class/section scope, even if Teacher.classTeacher/
+        // classTeacherSectionId still carry a stale value from before they exited. This is the
+        // single point every TEACHER-facing caller (Attendance, Marks, Report Card, Leave,
+        // timetable self-service) goes through, so the guarantee holds everywhere at once.
+        if (teacher == null || teacher.getStatus() != TeacherStatus.ACTIVE) {
+            return new TeacherScope(null, null, false);
+        }
+        String className = teacher.getClassTeacher();
         if (className == null || className.isBlank()) {
             return new TeacherScope(null, null, false);
         }

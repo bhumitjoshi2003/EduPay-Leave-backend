@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
@@ -310,5 +311,73 @@ class TeacherClassScopeServiceTest {
         TeacherScope scope = service.resolveOwnScope("Ghost", SCHOOL_ID);
 
         assertThat(scope.hasClassResponsibility()).isFalse();
+    }
+
+    // ── Phase F3.1: LEFT-teacher fail-closed invariant at the canonical live-scope boundary ──
+
+    @Test
+    void activeTeacherWithValidResponsibility_allowed() {
+        givenClass12HasScienceAndCommerce();
+        Teacher active = teacher("TeacherA", "12", SCIENCE_ID);
+        active.setStatus(TeacherStatus.ACTIVE);
+        when(teacherRepository.findByTeacherIdAndSchoolId("TeacherA", SCHOOL_ID)).thenReturn(Optional.of(active));
+
+        TeacherScope scope = service.resolveOwnScope("TeacherA", SCHOOL_ID);
+
+        assertThat(scope.hasClassResponsibility()).isTrue();
+        assertThat(scope.sectionId()).isEqualTo(SCIENCE_ID);
+    }
+
+    @Test
+    void leftTeacherWithStaleClassTeacherFields_deniedScope_notStaleAuthority() {
+        // No class/section stubbing needed: the fail-closed status check short-circuits before
+        // classHasSections() would ever be consulted.
+        Teacher left = teacher("ExitedTeacher", "12", SCIENCE_ID); // stale classTeacher/sectionId, never cleared
+        left.setStatus(TeacherStatus.LEFT);
+        when(teacherRepository.findByTeacherIdAndSchoolId("ExitedTeacher", SCHOOL_ID)).thenReturn(Optional.of(left));
+
+        TeacherScope scope = service.resolveOwnScope("ExitedTeacher", SCHOOL_ID);
+
+        assertThat(scope.hasClassResponsibility()).isFalse();
+        assertThat(scope.className()).isNull();
+        assertThat(scope.sectionId()).isNull();
+    }
+
+    @Test
+    void leftTeacher_authorizeAndScopeToClass_rejectedDespiteStaleFields() {
+        Teacher left = teacher("ExitedTeacher", "12", SCIENCE_ID);
+        left.setStatus(TeacherStatus.LEFT);
+        when(teacherRepository.findByTeacherIdAndSchoolId("ExitedTeacher", SCHOOL_ID)).thenReturn(Optional.of(left));
+
+        ScopedAccess access = service.authorizeAndScopeToClass(Role.TEACHER, "ExitedTeacher", SCHOOL_ID, "12", SCIENCE_ID);
+
+        assertThat(access.allowed()).isFalse();
+    }
+
+    @Test
+    void reactivatedTeacherWithNoFreshAssignment_doesNotAutomaticallyRegainScope() {
+        // Rejoining alone (status flipped back to ACTIVE) grants nothing by itself — an admin
+        // must explicitly re-set classTeacher/classTeacherSectionId; there is no implicit
+        // restoration of whatever responsibility they had before exiting. No class/section
+        // stubbing needed: classTeacher is null, so classHasSections() is never consulted.
+        Teacher reactivated = teacher("Rejoined", null, null);
+        reactivated.setStatus(TeacherStatus.ACTIVE);
+        when(teacherRepository.findByTeacherIdAndSchoolId("Rejoined", SCHOOL_ID)).thenReturn(Optional.of(reactivated));
+
+        TeacherScope scope = service.resolveOwnScope("Rejoined", SCHOOL_ID);
+
+        assertThat(scope.hasClassResponsibility()).isFalse();
+    }
+
+    @Test
+    void resolveOwnScope_hasNoDependencyOnTimetableOrSessionConfigurationTables() {
+        // Historical/future timetable assignments and session-scoped configuration must never
+        // influence live scope — the absence of any such field on this service IS the guarantee,
+        // not just a runtime behavior that could silently regress.
+        assertThat(service.getClass().getDeclaredFields())
+                .extracting(java.lang.reflect.Field::getType)
+                .extracting(Class::getSimpleName)
+                .noneMatch(name -> name.contains("Timetable") || name.contains("ClassTeacherResponsibility")
+                        || name.contains("AcademicSession"));
     }
 }

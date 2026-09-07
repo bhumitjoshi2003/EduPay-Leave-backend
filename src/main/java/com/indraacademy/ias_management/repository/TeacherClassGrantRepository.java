@@ -14,4 +14,10 @@ public interface TeacherClassGrantRepository extends JpaRepository<TeacherClassG
             String teacherId, String className, Long sectionId, Long schoolId);
 
     Optional<TeacherClassGrant> findByIdAndSchoolId(Long id, Long schoolId);
+
+    /** Phase F5B.1: backs {@code SectionService#deleteSection}'s explicit pre-check. No DB FK
+     *  protects this column, but a grant naming a now-deleted section would be a live, silently
+     *  dangling authorization — nothing in this codebase cleans up grants when a section changes,
+     *  so deletion is rejected rather than orphaning it. */
+    boolean existsBySchoolIdAndSectionId(Long schoolId, Long sectionId);
 }

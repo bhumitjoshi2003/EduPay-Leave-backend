@@ -2,9 +2,14 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.SectionDTO;
 import com.indraacademy.ias_management.entity.Section;
+import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.ClassTeacherResponsibilityRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.TeacherClassGrantRepository;
+import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.TimetableRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,6 +36,21 @@ public class SectionService {
 
     @Autowired
     private StudentEnrollmentRepository studentEnrollmentRepository;
+
+    @Autowired
+    private TimetableRepository timetableRepository;
+
+    @Autowired
+    private ClassTeacherResponsibilityRepository classTeacherResponsibilityRepository;
+
+    @Autowired
+    private TeacherClassGrantRepository teacherClassGrantRepository;
+
+    @Autowired
+    private TeacherRepository teacherRepository;
+
+    @Autowired
+    private AttendanceRepository attendanceRepository;
 
     @Autowired
     private SecurityUtil securityUtil;
@@ -126,9 +146,19 @@ public class SectionService {
     }
 
     /**
-     * Deletes a section only when it has no authoritative enrollment history.
-     * Legacy Student projections with no enrollment rows retain the old clear-on-delete
-     * compatibility; enrollment-backed projections and history are never rewritten here.
+     * Deletes a section only when nothing historically meaningful or currently live still
+     * references it. Phase F5B.1: V54/V55 added real, {@code ON DELETE RESTRICT} foreign keys
+     * from {@code class_teacher_responsibility} and {@code timetable_entry} to {@code section} —
+     * without these explicit pre-checks, deleting a referenced section would fail with a raw,
+     * unhandled DB constraint violation instead of a clean application error. The same
+     * "preserve historical/live references" policy is extended here to two columns with no DB FK
+     * at all ({@code teacher_class_grant.section_id}, {@code attendance.section_id}) and one live
+     * authorization projection ({@code Teacher.classTeacherSectionId}), since nothing in this
+     * codebase cleans those up when a section is removed and silently orphaning them would leave
+     * {@code TeacherClassScopeService}/reporting code reading a dangling id. Legacy Student
+     * projections with no enrollment rows retain the old clear-on-delete compatibility (a
+     * pre-existing, intentional exception for enrollment-less legacy students only); enrollment-
+     * backed projections and every other reference above block deletion instead of being rewritten.
      * Returns the count of legacy Student projections whose section was cleared.
      */
     @Transactional
@@ -141,6 +171,31 @@ public class SectionService {
             throw new IllegalStateException(
                     "Cannot delete this section because student enrollment history references it. " +
                     "Move current students with an explicit enrollment transition; historical references must be preserved.");
+        }
+        if (timetableRepository.existsBySchoolIdAndSectionId(schoolId, id)) {
+            throw new IllegalStateException(
+                    "Cannot delete this section because timetable entries reference it. " +
+                    "Remove or reassign those periods first; historical timetable references must be preserved.");
+        }
+        if (classTeacherResponsibilityRepository.existsBySchoolIdAndSectionId(schoolId, id)) {
+            throw new IllegalStateException(
+                    "Cannot delete this section because a class-teacher responsibility configuration references it. " +
+                    "Remove or reassign that responsibility first.");
+        }
+        if (teacherClassGrantRepository.existsBySchoolIdAndSectionId(schoolId, id)) {
+            throw new IllegalStateException(
+                    "Cannot delete this section because a teacher has an active self-service grant for it. " +
+                    "Revoke that grant first.");
+        }
+        if (teacherRepository.existsBySchoolIdAndClassTeacherSectionId(schoolId, id)) {
+            throw new IllegalStateException(
+                    "Cannot delete this section because a teacher is currently assigned as its class-teacher. " +
+                    "Reassign or clear that class-teacher assignment first.");
+        }
+        if (attendanceRepository.existsBySchoolIdAndSectionId(schoolId, id)) {
+            throw new IllegalStateException(
+                    "Cannot delete this section because attendance history references it. " +
+                    "Historical attendance references must be preserved.");
         }
 
         String oldValue;

@@ -2,12 +2,15 @@ package com.indraacademy.ias_management.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.indraacademy.ias_management.dto.TeacherExitRequest;
 import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.entity.Teacher;
+import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.repository.UserRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +47,7 @@ class TeacherServiceTest {
     @Mock private IdGeneratorService idGeneratorService;
     @Mock private SchoolClassRepository schoolClassRepository;
     @Mock private SectionRepository sectionRepository;
+    @Mock private UserRepository userRepository;
     @Mock private HttpServletRequest request;
 
     private TeacherService service;
@@ -61,11 +65,13 @@ class TeacherServiceTest {
         ReflectionTestUtils.setField(service, "idGeneratorService", idGeneratorService);
         ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
         ReflectionTestUtils.setField(service, "sectionRepository", sectionRepository);
+        ReflectionTestUtils.setField(service, "userRepository", userRepository);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         lenient().when(securityUtil.getUsername()).thenReturn("admin");
         lenient().when(securityUtil.getRole()).thenReturn("ADMIN");
         lenient().when(teacherRepository.save(any(Teacher.class))).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(userRepository.findByUserId(any())).thenReturn(Optional.empty());
     }
 
     private Teacher newTeacher(String teacherId, LocalDate dob) {
@@ -299,5 +305,26 @@ class TeacherServiceTest {
         c.setId(id);
         c.setName(name);
         return c;
+    }
+
+    // ── Phase F4: exit must clear BOTH live class-teacher fields, not just classTeacher ──
+
+    @Test
+    void exitTeacher_clearsBothClassTeacherAndSectionId_notJustClassName() {
+        Teacher active = newTeacher("T1", LocalDate.of(1990, 1, 1));
+        active.setStatus(TeacherStatus.ACTIVE);
+        active.setClassTeacher("11");
+        active.setClassTeacherSectionId(SCIENCE_ID);
+        when(teacherRepository.findByTeacherIdAndSchoolId("T1", SCHOOL_ID)).thenReturn(Optional.of(active));
+
+        TeacherExitRequest exitRequest = new TeacherExitRequest();
+        exitRequest.setLeavingDate(LocalDate.of(2026, 6, 1));
+        exitRequest.setReasonForLeaving("Resigned");
+
+        Teacher saved = service.exitTeacher("T1", exitRequest, request);
+
+        assertThat(saved.getStatus()).isEqualTo(TeacherStatus.LEFT);
+        assertThat(saved.getClassTeacher()).isNull();
+        assertThat(saved.getClassTeacherSectionId()).isNull();
     }
 }

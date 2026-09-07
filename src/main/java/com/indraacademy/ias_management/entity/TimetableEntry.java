@@ -17,6 +17,12 @@ public class TimetableEntry {
     @Column(name = "school_id")
     private Long schoolId;
 
+    /** Null for every legacy row today (Phase F2 foundation only — not yet backfilled or
+     *  written by any consumer). See TimetableEntry class-level context: this column exists so
+     *  a later phase can make timetable writes session-aware without a breaking schema change. */
+    @Column(name = "academic_session_id")
+    private Long academicSessionId;
+
     @Column(name = "class_name", nullable = false)
     private String className;
 
@@ -92,6 +98,9 @@ public class TimetableEntry {
 
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
+
+    public Long getAcademicSessionId() { return academicSessionId; }
+    public void setAcademicSessionId(Long academicSessionId) { this.academicSessionId = academicSessionId; }
 
     public Long getSectionId() { return sectionId; }
     public void setSectionId(Long sectionId) { this.sectionId = sectionId; }

@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.TimetableBulkImportDtos.Result;
 import com.indraacademy.ias_management.dto.TimetableBulkImportDtos.RowError;
 import com.indraacademy.ias_management.dto.TimetableBulkImportDtos.RowSuccess;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.Day;
 import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.entity.TimetableEntry;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
@@ -81,15 +83,21 @@ public class TimetableBulkImportService {
     @Autowired private SectionRepository sectionRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private TimetableValidationService timetableValidationService;
+    @Autowired private TimetableSessionAccessService sessionAccess;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
 
-    public Result bulkImport(MultipartFile file, HttpServletRequest request) {
+    /** {@code academicSessionId} is required and never inferred — every row created by this
+     *  import belongs to exactly this session, tenant-verified and non-historical up front, so a
+     *  malformed CSV can never silently land in whichever session happens to be current. */
+    public Result bulkImport(MultipartFile file, Long academicSessionId, HttpServletRequest request) {
+        Long schoolId = securityUtil.getSchoolId();
+        sessionAccess.requireWritableOwnedSession(schoolId, academicSessionId);
+
         List<RowError> errors = new ArrayList<>();
         List<RowSuccess> created = new ArrayList<>();
         int totalRows = 0;
-        Long schoolId = securityUtil.getSchoolId();
 
         try (CSVReader reader = new CSVReader(
                 new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
@@ -113,12 +121,13 @@ public class TimetableBulkImportService {
                     if (entry == null) continue; // validation error already recorded
 
                     label = buildLabel(entry);
-                    timetableValidationService.validate(entry, schoolId, null);
-
                     entry.setSchoolId(schoolId);
+                    entry.setAcademicSessionId(academicSessionId);
+                    timetableValidationService.validate(entry, schoolId, academicSessionId, null);
+
                     TimetableEntry saved = timetableRepository.save(entry);
                     created.add(new RowSuccess(rowNum, label, saved.getId()));
-                    log.info("Bulk import: row {} saved (timetableEntryId={})", rowNum, saved.getId());
+                    log.info("Bulk import: row {} saved (timetableEntryId={}, sessionId={})", rowNum, saved.getId(), academicSessionId);
 
                 } catch (DataIntegrityViolationException e) {
                     // Expected business-rule rejection (slot conflict, group mismatch, teacher
@@ -131,7 +140,7 @@ public class TimetableBulkImportService {
                 }
             }
 
-            Result result = new Result(totalRows, created.size(), errors.size(), errors, created);
+            Result result = new Result(academicSessionId, totalRows, created.size(), errors.size(), errors, created);
             auditBulkImport(file.getOriginalFilename(), result, request);
             return result;
 
@@ -221,7 +230,8 @@ public class TimetableBulkImportService {
         }
 
         TimetableEntry entry = new TimetableEntry();
-        entry.setClassName(className);
+        entry.setClassName(schoolClass.get().getName());
+        entry.setClassId(schoolClass.get().getId());
         entry.setSectionId(sectionId);
         entry.setSectionName(sectionId != null ? sectionName : null);
         entry.setDay(day);

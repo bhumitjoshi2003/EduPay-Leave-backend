@@ -74,4 +74,10 @@ public interface AttendanceRepository extends JpaRepository<Attendance, Long> {
     List<Attendance> findByClassNameAndSchoolIdAndDateBetween(String className, Long schoolId, LocalDate startDate, LocalDate endDate);
 
     List<Attendance> findBySchoolId(Long schoolId);
+
+    /** Phase F5B.1: backs {@code SectionService#deleteSection}'s explicit pre-check. No DB FK
+     *  protects this denormalized column, but a dated attendance record referencing this section
+     *  is historical fact — the same "preserve historical references" rationale already applied
+     *  to StudentEnrollment, extended here since deletion would otherwise silently orphan it. */
+    boolean existsBySchoolIdAndSectionId(Long schoolId, Long sectionId);
 }

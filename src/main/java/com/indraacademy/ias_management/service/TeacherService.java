@@ -233,6 +233,7 @@ public class TeacherService {
         teacher.setReasonForLeaving(request.getReasonForLeaving().trim());
         teacher.setExitRemarks(request.getExitRemarks());
         teacher.setClassTeacher(null);
+        teacher.setClassTeacherSectionId(null);
         userRepository.findByUserId(teacherId).ifPresent(user -> {
             user.setActive(false);
             user.setRefreshTokenId(null);
