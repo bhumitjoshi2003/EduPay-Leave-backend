@@ -3,8 +3,14 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.ClassOverviewDTO;
 import com.indraacademy.ias_management.dto.ReportCardTemplateDTO;
 import com.indraacademy.ias_management.dto.WeightedGroupResultDTO.StudentGroupResultDTO;
+import com.indraacademy.ias_management.entity.AcademicSession;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentEnrollment;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.slf4j.Logger;
@@ -30,6 +36,9 @@ public class ClassOverviewService {
     @Autowired private WeightageCalculationEngine   engine;
     @Autowired private StudentRepository            studentRepository;
     @Autowired private SecurityUtil                 securityUtil;
+    @Autowired private SchoolClassRepository        schoolClassRepository;
+    @Autowired private AcademicSessionRepository    academicSessionRepository;
+    @Autowired private StudentEnrollmentRepository  studentEnrollmentRepository;
 
     public ClassOverviewDTO getClassOverview(Long templateId, String session, String className) {
         return getClassOverview(templateId, session, className, null);
@@ -49,9 +58,17 @@ public class ClassOverviewService {
                 ? template.getGradingOverride() : "CBSE";
 
         // ── Students in class ──────────────────────────────────────────────
-        List<Student> classStudents = (sectionId != null)
+        // Live ACTIVE roster is the floor (unchanged default for schools with no enrollment
+        // data). E6E: unioned with every student realized-enrolled in this class(+section) at
+        // any point during the session, so a promoted/transferred/withdrawn student's historical
+        // performance remains part of the class overview for that session.
+        Map<String, Student> roster = new LinkedHashMap<>();
+        List<Student> liveStudents = (sectionId != null)
                 ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
                 : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        liveStudents.forEach(s -> roster.put(s.getStudentId(), s));
+        augmentRosterWithHistoricalEnrollment(roster, schoolId, className, sectionId, session);
+        List<Student> classStudents = new ArrayList<>(roster.values());
         if (classStudents.isEmpty()) {
             return ClassOverviewDTO.empty(className, session, template.getName());
         }
@@ -102,6 +119,27 @@ public class ClassOverviewService {
 
         return new ClassOverviewDTO(className, session, template.getName(),
                 total, passCount, failCount, classAvg, gradeDist, students);
+    }
+
+    /** See getClassOverview's call site. Mutates {@code roster} in place; no-ops gracefully when
+     *  the class/session can't be resolved to a tenant SchoolClass/AcademicSession (leaves the
+     *  live-only roster untouched, exactly as before E6E). */
+    private void augmentRosterWithHistoricalEnrollment(
+            Map<String, Student> roster, Long schoolId, String className, Long sectionId, String session) {
+        Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className).map(SchoolClass::getId).orElse(null);
+        if (classId == null) return;
+        academicSessionRepository.findBySchoolIdAndLabel(schoolId, session).ifPresent(as -> {
+            List<StudentEnrollment> rows = (sectionId != null)
+                    ? studentEnrollmentRepository.findRealizedByAcademicSessionAndClassAndSectionOverlappingRange(
+                            schoolId, as.getId(), classId, sectionId, as.getStartDate(), as.getEndDate())
+                    : studentEnrollmentRepository.findRealizedByAcademicSessionAndClassOverlappingRange(
+                            schoolId, as.getId(), classId, as.getStartDate(), as.getEndDate());
+            for (StudentEnrollment row : rows) {
+                roster.computeIfAbsent(row.getStudentId(),
+                        sid -> studentRepository.findByStudentIdAndSchoolId(sid, schoolId).orElse(null));
+            }
+        });
+        roster.values().removeIf(Objects::isNull);
     }
 
     // ── Grade helpers ──────────────────────────────────────────────────────

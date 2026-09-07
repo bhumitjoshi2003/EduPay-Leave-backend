@@ -2,10 +2,12 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.CheckoutQuoteDto;
 import com.indraacademy.ias_management.dto.OverdueStudentDto;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
@@ -43,6 +45,8 @@ public class FeeReminderService {
     @Autowired private BusinessNotificationService businessNotifications;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private AcademicSessionRepository academicSessionRepository;
+    @Autowired private AcademicSessionService academicSessionService;
 
     // ─── Scheduled reminder ───────────────────────────────────────────────────
 
@@ -59,8 +63,26 @@ public class FeeReminderService {
         for (School school : activeSchools) {
             try {
                 int startMonth = school.getAcademicYearStartMonth();
-                String academicYear = getAcademicYear(today, startMonth);
-                int academicMonth = getAcademicMonth(today.getMonthValue(), startMonth);
+
+                // The "current" academic year/month must come from the school's actually
+                // configured current AcademicSession — never guessed from today's date +
+                // academicYearStartMonth, which can silently diverge (a session that wasn't
+                // rolled over on time, or was created with non-standard boundaries).
+                Optional<AcademicSession> currentSessionOpt =
+                        academicSessionRepository.findBySchoolIdAndCurrentTrue(school.getId());
+                if (currentSessionOpt.isEmpty()) {
+                    log.warn("Skipping monthly fee reminder run for school {}: no current AcademicSession configured.",
+                            school.getId());
+                    continue;
+                }
+                AcademicSession currentSession = currentSessionOpt.get();
+                if (today.isBefore(currentSession.getStartDate()) || today.isAfter(currentSession.getEndDate())) {
+                    log.warn("School {}: today ({}) falls outside its current AcademicSession '{}' ({} to {}) — "
+                                    + "proceeding with a best-effort academic month, but this session may need rolling over.",
+                            school.getId(), today, currentSession.getLabel(), currentSession.getStartDate(), currentSession.getEndDate());
+                }
+                String academicYear = currentSession.getLabel();
+                int academicMonth = academicSessionService.academicMonthForDate(currentSession, today);
                 log.info("School {} — academicYear={}, academicMonth={}", school.getId(), academicYear, academicMonth);
 
                 List<StudentFees> unpaidFees = studentFeesRepository
@@ -112,12 +134,15 @@ public class FeeReminderService {
     @Transactional(readOnly = true)
     public List<OverdueStudentDto> getOverdueStudents(String session, String className) {
         LocalDate today = LocalDate.now();
-
-        int[] years = parseSession(session);
-        int startYear = years[0];
-        int endYear   = years[1];
-
         Long schoolId = securityUtil.getSchoolId();
+
+        // Real, configured session boundaries — never reconstructed from the label's parsed
+        // years + the school's global startMonth, which can diverge for a session with
+        // non-standard boundaries.
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
+
         int startMonth = schoolRepository.findById(schoolId)
                 .map(School::getAcademicYearStartMonth).orElse(4);
 
@@ -129,7 +154,7 @@ public class FeeReminderService {
         // Filter to months that have already started (1st day <= start of current month)
         LocalDate currentMonthStart = today.withDayOfMonth(1);
         List<StudentFees> overdue = unpaid.stream()
-                .filter(sf -> !academicMonthStart(sf.getMonth(), startYear, endYear, startMonth).isAfter(currentMonthStart))
+                .filter(sf -> !academicSessionService.academicMonthToDate(academicSession, sf.getMonth()).isAfter(currentMonthStart))
                 .collect(Collectors.toList());
 
         // Group by studentId
@@ -183,7 +208,7 @@ public class FeeReminderService {
                     .orElse(null);
 
             // daysOverdue = today − 1st of the oldest overdue month
-            LocalDate oldestMonthStart = academicMonthStart(fees.get(0).getMonth(), startYear, endYear, startMonth);
+            LocalDate oldestMonthStart = academicSessionService.academicMonthToDate(academicSession, fees.get(0).getMonth());
             int daysOverdue = (int) ChronoUnit.DAYS.between(oldestMonthStart, today);
 
             OverdueStudentDto dto = new OverdueStudentDto();
@@ -349,16 +374,19 @@ public class FeeReminderService {
             return new ReminderBuildResult(null, ReminderOutcome.SKIPPED_NO_EMAIL);
         }
 
-        int[] years = parseSession(session);
+        Long schoolId = securityUtil.getSchoolId();
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
         LocalDate currentMonthStart = LocalDate.now().withDayOfMonth(1);
 
-        int reminderStartMonth = schoolRepository.findById(securityUtil.getSchoolId())
+        int reminderStartMonth = schoolRepository.findById(schoolId)
                 .map(School::getAcademicYearStartMonth).orElse(4);
 
-        List<StudentFees> overdueMonths = studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(securityUtil.getSchoolId(), session, student.getClassName())
+        List<StudentFees> overdueMonths = studentFeesRepository.findAllUnpaidBySchoolIdAndSessionAndClassName(schoolId, session, student.getClassName())
                 .stream()
                 .filter(sf -> sf.getStudentId().equals(studentId))
-                .filter(sf -> !academicMonthStart(sf.getMonth(), years[0], years[1], reminderStartMonth).isAfter(currentMonthStart))
+                .filter(sf -> !academicSessionService.academicMonthToDate(academicSession, sf.getMonth()).isAfter(currentMonthStart))
                 .sorted(Comparator.comparingInt(StudentFees::getMonth))
                 .collect(Collectors.toList());
         String monthList = overdueMonths.isEmpty()
@@ -537,38 +565,9 @@ public class FeeReminderService {
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
-    /**
-     * Maps an academic month number (1 = startMonth … 12 = startMonth-1) to the 1st day
-     * of that calendar month, using the session's start and end years. Delegates to
-     * FeeCalculationService, which now owns this logic so generation/backfill/recalculation
-     * share the exact same academic-month-to-calendar-date math this reminder system already
-     * relied on — see FeeCalculationService.academicMonthStart.
-     */
-    private LocalDate academicMonthStart(int academicMonth, int startYear, int endYear, int startMonth) {
-        return feeCalculationService.academicMonthStart(academicMonth, startYear, endYear, startMonth);
-    }
-
-    /** Parses "2025-2026" → [2025, 2026]. Delegates to FeeCalculationService. */
-    private int[] parseSession(String session) {
-        return feeCalculationService.parseSession(session);
-    }
-
     /** Returns the display name for an academic month (1 = the school's own start month).
      * Delegates to FeeCalculationService, which now owns the calendar-month array. */
     private String getMonthName(int academicMonth, int startMonth) {
         return feeCalculationService.getMonthName(academicMonth, startMonth);
-    }
-
-    /** Returns the academic year label (e.g. "2026-2027") for a given date and school start month. */
-    private String getAcademicYear(LocalDate date, int startMonth) {
-        int year = date.getYear();
-        return (date.getMonthValue() >= startMonth)
-                ? year + "-" + (year + 1)
-                : (year - 1) + "-" + year;
-    }
-
-    /** Calendar month (1=Jan…12=Dec) → academic month (1 = startMonth). */
-    private int getAcademicMonth(int calendarMonth, int startMonth) {
-        return ((calendarMonth - startMonth + 12) % 12) + 1;
     }
 }

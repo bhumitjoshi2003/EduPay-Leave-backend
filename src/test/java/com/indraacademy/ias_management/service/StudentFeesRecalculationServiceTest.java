@@ -2,8 +2,8 @@ package com.indraacademy.ias_management.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.RecalculationEntryDto;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.LineItemType;
-import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SnapshotStatus;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
@@ -11,7 +11,6 @@ import com.indraacademy.ias_management.repository.AllocationRefundRepository;
 import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
-import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentOneTimeFeeChargedRepository;
@@ -46,7 +45,6 @@ import static org.mockito.Mockito.*;
 class StudentFeesRecalculationServiceTest {
 
     @Mock private StudentFeesRepository studentFeesRepository;
-    @Mock private SchoolRepository schoolRepository;
     @Mock private FeeCalculationService feeCalculationService;
     @Mock private StudentFeesLineItemRepository studentFeesLineItemRepository;
     @Mock private StudentOneTimeFeeChargedRepository studentOneTimeFeeChargedRepository;
@@ -67,13 +65,15 @@ class StudentFeesRecalculationServiceTest {
     void setUp() {
         service = new StudentFeesRecalculationService();
         ReflectionTestUtils.setField(service, "studentFeesRepository", studentFeesRepository);
-        ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
         ReflectionTestUtils.setField(service, "feeCalculationService", feeCalculationService);
         ReflectionTestUtils.setField(service, "studentFeesLineItemRepository", studentFeesLineItemRepository);
         ReflectionTestUtils.setField(service, "studentOneTimeFeeChargedRepository", studentOneTimeFeeChargedRepository);
         ReflectionTestUtils.setField(service, "paymentAllocationRepository", paymentAllocationRepository);
         ReflectionTestUtils.setField(service, "allocationRefundRepository", allocationRefundRepository);
         ReflectionTestUtils.setField(service, "academicSessionRepository", academicSessionRepository);
+        // Real instance, not a mock: academicMonthToDate is a pure plusMonths computation with
+        // no dependency on this service's own @Autowired fields.
+        ReflectionTestUtils.setField(service, "academicSessionService", new AcademicSessionService());
         ReflectionTestUtils.setField(service, "invoiceRepository", invoiceRepository);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
@@ -85,23 +85,19 @@ class StudentFeesRecalculationServiceTest {
 
         lenient().when(paymentAllocationRepository.sumAmountPaiseByStudentFeesId(any())).thenReturn(0L);
         lenient().when(allocationRefundRepository.sumAmountPaiseByStudentFeesId(any())).thenReturn(0L);
-        lenient().when(academicSessionRepository.findBySchoolIdAndLabel(anyLong(), anyString())).thenReturn(java.util.Optional.empty());
+        // Real, resolved AcademicSession boundaries — computeSnapshotFor now derives asOfDate
+        // from this row's own startDate rather than a parsed label + the school's global
+        // academicYearStartMonth.
+        AcademicSession defaultSession = new AcademicSession();
+        defaultSession.setSchoolId(SCHOOL_ID);
+        defaultSession.setLabel(SESSION);
+        defaultSession.setStartDate(LocalDate.of(2025, 4, 1));
+        defaultSession.setEndDate(LocalDate.of(2026, 3, 31));
+        lenient().when(academicSessionRepository.findBySchoolIdAndLabel(anyLong(), anyString())).thenReturn(java.util.Optional.of(defaultSession));
         lenient().when(studentOneTimeFeeChargedRepository.findFeeHeadIdBySchoolIdAndStudentId(any(), any())).thenReturn(Set.of());
         lenient().when(studentFeesLineItemRepository.findByStudentFeesIdAndSupersededAtIsNullOrderById(any())).thenReturn(List.of());
         lenient().when(feeCalculationService.validateFeeConfiguration(any(), any(), any()))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
-        lenient().when(feeCalculationService.parseSession(anyString())).thenAnswer(inv -> {
-            String s = inv.getArgument(0);
-            String[] parts = s.split("-");
-            return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])};
-        });
-        lenient().when(feeCalculationService.academicMonthStart(anyInt(), anyInt(), anyInt(), anyInt()))
-                .thenReturn(LocalDate.of(2025, 6, 1));
-
-        School school = new School();
-        school.setId(SCHOOL_ID);
-        school.setAcademicYearStartMonth(4);
-        lenient().when(schoolRepository.findById(SCHOOL_ID)).thenReturn(java.util.Optional.of(school));
     }
 
     /** A clean, never-touched-by-money unpaid row — stubs both the locking (Apply) and plain
@@ -347,22 +343,52 @@ class StudentFeesRecalculationServiceTest {
     }
 
     @Test
-    void recalculateOne_nonAprilStartSchool_asOfDateUsesSchoolsOwnStartMonth() {
-        School school = new School();
-        school.setId(SCHOOL_ID);
-        school.setAcademicYearStartMonth(1); // January-start school
-        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(java.util.Optional.of(school));
-        when(feeCalculationService.parseSession(SESSION)).thenReturn(new int[]{2025, 2026});
-        LocalDate expectedAsOf = LocalDate.of(2025, 3, 1); // academic month 3 of a Jan-start school
-        when(feeCalculationService.academicMonthStart(3, 2025, 2026, 1)).thenReturn(expectedAsOf);
+    void recalculateOne_nonStandardSessionStartDate_asOfDateUsesTheSessionsOwnStartDate() {
+        // A January-start session — asOfDate must come from THIS session's own real, configured
+        // startDate, never from the school's separate global academicYearStartMonth setting
+        // (which can be stale, unrelated, or simply diverge for a session with non-standard
+        // boundaries).
+        AcademicSession session = new AcademicSession();
+        session.setSchoolId(SCHOOL_ID);
+        session.setLabel(SESSION);
+        session.setStartDate(LocalDate.of(2025, 1, 1));
+        session.setEndDate(LocalDate.of(2025, 12, 31));
+        when(academicSessionRepository.findBySchoolIdAndLabel(SCHOOL_ID, SESSION)).thenReturn(java.util.Optional.of(session));
+        LocalDate expectedAsOf = LocalDate.of(2025, 3, 1); // academic month 3 of a Jan-start session
         unpaidRow(3, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
         stubSnapshot(new FeeCalculationService.MonthSnapshot(
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, "{}", List.of(), SnapshotStatus.COMPUTED, List.of()));
 
-        service.recalculateOne(STUDENT_ID, SESSION, 3, "verify non-April academic month math", "127.0.0.1");
+        service.recalculateOne(STUDENT_ID, SESSION, 3, "verify non-standard session start date math", "127.0.0.1");
 
         verify(feeCalculationService).computeMonthSnapshot(
                 eq(SCHOOL_ID), eq(SESSION), anyString(), eq(STUDENT_ID), eq(3), anyBoolean(), eq(expectedAsOf), any(), any(), any());
+    }
+
+    @Test
+    void recalculateOne_sessionNotFound_throwsRatherThanSilentlyGuessingBoundaries() {
+        String noSuchSession = "2099-2100";
+        when(academicSessionRepository.findBySchoolIdAndLabel(SCHOOL_ID, noSuchSession)).thenReturn(java.util.Optional.empty());
+        StudentFees fee = new StudentFees();
+        fee.setId(9001L);
+        fee.setStudentId(STUDENT_ID);
+        fee.setSchoolId(SCHOOL_ID);
+        fee.setYear(noSuchSession);
+        fee.setMonth(3);
+        fee.setClassName("6A");
+        fee.setPaid(false);
+        fee.setManuallyPaid(false);
+        fee.setAmountPaid(null);
+        fee.setBaseAmountDue(BigDecimal.ZERO);
+        fee.setSnapshotStatus(SnapshotStatus.COMPUTED);
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonthForUpdate(STUDENT_ID, SCHOOL_ID, noSuchSession, 3))
+                .thenReturn(fee);
+        lenient().when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(STUDENT_ID, SCHOOL_ID, noSuchSession))
+                .thenReturn(List.of(fee));
+
+        assertThatThrownBy(() -> service.recalculateOne(STUDENT_ID, noSuchSession, 3, "no such session", "127.0.0.1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AcademicSession not found");
     }
 
     // ─── ONE_TIME dedup replay: this row's own current charge isn't treated as "elsewhere" ─
@@ -563,9 +589,6 @@ class StudentFeesRecalculationServiceTest {
         reset(feeCalculationService);
         lenient().when(feeCalculationService.validateFeeConfiguration(any(), any(), any()))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
-        lenient().when(feeCalculationService.academicMonthStart(anyInt(), anyInt(), anyInt(), anyInt()))
-                .thenReturn(LocalDate.of(2025, 6, 1));
-        when(feeCalculationService.parseSession(SESSION)).thenReturn(new int[]{2025, 2026});
         when(feeCalculationService.computeMonthSnapshot(any(), any(), any(), any(), anyInt(), anyBoolean(), any(), any(), any(), any()))
                 .thenReturn(applyTimeSnapshot);
 

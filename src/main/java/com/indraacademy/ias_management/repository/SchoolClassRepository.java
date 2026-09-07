@@ -13,4 +13,5 @@ public interface SchoolClassRepository extends JpaRepository<SchoolClass, Long> 
     List<SchoolClass> findBySchoolIdOrderByDisplayOrderAsc(Long schoolId);
     List<SchoolClass> findBySchoolIdAndStreamEligibleAndActiveOrderByDisplayOrderAsc(Long schoolId, boolean streamEligible, boolean active);
     Optional<SchoolClass> findBySchoolIdAndName(Long schoolId, String name);
+    Optional<SchoolClass> findByIdAndSchoolId(Long id, Long schoolId);
 }

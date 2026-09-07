@@ -21,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -30,6 +31,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 
 /**
  * Date of birth is the sole source of a bulk-imported student's initial login
@@ -182,5 +185,33 @@ class StudentBulkImportServiceTest {
         assertThat(result.getCreated().get(0).getGeneratedId()).isNotEqualTo("LEGACY_ID_123");
         assertThat(result.getCreated().get(0).getGeneratedId()).startsWith("stu_26");
         assertThat(result.getNotice()).contains("Student ID").contains("generates the account ID automatically");
+    }
+
+    @Test
+    void activeAndUpcomingRowsDelegateToCanonicalCreationWithJoiningDatesIntact() {
+        MockMultipartFile file = csv(
+                "Active Student,a@test.com,,1990-05-23,10,,,,,,,2026-09-06,",
+                "Upcoming Student,u@test.com,,1990-05-24,10,,,,,,,2026-10-01,");
+
+        service.bulkImport(file, request);
+
+        ArgumentCaptor<Student> students = ArgumentCaptor.forClass(Student.class);
+        verify(studentService, org.mockito.Mockito.times(2)).addStudent(students.capture(), org.mockito.Mockito.eq(request));
+        assertThat(students.getAllValues()).extracting(Student::getJoiningDate)
+                .containsExactly(LocalDate.of(2026, 9, 6), LocalDate.of(2026, 10, 1));
+    }
+
+    @Test
+    void canonicalCreationFailureIsRowScopedAndDoesNotCreateAccountOrWelcomeEmail() {
+        doThrow(new IllegalArgumentException("No configured academic session contains joining date"))
+                .when(studentService).addStudent(any(Student.class), any());
+
+        BulkImportResultDTO result = service.bulkImport(
+                csv("Bad Session,s1@test.com,,1990-05-23,10,,,,,,,2035-01-01,"), request);
+
+        assertThat(result.getSuccessful()).isZero();
+        assertThat(result.getFailed()).isEqualTo(1);
+        verify(userRepository, never()).save(any());
+        verify(welcomeEmailService, never()).sendWelcomeEmail(anyString(), anyString(), anyString(), anyString(), any());
     }
 }

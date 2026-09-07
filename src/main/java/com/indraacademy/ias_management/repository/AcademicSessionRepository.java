@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.entity.AcademicSession;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,4 +18,21 @@ public interface AcademicSessionRepository extends JpaRepository<AcademicSession
     Optional<AcademicSession> findBySchoolIdAndCurrentTrue(Long schoolId);
 
     boolean existsBySchoolIdAndLabel(Long schoolId, String label);
+
+    Optional<AcademicSession> findByIdAndSchoolId(Long id, Long schoolId);
+
+    /** The session whose [startDate, endDate] range contains the given date, inclusive of
+     *  both boundaries. Assumes a school's sessions don't overlap — true by construction
+     *  today (nothing creates overlapping sessions) but not yet enforced by a constraint. */
+    Optional<AcademicSession> findBySchoolIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+            Long schoolId, LocalDate date, LocalDate sameDate);
+
+    List<AcademicSession> findAllBySchoolIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+            Long schoolId, LocalDate date, LocalDate sameDate);
+
+    Optional<AcademicSession> findFirstBySchoolIdAndStartDateLessThanOrderByStartDateDesc(
+            Long schoolId, LocalDate startDate);
+
+    Optional<AcademicSession> findFirstBySchoolIdAndStartDateGreaterThanOrderByStartDateAsc(
+            Long schoolId, LocalDate startDate);
 }

@@ -6,12 +6,14 @@ import com.indraacademy.ias_management.dto.ManualPaymentRequest;
 import com.indraacademy.ias_management.dto.MonthFeeBreakdownDto;
 import com.indraacademy.ias_management.dto.StudentFeesAdminUpdateRequest;
 import com.indraacademy.ias_management.dto.StudentFeesCreateRequest;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.LineItemType;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.PaymentStudentFeesAllocation;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
 import com.indraacademy.ias_management.entity.StudentOneTimeFeeCharged;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.AllocationRefundRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
@@ -61,17 +63,10 @@ public class StudentFeesService {
     @Autowired private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Autowired private AllocationRefundRepository allocationRefundRepository;
     @Autowired private BusinessNotificationService businessNotifications;
+    @Autowired private AcademicSessionRepository academicSessionRepository;
+    @Autowired private AcademicSessionService academicSessionService;
 
     private static final Set<String> VALID_MANUAL_PAYMENT_MODES = Set.of("CASH", "CHEQUE", "BANK_TRANSFER", "UPI", "OTHER");
-
-    private String getAcademicYear(LocalDate date) {
-        int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
-                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
-        int year = date.getYear();
-        return (date.getMonthValue() >= startMonth)
-                ? year + "-" + (year + 1)
-                : (year - 1) + "-" + year;
-    }
 
     @Transactional(readOnly = true)
     public List<StudentFees> getStudentFees(String studentId, String year) {
@@ -756,11 +751,12 @@ public class StudentFeesService {
 
         try {
             boolean takesBus = Boolean.TRUE.equals(request.getTakesBus());
-            int schoolStartMonth = schoolRepository.findById(schoolId)
-                    .map(s -> s.getAcademicYearStartMonth()).orElse(4);
-            int[] sessionYears = feeCalculationService.parseSession(request.getYear());
-            LocalDate asOfDate = feeCalculationService.academicMonthStart(
-                    request.getMonth(), sessionYears[0], sessionYears[1], schoolStartMonth);
+            // Real configured boundaries — validateFeeConfiguration above already guarantees
+            // this AcademicSession exists for request.getYear(), so this never silently guesses.
+            AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, request.getYear())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "AcademicSession not found for schoolId=" + schoolId + ", session='" + request.getYear() + "'"));
+            LocalDate asOfDate = academicSessionService.academicMonthToDate(academicSession, request.getMonth());
             Set<Long> chargedOneTimeFeeHeadIds = new HashSet<>(
                     studentOneTimeFeeChargedRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, request.getStudentId()));
 
@@ -852,11 +848,21 @@ public class StudentFeesService {
             throw new IllegalArgumentException("Student ID and new class name must be provided.");
         }
 
-        String academicYear = getAcademicYear(LocalDate.now());
+        Long schoolId = securityUtil.getSchoolId();
+        // The CURRENT academic year must come from the school's actually configured current
+        // AcademicSession — never guessed from today's date + academicYearStartMonth. If no
+        // current session is configured, there is nothing safe to guess, so this is a no-op
+        // rather than silently operating on a fabricated year.
+        Optional<AcademicSession> currentSessionOpt = academicSessionRepository.findBySchoolIdAndCurrentTrue(schoolId);
+        if (currentSessionOpt.isEmpty()) {
+            log.warn("Skipping fee class-name update for student {}: no current AcademicSession configured for schoolId={}.",
+                    studentId, schoolId);
+            return;
+        }
+        String academicYear = currentSessionOpt.get().getLabel();
         log.info("Updating class name for student ID: {} to {} in academic year: {}", studentId, newClassName, academicYear);
 
         try {
-            Long schoolId = securityUtil.getSchoolId();
             List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, academicYear);
             if (studentFeesList.isEmpty()) {
                 log.info("No StudentFees records found for student ID: {} in academic year: {}. Skipping update.", studentId, academicYear);
@@ -912,15 +918,6 @@ public class StudentFeesService {
                     "StudentFees rows already exist for student " + studentId + " for year " + year + ".");
         }
 
-        int schoolStartMonth = schoolRepository.findById(schoolId)
-                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
-
-        // Convert joining calendar month to academic month (1 = first month of school year)
-        int joiningCalendarMonth = joiningDate.getMonthValue();
-        int joinAcademicMonth = ((joiningCalendarMonth - schoolStartMonth + 12) % 12) + 1;
-        int endMonth = 12;
-        int[] sessionYears = feeCalculationService.parseSession(year);
-
         // Never persist a fee snapshot when we cannot confidently calculate it — validated
         // BEFORE any row is created, so a class with no fee structure configured never
         // silently produces a full set of frozen ₹0.00 rows for a newly-registered student.
@@ -937,14 +934,24 @@ public class StudentFeesService {
                     "Cannot generate fees for student " + studentId + ": " + configStatus.reason());
         }
 
+        // Real configured boundaries — validateFeeConfiguration above already guarantees this
+        // AcademicSession exists for `year`, so this never silently guesses. Using the
+        // session's own start date (rather than the school's global academicYearStartMonth)
+        // for the join-month conversion keeps this correct even for a session with
+        // non-standard boundaries.
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, year)
+                .orElseThrow(() -> new IllegalStateException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + year + "'"));
+        int joinAcademicMonth = academicSessionService.academicMonthForDate(academicSession, joiningDate);
+        int endMonth = 12;
+
         Set<Long> chargedOneTimeFeeHeadIds = new HashSet<>(
                 studentOneTimeFeeChargedRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, studentId));
 
         try {
             for (int month = joinAcademicMonth; month <= endMonth; month++) {
                 boolean isFirstRow = (month == joinAcademicMonth);
-                LocalDate asOfDate = feeCalculationService.academicMonthStart(
-                        month, sessionYears[0], sessionYears[1], schoolStartMonth);
+                LocalDate asOfDate = academicSessionService.academicMonthToDate(academicSession, month);
 
                 FeeCalculationService.MonthSnapshot snapshot = feeCalculationService.computeMonthSnapshot(
                         schoolId, year, className, studentId, month, isFirstRow, asOfDate,
@@ -1024,11 +1031,19 @@ public class StudentFeesService {
             return;
         }
 
-        String academicYear = getAcademicYear(LocalDate.now());
+        Long schoolId = securityUtil.getSchoolId();
+        // Same session-authority rule as updateStudentFeesForClassChange: only the school's
+        // actually configured current AcademicSession, never a today's-date guess.
+        Optional<AcademicSession> currentSessionOpt = academicSessionRepository.findBySchoolIdAndCurrentTrue(schoolId);
+        if (currentSessionOpt.isEmpty()) {
+            log.warn("Skipping bus fee update for student {}: no current AcademicSession configured for schoolId={}.",
+                    studentId, schoolId);
+            return;
+        }
+        String academicYear = currentSessionOpt.get().getLabel();
         log.info("Updating bus fees for student ID: {} starting from academic month {} in year {}", studentId, effectiveFromMonth, academicYear);
 
         try {
-            Long schoolId = securityUtil.getSchoolId();
             List<StudentFees> studentFeesList = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, academicYear);
 
             if (studentFeesList.isEmpty()) {

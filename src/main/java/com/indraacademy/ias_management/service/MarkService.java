@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -43,6 +44,10 @@ public class MarkService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private StudentRepository studentRepository;
+    @Autowired private StudentTemporalMembershipResolver temporalMembershipResolver;
+    @Autowired private StudentEnrollmentRepository studentEnrollmentRepository;
+    @Autowired private AcademicSessionRepository academicSessionRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
 
     // ─── Mark Entry Mode A: by subject ───────────────────────────────────────
 
@@ -60,7 +65,7 @@ public class MarkService {
                 .orElseThrow(() -> new NoSuchElementException(
                         "ExamConfig not found for entry " + examSubjectEntryId));
 
-        List<Student> students = resolveStudentsForSubject(exam.getClassName(), entry.getSubjectName(), sectionId);
+        List<Student> students = resolveStudentsForSubject(exam, entry, sectionId);
 
         Set<String> studentIds = students.stream()
                 .map(Student::getStudentId).collect(Collectors.toSet());
@@ -86,9 +91,15 @@ public class MarkService {
     @Transactional(readOnly = true)
     public List<StudentExamSubjectDTO> getStudentMarksForExam(String studentId, Long examConfigId) {
         Long schoolId = securityUtil.getSchoolId();
-        Student student = studentService.getStudent(studentId)
+        // Existence/tenant check only — studentService.getStudent's CURRENT className is never
+        // read for the elective decision below; the exam's OWN className is used instead (see
+        // ExamConfig fetch), since this examConfigId can be historical (from before a promotion).
+        studentService.getStudent(studentId)
                 .filter(s -> schoolId.equals(s.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+        ExamConfig exam = examConfigRepository.findById(examConfigId)
+                .filter(e -> schoolId.equals(e.getSchoolId()))
+                .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + examConfigId));
 
         List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examConfigId, schoolId);
 
@@ -99,15 +110,22 @@ public class MarkService {
                     .filter(e -> studentStreamSubjects.contains(e.getSubjectName().toLowerCase()))
                     .collect(Collectors.toList());
         } else {
-            // No stream: filter out elective subjects the student isn't enrolled in
+            // No stream: filter out elective subjects the student isn't enrolled in. Uses
+            // exam.getClassName() — the exam's own, historically-correct class — never the
+            // student's current class, which can differ after a promotion that happened since
+            // this exam was held.
             List<ClassSubject> electivesInClass = classSubjectRepository
-                    .findByClassNameAndOptionalTrueAndSchoolId(student.getClassName(), schoolId);
+                    .findByClassNameAndOptionalTrueAndSchoolId(exam.getClassName(), schoolId);
             if (!electivesInClass.isEmpty()) {
                 Set<String> electiveNames = electivesInClass.stream()
                         .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
+                // StudentElectiveEnrollment is itself recorded per-class — filter to the exam's
+                // class so a same-named elective chosen in a different class the student was
+                // previously (or later) in never leaks into this exam's subject list.
                 Set<String> enrolledSubjects = studentElectiveEnrollmentRepository
                         .findByStudentIdAndSchoolId(studentId, schoolId)
                         .stream()
+                        .filter(en -> exam.getClassName().equals(en.getClassName()))
                         .map(StudentElectiveEnrollment::getSubjectName)
                         .collect(Collectors.toSet());
                 entries = entries.stream()
@@ -195,32 +213,100 @@ public class MarkService {
         Student student = studentService.getStudent(studentId)
                 .filter(s -> schoolId.equals(s.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
-        List<ExamConfig> exams = (session != null && !session.isBlank())
-                ? examConfigRepository.findBySessionAndClassNameAndSchoolId(session, student.getClassName(), schoolId)
-                : examConfigRepository.findByClassNameAndSchoolId(student.getClassName(), schoolId);
 
-        // Load stream subject set once — works for any class with stream selections
+        List<ExamConfig> exams;
+        if (session != null && !session.isBlank()) {
+            // Never student.getClassName() here — that's the student's CURRENT class, and after
+            // a promotion it silently returns nothing for a past session's exams (ExamConfig is
+            // keyed by className+session, and a promoted student's current class never matches
+            // the class they were actually in during that old session). The correct historical
+            // anchor is: (a) the student's OWN StudentMark rows for exams in this session — an
+            // existing mark is always the strongest evidence and is never dropped even if it
+            // disagrees with enrollment — UNIONED with (b) E6B realized-enrollment class(es) for
+            // this session, so a promoted student can discover a configured-but-not-yet-marked
+            // prior exam too. Falls back to the current class only when E6B classifies the
+            // context as genuinely legacy (no enrollment data at all for this student/session).
+            Set<String> markDerivedClassNames = resolveMarkDerivedClassNamesForSession(studentId, session, schoolId);
+            EnrollmentSessionClasses enrollment = resolveEnrollmentClassNamesForSession(studentId, session, schoolId);
+            if (enrollment.conflict()) {
+                log.error("Enrollment conflict resolving historical exam context for student {} session {}: {} — " +
+                        "using mark evidence only; existing marks remain factual.",
+                        studentId, session, enrollment.conflictReason());
+            }
+            Set<String> combinedClassNames = new LinkedHashSet<>(markDerivedClassNames);
+            if (!enrollment.conflict()) combinedClassNames.addAll(enrollment.classNames());
+            // True only when there is no mark evidence AND no real enrollment segment for this
+            // session — the resulting class name is the live-current-class safety net (legacy),
+            // not a genuine enrollment discovery, so it must NOT be subjected to the per-subject-
+            // date enrollment check below (there are no segments to check it against).
+            boolean legacyFallbackOnly = combinedClassNames.isEmpty() && enrollment.legacyFallbackPermitted();
+            if (combinedClassNames.isEmpty()) {
+                combinedClassNames = legacyFallbackOnly ? Set.of(student.getClassName()) : Set.of();
+            }
+
+            exams = new ArrayList<>();
+            Set<Long> seenExamIds = new HashSet<>();
+            for (String cn : combinedClassNames) {
+                for (ExamConfig candidate : examConfigRepository.findBySessionAndClassNameAndSchoolId(session, cn, schoolId)) {
+                    if (!seenExamIds.add(candidate.getId())) continue;
+                    if (markDerivedClassNames.contains(cn) || legacyFallbackOnly) {
+                        exams.add(candidate); // existing-mark authority, or safe legacy fallback
+                        continue;
+                    }
+                    // Discovered via enrollment only (no mark yet) — for dated subject entries,
+                    // resolve membership per the relevant subject date rather than once for the
+                    // whole session; an exam with no date evidence uses session-level enrollment
+                    // as sufficient (never invent a date).
+                    List<ExamSubjectEntry> candidateEntries =
+                            examSubjectEntryRepository.findByExamConfigIdAndSchoolId(candidate.getId(), schoolId);
+                    if (examMatchesEnrollmentSegments(candidateEntries, cn, enrollment.segments())) {
+                        exams.add(candidate);
+                    } else {
+                        log.info("Skipping enrollment-discovered exam {} ({}/{}) for student {}: no subject date " +
+                                "falls within the student's realized enrollment segment for class {}.",
+                                candidate.getId(), session, cn, studentId, cn);
+                    }
+                }
+            }
+        } else {
+            // No session filter: preserve the exact existing baseline (every exam ever
+            // configured for the student's CURRENT class, across every session) as the floor,
+            // then add exams for any OTHER class the student was realized-enrolled in at some
+            // point (so a promotion never erases prior-session results), plus any exam the
+            // student has an existing mark for regardless of class (mark authority — never
+            // dropped). The student's current class must never erase old results.
+            List<ExamConfig> currentClassExams = examConfigRepository.findByClassNameAndSchoolId(student.getClassName(), schoolId);
+            exams = new ArrayList<>(currentClassExams);
+            Set<Long> seenExamIds = currentClassExams.stream().map(ExamConfig::getId).collect(Collectors.toCollection(HashSet::new));
+
+            for (SessionClassContext ctx : resolveHistoricalSessionClassContexts(studentId, schoolId)) {
+                if (student.getClassName().equals(ctx.className())) continue; // already covered above
+                for (ExamConfig candidate : examConfigRepository.findBySessionAndClassNameAndSchoolId(ctx.session(), ctx.className(), schoolId)) {
+                    if (seenExamIds.add(candidate.getId())) exams.add(candidate);
+                }
+            }
+            for (ExamConfig candidate : examConfigsWithExistingMarks(studentId, schoolId)) {
+                if (seenExamIds.add(candidate.getId())) exams.add(candidate);
+            }
+        }
+
+        // Load stream subject set once — works for any class with stream selections, and is
+        // itself student-scoped with no class dimension (a stream selection is a single choice
+        // for the whole 11-12 duration — see StudentStreamSelection.studentId being unique),
+        // so it needs no historical-class handling.
         Set<String> studentSubjects = loadStudentSubjectSet(studentId);
         boolean isStreamStudent = !studentSubjects.isEmpty();
 
-        // For non-stream students: load elective enrollments once
-        Set<String> electiveNames = Set.of();
-        Set<String> enrolledElectives = Set.of();
-        if (!isStreamStudent) {
-            List<ClassSubject> classElectives = classSubjectRepository
-                    .findByClassNameAndOptionalTrueAndSchoolId(student.getClassName(), schoolId);
-            if (!classElectives.isEmpty()) {
-                electiveNames = classElectives.stream()
-                        .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
-                enrolledElectives = studentElectiveEnrollmentRepository
-                        .findByStudentIdAndSchoolId(studentId, schoolId)
-                        .stream()
-                        .map(StudentElectiveEnrollment::getSubjectName)
-                        .collect(Collectors.toSet());
-            }
-        }
-        final Set<String> finalElectiveNames = electiveNames;
-        final Set<String> finalEnrolledElectives = enrolledElectives;
+        // For non-stream students: pre-fetch the student's own elective-enrollment rows once
+        // (cheap — one small list per student), filtered per-exam below by THAT exam's own
+        // class. StudentElectiveEnrollment is itself recorded per-class (its unique constraint
+        // includes class_name), so a student's Class-9 elective choice and a later Class-10
+        // choice are already distinct rows — the bug was never re-deriving this per exam, it
+        // was using the student's CURRENT class to decide "what electives even exist" at all.
+        List<StudentElectiveEnrollment> ownElectiveEnrollments = isStreamStudent
+                ? List.of()
+                : studentElectiveEnrollmentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
+        Map<String, List<ClassSubject>> electivesByClassNameCache = new HashMap<>();
 
         List<ExamResultDTO> results = new ArrayList<>();
 
@@ -234,12 +320,24 @@ public class MarkService {
                 entries = entries.stream()
                         .filter(e -> studentSubjects.contains(e.getSubjectName().toLowerCase()))
                         .collect(Collectors.toList());
-            } else if (!finalElectiveNames.isEmpty()) {
-                // Elective-based: exclude elective subjects the student didn't choose
-                entries = entries.stream()
-                        .filter(e -> !finalElectiveNames.contains(e.getSubjectName())
-                                || finalEnrolledElectives.contains(e.getSubjectName()))
-                        .collect(Collectors.toList());
+            } else {
+                // The exam's OWN class — never the student's current one — is the correct
+                // historical anchor for "what electives existed for this exam."
+                List<ClassSubject> classElectives = electivesByClassNameCache.computeIfAbsent(
+                        exam.getClassName(),
+                        cn -> classSubjectRepository.findByClassNameAndOptionalTrueAndSchoolId(cn, schoolId));
+                if (!classElectives.isEmpty()) {
+                    Set<String> electiveNames = classElectives.stream()
+                            .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
+                    Set<String> enrolledElectives = ownElectiveEnrollments.stream()
+                            .filter(en -> exam.getClassName().equals(en.getClassName()))
+                            .map(StudentElectiveEnrollment::getSubjectName)
+                            .collect(Collectors.toSet());
+                    entries = entries.stream()
+                            .filter(e -> !electiveNames.contains(e.getSubjectName())
+                                    || enrolledElectives.contains(e.getSubjectName()))
+                            .collect(Collectors.toList());
+                }
             }
             if (entries.isEmpty()) continue;
 
@@ -300,9 +398,18 @@ public class MarkService {
     public List<ClassStudentResultDTO> getClassResults(String className, Long examConfigId, Long sectionId) {
         Long schoolId = securityUtil.getSchoolId();
         List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examConfigId, schoolId);
-        List<Student> students = (sectionId != null)
+        List<Student> liveStudents = (sectionId != null)
                 ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
                 : studentService.getActiveStudentsByClass(className);
+        Map<String, Student> roster = new LinkedHashMap<>();
+        liveStudents.forEach(s -> roster.put(s.getStudentId(), s));
+        // Enrollment-authoritative augmentation (E6D): a student realized-enrolled in this
+        // class(+section) for this exam's own dates remains part of the class results even if
+        // since promoted, transferred, or withdrawn.
+        examConfigRepository.findById(examConfigId)
+                .filter(e -> schoolId.equals(e.getSchoolId()))
+                .ifPresent(exam -> augmentRosterWithEnrollment(roster, schoolId, exam, className, sectionId, entries));
+        List<Student> students = new ArrayList<>(roster.values());
 
         if (students.isEmpty() || entries.isEmpty()) return Collections.emptyList();
 
@@ -455,7 +562,17 @@ public class MarkService {
     @Transactional(readOnly = true)
     public SchoolPerformanceSummaryDTO getSchoolPerformanceSummary(String session) {
         Long schoolId = securityUtil.getSchoolId();
-        List<String> classNames = studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId);
+        Set<String> classNames = new LinkedHashSet<>(studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId));
+        // Enrollment-authoritative augmentation (E6D): a class with realized enrollment during
+        // this session must appear even if it currently has zero ACTIVE students (e.g. every
+        // student since promoted/exited) — the school-wide summary must not depend solely on
+        // who is active today.
+        academicSessionRepository.findBySchoolIdAndLabel(schoolId, session).ifPresent(as -> {
+            for (StudentEnrollment e : studentEnrollmentRepository.findRealizedByAcademicSessionOverlappingRange(
+                    schoolId, as.getId(), as.getStartDate(), as.getEndDate())) {
+                if (e.getClassNameSnapshot() != null) classNames.add(e.getClassNameSnapshot());
+            }
+        });
 
         List<ClassExamPerformanceDTO> classResults = new ArrayList<>();
         List<String> noExamConfigured = new ArrayList<>();
@@ -511,11 +628,212 @@ public class MarkService {
 
     // ─── Internal helpers ─────────────────────────────────────────────────────
 
-    private List<Student> resolveStudentsForSubject(String className, String subjectName, Long sectionId) {
-        // Fetch students for the class — filtered by section if provided
-        List<Student> all = (sectionId != null)
+    /** Which class(es) a student's own StudentMark rows show for exams in the given session —
+     *  the correct historical anchor, since ExamConfig has no direct student link and the
+     *  student's CURRENT className (student.getClassName()) is exactly what breaks after a
+     *  promotion: an old session's exams were configured under the OLD class name, which the
+     *  student's new current class never matches. No student_enrollment table exists to look
+     *  this up structurally, so it's derived deterministically from the marks data that's
+     *  already there: every ExamConfig in this session, joined to this student's own marks via
+     *  ExamSubjectEntry, tells us which class(es) they actually sat exams under this session.
+     *  Falls back to the given current className only when the student has no marks at all yet
+     *  in this session (e.g. a brand-new, ungraded exam in the session they're currently in —
+     *  the safe, common-case default). More than one distinct class is possible in principle
+     *  (a genuine mid-session class change) — every ExamConfig for the session found across
+     *  those classes is fetched by the caller, so no exam is dropped, whichever class it's
+     *  under.
+     *  <p>Public — also shared by ReportCardDataAssembler, which needs the same "what class was
+     *  this session actually for" answer to resolve a report card's historical class/publication
+     *  lookup, rather than maintaining a second, independent resolver over the same data.
+     *  <p>E6D: also unions in any class the student was realized-enrolled in during this session
+     *  (StudentTemporalMembershipResolver / E6B) — so a configured-but-not-yet-marked exam is
+     *  discoverable purely from enrollment, without waiting for a mark to exist. Existing marks
+     *  are never removed by this; enrollment only adds. When there is no mark AND no realized
+     *  enrollment for this session, the live current class is used only when E6B classifies the
+     *  context as genuinely legacy (pre-adoption / no enrollment data at all) — an authoritative
+     *  gap must not be papered over with the live class. */
+    @Transactional(readOnly = true)
+    public Set<String> resolveHistoricalClassNamesForSession(String studentId, String session, Long schoolId, String fallbackClassName) {
+        Set<String> markDerivedClassNames = resolveMarkDerivedClassNamesForSession(studentId, session, schoolId);
+        EnrollmentSessionClasses enrollment = resolveEnrollmentClassNamesForSession(studentId, session, schoolId);
+        if (enrollment.conflict()) {
+            log.error("Enrollment conflict resolving historical class context for student {} session {}: {} — " +
+                    "using mark evidence only.", studentId, session, enrollment.conflictReason());
+            return markDerivedClassNames.isEmpty() ? Set.of(fallbackClassName) : markDerivedClassNames;
+        }
+        Set<String> combined = new LinkedHashSet<>(markDerivedClassNames);
+        combined.addAll(enrollment.classNames());
+        if (!combined.isEmpty()) return combined;
+        return enrollment.legacyFallbackPermitted() ? Set.of(fallbackClassName) : Set.of();
+    }
+
+    /** The mark-derived half of resolveHistoricalClassNamesForSession — extracted so
+     *  getStudentResults can also use it standalone (to distinguish "mark authority" classes
+     *  from "enrollment-only, date-checked" classes). See that method's Javadoc for the full
+     *  reasoning; unchanged from the original bridge. */
+    private Set<String> resolveMarkDerivedClassNamesForSession(String studentId, String session, Long schoolId) {
+        List<ExamConfig> sessionExams = examConfigRepository.findBySessionAndSchoolId(session, schoolId);
+        if (sessionExams.isEmpty()) return Set.of();
+        Map<Long, String> classNameByExamConfigId = sessionExams.stream()
+                .collect(Collectors.toMap(ExamConfig::getId, ExamConfig::getClassName, (a, b) -> a));
+
+        List<ExamSubjectEntry> allEntries = examSubjectEntryRepository
+                .findByExamConfigIdInAndSchoolId(new ArrayList<>(classNameByExamConfigId.keySet()), schoolId);
+        if (allEntries.isEmpty()) return Set.of();
+        Map<Long, Long> examConfigIdByEntryId = allEntries.stream()
+                .collect(Collectors.toMap(ExamSubjectEntry::getId, ExamSubjectEntry::getExamConfigId, (a, b) -> a));
+
+        List<StudentMark> ownMarks = studentMarkRepository.findByStudentIdAndExamSubjectEntryIdInAndSchoolId(
+                studentId, new ArrayList<>(examConfigIdByEntryId.keySet()), schoolId);
+
+        return ownMarks.stream()
+                .map(m -> examConfigIdByEntryId.get(m.getExamSubjectEntryId()))
+                .filter(Objects::nonNull)
+                .map(classNameByExamConfigId::get)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /** Realized (ACTIVE/CLOSED) enrollment class names for a student/session, via E6B — never a
+     *  second, independent temporal resolver. {@code legacyFallbackPermitted} mirrors E6B's own
+     *  classification: true when there's no realized enrollment history at all (safe to fall
+     *  back to the live current class), false for an authoritative gap (must not fabricate
+     *  membership from the live class). {@code conflict} means E6B detected ambiguous/dirty
+     *  enrollment data — fail closed on the enrollment contribution, but existing marks still
+     *  stand as their own historical evidence. */
+    private record EnrollmentSessionClasses(
+            Set<String> classNames, List<StudentTemporalMembershipResolver.Segment> segments,
+            boolean legacyFallbackPermitted, boolean conflict, String conflictReason) {}
+
+    private EnrollmentSessionClasses resolveEnrollmentClassNamesForSession(String studentId, String session, Long schoolId) {
+        Optional<AcademicSession> sessionOpt = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session);
+        if (sessionOpt.isEmpty()) {
+            return new EnrollmentSessionClasses(Set.of(), List.of(), true, false, null);
+        }
+        StudentTemporalMembershipResolver.SessionResolution resolution;
+        try {
+            resolution = temporalMembershipResolver.realizedEnrollmentSegmentsForSession(
+                    schoolId, studentId, sessionOpt.get().getId());
+        } catch (RuntimeException e) {
+            log.error("Failed to resolve realized enrollment for student {} session {}", studentId, session, e);
+            return new EnrollmentSessionClasses(Set.of(), List.of(), true, false, null);
+        }
+        if (resolution.classification() == StudentTemporalMembershipResolver.CoverageClassification.CONFLICT) {
+            return new EnrollmentSessionClasses(Set.of(), List.of(), false, true, resolution.conflictReason());
+        }
+        Set<String> classNames = resolution.segments().stream()
+                .map(StudentTemporalMembershipResolver.Segment::classNameSnapshot)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return new EnrollmentSessionClasses(classNames, resolution.segments(), resolution.legacyFallbackPermitted(), false, null);
+    }
+
+    /** For an exam discovered purely via enrollment (no mark yet): does at least one of its
+     *  subject dates fall within a realized enrollment segment of the matching class? An exam
+     *  with no dated subjects can't be checked this way — session-level enrollment in that class
+     *  is treated as sufficient (never invent a date). */
+    private boolean examMatchesEnrollmentSegments(
+            List<ExamSubjectEntry> entries, String className, List<StudentTemporalMembershipResolver.Segment> segments) {
+        List<StudentTemporalMembershipResolver.Segment> classSegments = segments.stream()
+                .filter(s -> className.equals(s.classNameSnapshot())).toList();
+        if (classSegments.isEmpty()) return false;
+        List<LocalDate> dates = entries.stream().map(ExamSubjectEntry::getExamDate).filter(Objects::nonNull).toList();
+        if (dates.isEmpty()) return true;
+        return dates.stream().anyMatch(d -> classSegments.stream().anyMatch(s ->
+                !d.isBefore(s.effectiveFrom()) && (s.effectiveUntil() == null || !d.isAfter(s.effectiveUntil()))));
+    }
+
+    /** Every distinct (session label, class name) the student was realized-enrolled under,
+     *  across all sessions — used by getStudentResults' no-session branch so a promotion never
+     *  erases a prior session's results just because no session filter was given. */
+    private record SessionClassContext(String session, String className) {}
+
+    private List<SessionClassContext> resolveHistoricalSessionClassContexts(String studentId, Long schoolId) {
+        List<StudentEnrollment> rows;
+        try {
+            rows = studentEnrollmentRepository.findBySchoolIdAndStudentIdOrderByAcademicSessionIdAscEffectiveFromAsc(schoolId, studentId);
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+        List<SessionClassContext> contexts = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (StudentEnrollment row : rows) {
+            if (row.getStatus() != StudentEnrollmentStatus.ACTIVE && row.getStatus() != StudentEnrollmentStatus.CLOSED) continue;
+            Optional<AcademicSession> sessionOpt = academicSessionRepository.findByIdAndSchoolId(row.getAcademicSessionId(), schoolId);
+            if (sessionOpt.isEmpty() || row.getClassNameSnapshot() == null) continue;
+            String key = sessionOpt.get().getLabel() + "\u0000" + row.getClassNameSnapshot();
+            if (seen.add(key)) contexts.add(new SessionClassContext(sessionOpt.get().getLabel(), row.getClassNameSnapshot()));
+        }
+        return contexts;
+    }
+
+    /** Every ExamConfig the student has an existing mark for, regardless of class or session —
+     *  mark authority: an existing mark must never be dropped from the no-session enumeration. */
+    private List<ExamConfig> examConfigsWithExistingMarks(String studentId, Long schoolId) {
+        List<StudentMark> marks = studentMarkRepository.findByStudentIdAndSchoolId(studentId, schoolId);
+        if (marks.isEmpty()) return List.of();
+        Set<Long> entryIds = marks.stream().map(StudentMark::getExamSubjectEntryId).collect(Collectors.toSet());
+        Set<Long> examConfigIds = new HashSet<>();
+        for (ExamSubjectEntry entry : examSubjectEntryRepository.findAllById(entryIds)) {
+            if (schoolId.equals(entry.getSchoolId())) examConfigIds.add(entry.getExamConfigId());
+        }
+        if (examConfigIds.isEmpty()) return List.of();
+        List<ExamConfig> result = new ArrayList<>();
+        for (ExamConfig e : examConfigRepository.findAllById(examConfigIds)) {
+            if (schoolId.equals(e.getSchoolId())) result.add(e);
+        }
+        return result;
+    }
+
+    /** Enrollment-authoritative roster augmentation (E6D), shared by getClassResults,
+     *  getStudentsForSubjectEntry, and any other class-result view: adds any student
+     *  realized-enrolled in {@code className}(+{@code sectionId}) for the exam's own subject
+     *  date range — even if since promoted, transferred, or withdrawn — to the given live-roster
+     *  map (keyed by studentId, mutated in place). No-ops gracefully when the exam's session or
+     *  class can't be resolved (leaves the live-only roster untouched, exactly as before E6D). */
+    private void augmentRosterWithEnrollment(Map<String, Student> roster, Long schoolId, ExamConfig exam,
+                                             String className, Long sectionId, List<ExamSubjectEntry> entries) {
+        Optional<AcademicSession> sessionOpt = academicSessionRepository.findBySchoolIdAndLabel(schoolId, exam.getSession());
+        Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className).map(SchoolClass::getId).orElse(null);
+        if (sessionOpt.isEmpty() || classId == null) return;
+        AcademicSession session = sessionOpt.get();
+        LocalDate from = entries.stream().map(ExamSubjectEntry::getExamDate).filter(Objects::nonNull)
+                .min(LocalDate::compareTo).orElse(session.getStartDate());
+        LocalDate to = entries.stream().map(ExamSubjectEntry::getExamDate).filter(Objects::nonNull)
+                .max(LocalDate::compareTo).orElse(session.getEndDate());
+        if (from == null || to == null || to.isBefore(from)) return;
+
+        List<StudentEnrollment> rows;
+        try {
+            rows = (sectionId != null)
+                    ? studentEnrollmentRepository.findRealizedByAcademicSessionAndClassAndSectionOverlappingRange(
+                            schoolId, session.getId(), classId, sectionId, from, to)
+                    : studentEnrollmentRepository.findRealizedByAcademicSessionAndClassOverlappingRange(
+                            schoolId, session.getId(), classId, from, to);
+        } catch (RuntimeException e) {
+            log.error("Failed to resolve realized enrollment roster for class {} exam {}", className, exam.getId(), e);
+            return;
+        }
+        for (StudentEnrollment row : rows) {
+            roster.computeIfAbsent(row.getStudentId(), sid -> studentRepository.findByStudentIdAndSchoolId(sid, schoolId).orElse(null));
+        }
+        roster.values().removeIf(Objects::isNull);
+    }
+
+    private List<Student> resolveStudentsForSubject(ExamConfig exam, ExamSubjectEntry entry, Long sectionId) {
+        String className = exam.getClassName();
+        String subjectName = entry.getSubjectName();
+        // Fetch students for the class — filtered by section if provided. Live ACTIVE roster is
+        // the floor (preserves current-exam behavior); enrollment-authoritative augmentation
+        // below adds back any student who was realized-enrolled in this class(+section) for the
+        // subject's date but has since been promoted/transferred/withdrawn — so a historical
+        // (not-yet-fully-marked) exam's roster stays complete for them too.
+        List<Student> liveStudents = (sectionId != null)
                 ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
                 : studentService.getActiveStudentsByClass(className);
+        Map<String, Student> roster = new LinkedHashMap<>();
+        liveStudents.forEach(s -> roster.put(s.getStudentId(), s));
+        augmentRosterWithEnrollment(roster, securityUtil.getSchoolId(), exam, className, sectionId, List.of(entry));
+        List<Student> all = new ArrayList<>(roster.values());
 
         // Check if any students have stream selections — filter by stream subjects
         Map<String, Set<String>> subjectSetByStudent = batchLoadStudentSubjectSets(all);

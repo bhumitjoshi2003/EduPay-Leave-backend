@@ -6,6 +6,8 @@ import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.User;
+import com.indraacademy.ias_management.entity.AcademicSession;
+import com.indraacademy.ias_management.entity.StudentEnrollment;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.LeaveRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
@@ -15,7 +17,9 @@ import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.indraacademy.ias_management.util.SchoolTimeUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +39,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
+import java.time.Clock;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
@@ -65,14 +70,41 @@ public class StudentService {
     @Autowired private SectionRepository sectionRepository;
     @Autowired private ParentPortalService parentPortalService;
     @Autowired private IdGeneratorService idGeneratorService;
+    @Autowired private AcademicSessionRepository academicSessionRepository;
+    @Autowired private StudentEnrollmentService studentEnrollmentService;
+    @Autowired private Clock clock;
 
-    private String getAcademicYear(LocalDate date) {
-        int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
-                .map(s -> s.getAcademicYearStartMonth()).orElse(4);
-        int year = date.getYear();
-        return (date.getMonthValue() >= startMonth)
-                ? year + "-" + (year + 1)
-                : (year - 1) + "-" + year;
+    private LocalDate schoolToday(Long schoolId) {
+        var school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new NoSuchElementException("School not found"));
+        return LocalDate.now(clock.withZone(SchoolTimeUtil.zoneId(school)));
+    }
+
+    private AcademicSession requireSessionContaining(Long schoolId, LocalDate date) {
+        if (date == null) {
+            throw new IllegalArgumentException("Joining date is required to resolve academic session membership.");
+        }
+        List<AcademicSession> matches = academicSessionRepository
+                .findAllBySchoolIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(schoolId, date, date);
+        if (matches.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No configured academic session contains " + date + ". Configure the session before admitting the student.");
+        }
+        if (matches.size() > 1) {
+            throw new IllegalStateException(
+                    "Multiple academic sessions contain " + date + "; resolve the session overlap before admitting the student.");
+        }
+        return matches.get(0);
+    }
+
+    private Optional<AcademicSession> findSessionContaining(Long schoolId, LocalDate date) {
+        List<AcademicSession> matches = academicSessionRepository
+                .findAllBySchoolIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(schoolId, date, date);
+        if (matches.size() > 1) {
+            throw new IllegalStateException(
+                    "Multiple academic sessions contain " + date + "; resolve the session overlap before changing membership.");
+        }
+        return matches.stream().findFirst();
     }
 
     /**
@@ -163,7 +195,7 @@ public class StudentService {
                 throw new IllegalArgumentException("Student ID " + student.getStudentId() + " is already in use. Student IDs must be unique across the entire platform.");
             }
 
-            LocalDate today = LocalDate.now();
+            LocalDate today = schoolToday(schoolId);
             if (student.getJoiningDate() != null && student.getJoiningDate().isAfter(today)) {
                 student.setStatus(StudentStatus.UPCOMING);
             }
@@ -176,7 +208,19 @@ public class StudentService {
             student.setClassName(schoolClass.getName());
             student.setClassId(schoolClass.getId());
             resolveAndValidateSection(schoolId, schoolClass, student);
-            Student savedStudent = studentRepository.save(student);
+            AcademicSession session = requireSessionContaining(schoolId, student.getJoiningDate());
+            Student savedStudent = studentRepository.saveAndFlush(student);
+            if (student.getStatus() == StudentStatus.UPCOMING) {
+                // The Student columns remain populated for current UI/authorization compatibility,
+                // but this PLANNED row is the authoritative future class/section membership.
+                studentEnrollmentService.createPlannedEnrollment(
+                        schoolId, savedStudent.getStudentId(), session.getId(), schoolClass.getId(),
+                        savedStudent.getSectionId(), savedStudent.getJoiningDate());
+            } else {
+                studentEnrollmentService.createActiveEnrollment(
+                        schoolId, savedStudent.getStudentId(), session.getId(), schoolClass.getId(),
+                        savedStudent.getSectionId(), savedStudent.getJoiningDate());
+            }
 
             auditService.log(
                     securityUtil.getUsername(),
@@ -289,13 +333,6 @@ public class StudentService {
     @Transactional
     public Student exitStudent(String studentId, com.indraacademy.ias_management.dto.StudentExitRequest request, HttpServletRequest httpRequest) {
         Long schoolId = securityUtil.getSchoolId();
-        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
-                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
-
-        if (student.getStatus() != StudentStatus.ACTIVE) {
-            throw new IllegalStateException("Only ACTIVE students can be exited. Current status: " + student.getStatus());
-        }
-
         StudentStatus exitStatus;
         try {
             exitStatus = StudentStatus.valueOf(request.getExitType().toUpperCase());
@@ -305,6 +342,16 @@ public class StudentService {
         if (!exitStatus.isExitStatus() || exitStatus == StudentStatus.INACTIVE) {
             throw new IllegalArgumentException("Invalid exit type: " + request.getExitType() + ". Valid: GRADUATED, TRANSFERRED, WITHDRAWN");
         }
+
+        LocalDate exitDate = request.getLeavingDate();
+        if (exitDate.isAfter(schoolToday(schoolId))) {
+            throw new IllegalArgumentException("Leaving date cannot be in the future");
+        }
+        Optional<AcademicSession> exitSession = findSessionContaining(schoolId, exitDate);
+        StudentEnrollmentService.LifecycleMutation lifecycle = studentEnrollmentService.closeForExplicitExit(
+                schoolId, studentId, exitSession.map(AcademicSession::getId).orElse(null), exitDate,
+                com.indraacademy.ias_management.entity.StudentEnrollmentClosureReason.valueOf(exitStatus.name()));
+        Student student = lifecycle.student();
 
         String oldStatus = student.getStatus().name();
         student.setStatus(exitStatus);
@@ -324,6 +371,21 @@ public class StudentService {
         return saved;
     }
 
+    @Transactional
+    public StudentEnrollment correctPlannedEnrollment(
+            String studentId, Long enrollmentId, Long targetClassId, Long targetSectionId,
+            HttpServletRequest httpRequest) {
+        Long schoolId = securityUtil.getSchoolId();
+        StudentEnrollment corrected = studentEnrollmentService.correctPlannedEnrollment(
+                schoolId, studentId, enrollmentId, targetClassId, targetSectionId);
+        auditService.log(
+                securityUtil.getUsername(), securityUtil.getRole(),
+                "CORRECT_PLANNED_ENROLLMENT", "StudentEnrollment", String.valueOf(enrollmentId),
+                null, "classId=" + corrected.getClassId() + ",sectionId=" + corrected.getSectionId(),
+                httpRequest.getRemoteAddr());
+        return corrected;
+    }
+
     @Transactional(readOnly = true)
     public java.util.Map<String, Object> checkPendingDues(String studentId) {
         Long schoolId = securityUtil.getSchoolId();
@@ -340,12 +402,14 @@ public class StudentService {
     @Transactional
     public Student readmitStudent(String studentId, HttpServletRequest httpRequest) {
         Long schoolId = securityUtil.getSchoolId();
-        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+        LocalDate readmissionDate = schoolToday(schoolId);
+        Optional<AcademicSession> session = findSessionContaining(schoolId, readmissionDate);
+        Student studentSnapshot = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
-
-        if (!student.getStatus().isExitStatus()) {
-            throw new IllegalStateException("Only exited students can be re-admitted. Current status: " + student.getStatus());
-        }
+        StudentEnrollmentService.LifecycleMutation lifecycle = studentEnrollmentService.createForExplicitReadmission(
+                schoolId, studentId, session.map(AcademicSession::getId).orElse(null),
+                studentSnapshot.getClassId(), studentSnapshot.getSectionId(), readmissionDate);
+        Student student = lifecycle.student();
 
         String oldStatus = student.getStatus().name();
         student.setStatus(StudentStatus.ACTIVE);
@@ -369,7 +433,7 @@ public class StudentService {
             return currentStatus;
         }
 
-        LocalDate today = LocalDate.now();
+        LocalDate today = schoolToday(securityUtil.getSchoolId());
 
         if (joiningDate != null && joiningDate.isAfter(today)) {
             return StudentStatus.UPCOMING;
@@ -407,9 +471,26 @@ public class StudentService {
                 updatedStudent.setSectionName(null);
             }
 
-            // Comparison logic: uses Objects.equals for safe comparison
+            LocalDate effectiveDate = schoolToday(schoolId);
+            Optional<AcademicSession> effectiveSession = findSessionContaining(schoolId, effectiveDate);
+            Optional<StudentEnrollment> effectiveEnrollment = effectiveSession.flatMap(session ->
+                    studentEnrollmentService.findEffectiveEnrollment(
+                            schoolId, studentId, session.getId(), effectiveDate));
+
+            // Comparison logic: uses canonical IDs after tenant-safe validation.
             boolean emailChanged = !Objects.equals(existingStudent.getEmail(), updatedStudent.getEmail());
-            boolean classChanged = !Objects.equals(existingStudent.getClassName(), updatedStudent.getClassName());
+            Long authoritativeClassId = effectiveEnrollment.map(StudentEnrollment::getClassId)
+                    .orElse(existingStudent.getClassId());
+            Long authoritativeSectionId = effectiveEnrollment.map(StudentEnrollment::getSectionId)
+                    .orElse(existingStudent.getSectionId());
+            boolean classChanged = !Objects.equals(authoritativeClassId, updatedStudent.getClassId());
+            boolean sectionChanged = !Objects.equals(authoritativeSectionId, updatedStudent.getSectionId());
+            boolean joiningDateChanged = !Objects.equals(existingStudent.getJoiningDate(), updatedStudent.getJoiningDate());
+            boolean leavingDateChanged = !Objects.equals(existingStudent.getLeavingDate(), updatedStudent.getLeavingDate());
+            if (effectiveEnrollment.isPresent() && (joiningDateChanged || leavingDateChanged)) {
+                throw new IllegalArgumentException(
+                        "Joining/leaving dates for an enrolled student require the explicit enrollment lifecycle workflow.");
+            }
 
             boolean busDetailsChanged = false;
             // Check 1: Bus status changed?
@@ -431,8 +512,31 @@ public class StudentService {
                 }, () -> log.warn("User record not found for student ID {} when attempting to update email.", studentId));
             }
 
-            if (classChanged) {
-                log.info("Class change detected for student {}. Updating fee structure.", studentId);
+            if (effectiveEnrollment.isPresent() && (classChanged || sectionChanged)) {
+                StudentEnrollmentService.EnrollmentTransition transition = classChanged
+                        ? studentEnrollmentService.transitionClass(schoolId, studentId, effectiveSession.orElseThrow().getId(),
+                                updatedStudent.getClassId(), updatedStudent.getSectionId(), effectiveDate)
+                        : studentEnrollmentService.transitionSection(schoolId, studentId, effectiveSession.orElseThrow().getId(),
+                                updatedStudent.getSectionId(), effectiveDate);
+                StudentEnrollment replacement = transition.replacementSegment();
+                updatedStudent.setClassId(replacement.getClassId());
+                updatedStudent.setClassName(replacement.getClassNameSnapshot());
+                updatedStudent.setSectionId(replacement.getSectionId());
+                updatedStudent.setSectionName(replacement.getSectionNameSnapshot());
+                log.info("Enrollment-backed membership transition completed for student {} effective {}.",
+                        studentId, effectiveDate);
+            } else if (effectiveEnrollment.isPresent()) {
+                // Full-object update DTOs resend projection fields even for an unrelated edit.
+                // Never let a stale client payload overwrite authoritative membership.
+                StudentEnrollment authoritative = effectiveEnrollment.orElseThrow();
+                updatedStudent.setClassId(authoritative.getClassId());
+                updatedStudent.setClassName(authoritative.getClassNameSnapshot());
+                updatedStudent.setSectionId(authoritative.getSectionId());
+                updatedStudent.setSectionName(authoritative.getSectionNameSnapshot());
+            } else if (effectiveEnrollment.isEmpty() && classChanged) {
+                // Legacy uncovered students retain the pre-enrollment behavior. Covered students
+                // deliberately do not relabel financial rows as an implicit consequence of a
+                // membership transition; that requires a separate fee-policy decision.
                 studentFeesService.updateStudentFeesForClassChange(studentId, updatedStudent.getClassName());
             }
 
@@ -444,9 +548,6 @@ public class StudentService {
             // default true and save() would wrongly attempt an INSERT of a row that
             // already exists. We already confirmed existence at line ~336-339.
             updatedStudent.markAsExisting();
-
-            boolean joiningDateChanged = !Objects.equals(existingStudent.getJoiningDate(), updatedStudent.getJoiningDate());
-            boolean leavingDateChanged = !Objects.equals(existingStudent.getLeavingDate(), updatedStudent.getLeavingDate());
 
             if (joiningDateChanged || leavingDateChanged) {
                 StudentStatus newStatus = calculateStatus(

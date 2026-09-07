@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.BulkImportResultDTO;
+import com.indraacademy.ias_management.dto.CorrectPlannedEnrollmentRequest;
 import com.indraacademy.ias_management.dto.PromotionDecisionRequest;
 import com.indraacademy.ias_management.dto.PromotionPreviewDTO;
 import com.indraacademy.ias_management.dto.PromotionResultDTO;
@@ -227,14 +228,20 @@ public class StudentController {
 
     // ─── Promotion endpoints ──────────────────────────────────────────────────
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/promotion/preview")
-    public ResponseEntity<List<PromotionPreviewDTO>> getPromotionPreview() {
-        log.info("Request for student promotion preview");
-        return ResponseEntity.ok(studentPromotionService.getPromotionPreview());
+    public ResponseEntity<PromotionPreviewDTO> getPromotionPreview(
+            @RequestParam Long sourceSessionId,
+            @RequestParam Long targetSessionId,
+            @RequestParam(required = false) Long classId,
+            @RequestParam(required = false) String studentId) {
+        log.info("Request for student promotion preview: sourceSessionId={}, targetSessionId={}",
+                sourceSessionId, targetSessionId);
+        return ResponseEntity.ok(studentPromotionService.getPromotionPreview(
+                sourceSessionId, targetSessionId, classId, studentId));
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping("/promotion/execute")
     public ResponseEntity<PromotionResultDTO> executePromotion(
             @Valid @RequestBody PromotionDecisionRequest request,
@@ -348,6 +355,25 @@ public class StudentController {
         try {
             Student student = studentService.exitStudent(studentId, request, httpRequest);
             return ResponseEntity.ok(student);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PutMapping("/{studentId}/enrollment/{enrollmentId}/correct-planned")
+    public ResponseEntity<?> correctPlannedEnrollment(
+            @PathVariable String studentId,
+            @PathVariable Long enrollmentId,
+            @Valid @RequestBody CorrectPlannedEnrollmentRequest request,
+            HttpServletRequest httpRequest) {
+        log.warn("Request to correct PLANNED enrollment {} for student: {}", enrollmentId, studentId);
+        try {
+            com.indraacademy.ias_management.entity.StudentEnrollment corrected = studentService.correctPlannedEnrollment(
+                    studentId, enrollmentId, request.getTargetClassId(), request.getTargetSectionId(), httpRequest);
+            return ResponseEntity.ok(corrected);
         } catch (NoSuchElementException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
         } catch (IllegalStateException | IllegalArgumentException e) {

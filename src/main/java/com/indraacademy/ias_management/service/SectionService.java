@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.SectionDTO;
 import com.indraacademy.ias_management.entity.Section;
 import com.indraacademy.ias_management.repository.SectionRepository;
+import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -27,6 +28,9 @@ public class SectionService {
 
     @Autowired
     private StudentRepository studentRepository;
+
+    @Autowired
+    private StudentEnrollmentRepository studentEnrollmentRepository;
 
     @Autowired
     private SecurityUtil securityUtil;
@@ -122,15 +126,22 @@ public class SectionService {
     }
 
     /**
-     * Deletes a section. If any students are assigned to it, their section
-     * assignment is automatically cleared so they are not lost.
-     * Returns the count of students whose section was cleared.
+     * Deletes a section only when it has no authoritative enrollment history.
+     * Legacy Student projections with no enrollment rows retain the old clear-on-delete
+     * compatibility; enrollment-backed projections and history are never rewritten here.
+     * Returns the count of legacy Student projections whose section was cleared.
      */
     @Transactional
     public long deleteSection(Long id, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
-        Section section = sectionRepository.findByIdAndSchoolId(id, schoolId)
+        Section section = sectionRepository.findByIdAndSchoolIdForUpdate(id, schoolId)
                 .orElseThrow(() -> new IllegalArgumentException("Section not found."));
+
+        if (studentEnrollmentRepository.existsBySchoolIdAndSectionId(schoolId, id)) {
+            throw new IllegalStateException(
+                    "Cannot delete this section because student enrollment history references it. " +
+                    "Move current students with an explicit enrollment transition; historical references must be preserved.");
+        }
 
         String oldValue;
         try {
@@ -139,10 +150,7 @@ public class SectionService {
             oldValue = null;
         }
 
-        long affected = studentRepository.countBySchoolIdAndSectionId(schoolId, id);
-        if (affected > 0) {
-            studentRepository.clearSectionBySchoolAndSectionId(schoolId, id);
-        }
+        long affected = studentRepository.clearSectionBySchoolAndSectionId(schoolId, id);
         sectionRepository.delete(section);
 
         auditService.log(

@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
@@ -49,6 +50,9 @@ public class ReportCardController {
     @Autowired private EntitlementService            entitlementService;
     @Autowired private ParentPortalService            parentPortalService;
     @Autowired private TeacherClassScopeService       teacherClassScopeService;
+    @Autowired private com.indraacademy.ias_management.repository.SchoolClassRepository schoolClassRepository;
+    @Autowired private com.indraacademy.ias_management.repository.AcademicSessionRepository academicSessionRepository;
+    @Autowired private com.indraacademy.ias_management.repository.StudentEnrollmentRepository studentEnrollmentRepository;
 
     // ── Template CRUD ─────────────────────────────────────────────────────
 
@@ -112,16 +116,18 @@ public class ReportCardController {
      */
     @GetMapping("/report-cards")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
-    public ResponseEntity<ReportCardDataDTO> getReportCard(
+    public ResponseEntity<?> getReportCard(
             @RequestParam String studentId,
             @RequestParam Long templateId,
-            @RequestParam String session) {
-
-        checkStudentOrParentPublishedAccess(studentId, templateId, session);
-
-        checkTeacherOwnsStudents(List.of(studentId));
-
-        return ResponseEntity.ok(assembler.assemble(studentId, templateId, session));
+            @RequestParam String session,
+            @RequestParam(required = false) Long classId) {
+        try {
+            checkStudentOrParentPublishedAccess(studentId, templateId, session, classId);
+            checkTeacherOwnsStudents(List.of(studentId));
+            return ResponseEntity.ok(assembleOrTranslate(studentId, templateId, session, classId));
+        } catch (ReportCardDataAssembler.ReportCardContextAmbiguousException e) {
+            return ambiguousResponse(studentId, e);
+        }
     }
 
     // ── Remarks ───────────────────────────────────────────────────────────
@@ -183,29 +189,34 @@ public class ReportCardController {
      */
     @GetMapping("/report-cards/pdf")
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
-    public ResponseEntity<byte[]> downloadPdf(
+    public ResponseEntity<?> downloadPdf(
             @RequestParam String studentId,
             @RequestParam Long templateId,
-            @RequestParam String session) {
+            @RequestParam String session,
+            @RequestParam(required = false) Long classId) {
+        try {
+            checkStudentOrParentPublishedAccess(studentId, templateId, session, classId);
+            checkTeacherOwnsStudents(List.of(studentId));
 
-        checkStudentOrParentPublishedAccess(studentId, templateId, session);
+            // Once the exact context is selected (via classId when disambiguation was needed),
+            // that same context is used for the PDF and verification-token lookup below — never
+            // independently recalculated.
+            ReportCardDataDTO data = assembleOrTranslate(studentId, templateId, session, classId);
 
-        checkTeacherOwnsStudents(List.of(studentId));
+            publicationService.getVerificationToken(templateId, session, data.getClassName())
+                .ifPresent(data::setVerificationToken);
 
-        ReportCardDataDTO data = assembler.assemble(studentId, templateId, session);
+            byte[] pdf = pdfGenerator.generate(data);
 
-        // Embed verification token if the report card is published
-        publicationService.getVerificationToken(templateId, session, data.getClassName())
-            .ifPresent(data::setVerificationToken);
+            String filename = sanitizeFilename(data.getStudentName()) + "_" + session + "_ReportCard.pdf";
 
-        byte[] pdf = pdfGenerator.generate(data);
-
-        String filename = sanitizeFilename(data.getStudentName()) + "_" + session + "_ReportCard.pdf";
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_PDF)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .body(pdf);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                    .body(pdf);
+        } catch (ReportCardDataAssembler.ReportCardContextAmbiguousException e) {
+            return ambiguousResponse(studentId, e);
+        }
     }
 
     /**
@@ -222,15 +233,15 @@ public class ReportCardController {
         Long sectionId = checkTeacherClassAccess(className);
 
         Long schoolId = securityUtil.getSchoolId();
-        List<Student> students = (sectionId != null)
-                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
-                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className)
+                .map(com.indraacademy.ias_management.entity.SchoolClass::getId).orElse(null);
+        List<Student> students = historicalClassRoster(schoolId, className, classId, sectionId, session);
 
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(baos)) {
             for (Student student : students) {
                 try {
-                    ReportCardDataDTO data = assembler.assemble(student.getStudentId(), templateId, session);
+                    ReportCardDataDTO data = assembler.assemble(student.getStudentId(), templateId, session, classId);
                     byte[] pdf = pdfGenerator.generate(data);
                     String entryName = sanitizeFilename(student.getName()) + "_" + student.getStudentId() + ".pdf";
                     zip.putNextEntry(new ZipEntry(entryName));
@@ -375,8 +386,15 @@ public class ReportCardController {
         }
     }
 
-    /** Student-facing HTML and PDF paths must enforce the same publication boundary. */
-    private void checkStudentOrParentPublishedAccess(String studentId, Long templateId, String session) {
+    /**
+     * Student-facing HTML and PDF paths must enforce the same publication boundary. Authorization
+     * itself (self-identity for STUDENT, current active parent-child link + RESULTS permission
+     * for PARENT) remains entirely live/current — E6E only changes how the CLASS a historical
+     * publication is checked against gets resolved. Historical enrollment never resurrects an
+     * expired/inactive parent relationship; it only supplies the class context once the caller is
+     * already authorized.
+     */
+    private void checkStudentOrParentPublishedAccess(String studentId, Long templateId, String session, Long classId) {
         String role = securityUtil.getRole();
         if (!Role.STUDENT.equals(role) && !Role.PARENT.equals(role)) return;
 
@@ -388,13 +406,109 @@ public class ReportCardController {
             parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.RESULTS);
         }
 
-        Student student = studentRepository
-                .findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
-        if (!publicationService.isPublished(templateId, session, student.getClassName())) {
+        // Use the report card's own historical context resolution (never the student's current
+        // class) so an already-published report card from before a promotion stays reachable.
+        // Never arbitrarily picks a class when more than one is legitimate — see
+        // ReportCardDataAssembler.resolveHistoricalContext.
+        ReportCardDataAssembler.HistoricalReportCardContext context = resolveContextOrTranslate(studentId, session, classId);
+        if (!publicationService.isPublished(templateId, session, context.className())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Report card has not been published yet.");
         }
+    }
+
+    /** Translates the assembler's context-resolution exceptions into the appropriate HTTP
+     *  response, shared by the publication-access check and the PDF/data assembly paths so both
+     *  fail (or disambiguate) the exact same way for the exact same request.
+     *  {@code ReportCardContextAmbiguousException} deliberately propagates uncaught — the two
+     *  public endpoints catch it themselves to build the structured 409 body (see
+     *  ambiguousResponse), since a bare message string isn't enough for the web UI to offer a
+     *  choice or retry with classId. */
+    private ReportCardDataAssembler.HistoricalReportCardContext resolveContextOrTranslate(
+            String studentId, String session, Long classId) {
+        try {
+            return assembler.resolveHistoricalContext(studentId, session, classId);
+        } catch (java.util.NoSuchElementException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+    }
+
+    /** Shared by getReportCard/downloadPdf so an invalid classId is translated to the same HTTP
+     *  response the access check above already uses, rather than surfacing as a 500. See
+     *  resolveContextOrTranslate's Javadoc re: ReportCardContextAmbiguousException. */
+    private ReportCardDataDTO assembleOrTranslate(String studentId, Long templateId, String session, Long classId) {
+        try {
+            return assembler.assemble(studentId, templateId, session, classId);
+        } catch (java.util.NoSuchElementException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+    }
+
+    /**
+     * E6F: structured 409 body for a genuine multi-class report-card ambiguity — the minimal
+     * contract the web UI needs to show the candidate historical classes and let the user retry
+     * with an explicit classId, rather than a bare message string. Each candidate class name is
+     * resolved to its tenant SchoolClass id (null if a class was since renamed/retired — the UI
+     * falls back to className-only display in that rare case, still usable for the retry itself
+     * since the assembler also accepts a matching className... note: the retry contract is
+     * classId-based, so a null id here just means that one candidate can't be re-selected until
+     * the class is restored — extremely unlikely in practice, since the class must have existed
+     * to be a candidate in the first place).
+     */
+    private ResponseEntity<Map<String, Object>> ambiguousResponse(
+            String studentId, ReportCardDataAssembler.ReportCardContextAmbiguousException e) {
+        Long schoolId = securityUtil.getSchoolId();
+        List<Map<String, Object>> candidates = e.getCandidates().stream()
+                .map(className -> {
+                    Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className)
+                            .map(com.indraacademy.ias_management.entity.SchoolClass::getId).orElse(null);
+                    java.util.LinkedHashMap<String, Object> row = new java.util.LinkedHashMap<>();
+                    row.put("classId", classId);
+                    row.put("className", className);
+                    return (Map<String, Object>) row;
+                })
+                .toList();
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("ambiguous", true);
+        body.put("studentId", studentId);
+        body.put("message", "This student has more than one historical class for this session. " +
+                "Select the intended class to continue.");
+        body.put("candidates", candidates);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /**
+     * Enrollment-authoritative historical roster (E6E) for bulk PDF generation: the live ACTIVE
+     * roster (unchanged default for schools with no enrollment data) unioned with every student
+     * realized-enrolled in this class(+section) at any point during the session — so a promoted,
+     * transferred, or withdrawn student's report card is still produced. Reuses the same
+     * StudentEnrollmentRepository queries E6C/E6D already added; no new temporal-membership logic.
+     */
+    private List<Student> historicalClassRoster(Long schoolId, String className, Long classId, Long sectionId, String session) {
+        List<Student> liveStudents = (sectionId != null)
+                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
+                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        Map<String, Student> roster = new java.util.LinkedHashMap<>();
+        liveStudents.forEach(s -> roster.put(s.getStudentId(), s));
+
+        if (classId == null) return new ArrayList<>(roster.values());
+        academicSessionRepository.findBySchoolIdAndLabel(schoolId, session).ifPresent(as -> {
+            java.util.List<com.indraacademy.ias_management.entity.StudentEnrollment> rows = (sectionId != null)
+                    ? studentEnrollmentRepository.findRealizedByAcademicSessionAndClassAndSectionOverlappingRange(
+                            schoolId, as.getId(), classId, sectionId, as.getStartDate(), as.getEndDate())
+                    : studentEnrollmentRepository.findRealizedByAcademicSessionAndClassOverlappingRange(
+                            schoolId, as.getId(), classId, as.getStartDate(), as.getEndDate());
+            for (com.indraacademy.ias_management.entity.StudentEnrollment row : rows) {
+                roster.computeIfAbsent(row.getStudentId(),
+                        sid -> studentRepository.findByStudentIdAndSchoolId(sid, schoolId).orElse(null));
+            }
+        });
+        roster.values().removeIf(java.util.Objects::isNull);
+        return new ArrayList<>(roster.values());
     }
 
     private String sanitizeFilename(String name) {

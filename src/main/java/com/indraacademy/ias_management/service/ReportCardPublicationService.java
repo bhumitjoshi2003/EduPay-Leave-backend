@@ -3,10 +3,16 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.ReportCardPublicationDTO;
 import com.indraacademy.ias_management.dto.ReportCardTemplateDTO;
 import com.indraacademy.ias_management.dto.VerifyRcDTO;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.ReportCardPublication;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentEnrollment;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.ReportCardPublicationRepository;
+import com.indraacademy.ias_management.repository.SchoolClassRepository;
+import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.indraacademy.ias_management.notification.*;
@@ -20,6 +26,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -36,6 +43,9 @@ public class ReportCardPublicationService {
     @Autowired private SecurityUtil                                                securityUtil;
     @Autowired private BusinessNotificationService                                businessNotifications;
     @Autowired private com.indraacademy.ias_management.repository.SchoolRepository schoolRepository;
+    @Autowired private SchoolClassRepository                                       schoolClassRepository;
+    @Autowired private AcademicSessionRepository                                   academicSessionRepository;
+    @Autowired private StudentEnrollmentRepository                                 studentEnrollmentRepository;
 
     // ── Status ─────────────────────────────────────────────────────────────
 
@@ -80,8 +90,7 @@ public class ReportCardPublicationService {
         }
         pub = pubRepo.save(pub);
 
-        List<Student> recipients = studentRepository
-                .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        List<Student> recipients = historicalRecipientRoster(schoolId, className, session);
         String publicationKey = pub.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         for (Student student : recipients) {
             businessNotifications.studentAndParents(schoolId, student.getStudentId(),
@@ -122,8 +131,7 @@ public class ReportCardPublicationService {
                 "Report card must be published before sending emails.");
         }
 
-        List<Student> students = studentRepository
-            .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        List<Student> students = historicalRecipientRoster(schoolId, className, session);
 
         int withEmail = (int) students.stream()
             .filter(s -> s.getEmail() != null && !s.getEmail().isBlank())
@@ -171,6 +179,33 @@ public class ReportCardPublicationService {
                     pub.getSession(), publishedAt, pub.getPublishedBy());
             })
             .orElse(VerifyRcDTO.invalid("This report card could not be verified. The QR code may be invalid or the report card was unpublished."));
+    }
+
+    /**
+     * Enrollment-authoritative historical recipient roster (E6E) for publish-time notifications
+     * and email blasts: the live ACTIVE roster (unchanged default for schools with no enrollment
+     * data) unioned with every student realized-enrolled in this class during the session — so
+     * publishing a report card for a class after some of its students have already been
+     * promoted/transferred still notifies them. Reuses the same StudentEnrollmentRepository
+     * queries E6C/E6D already added; no new temporal-membership logic.
+     */
+    private List<Student> historicalRecipientRoster(Long schoolId, String className, String session) {
+        java.util.Map<String, Student> roster = new java.util.LinkedHashMap<>();
+        studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
+                .forEach(s -> roster.put(s.getStudentId(), s));
+
+        Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className).map(SchoolClass::getId).orElse(null);
+        if (classId != null) {
+            academicSessionRepository.findBySchoolIdAndLabel(schoolId, session).ifPresent(as -> {
+                for (StudentEnrollment row : studentEnrollmentRepository.findRealizedByAcademicSessionAndClassOverlappingRange(
+                        schoolId, as.getId(), classId, as.getStartDate(), as.getEndDate())) {
+                    roster.computeIfAbsent(row.getStudentId(),
+                            sid -> studentRepository.findByStudentIdAndSchoolId(sid, schoolId).orElse(null));
+                }
+            });
+        }
+        roster.values().removeIf(java.util.Objects::isNull);
+        return new ArrayList<>(roster.values());
     }
 
     // ── Helper ─────────────────────────────────────────────────────────────

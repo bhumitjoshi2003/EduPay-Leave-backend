@@ -33,6 +33,9 @@ class AttendanceServiceClassSummaryTest {
     @Mock private AttendanceRepository attendanceRepository;
     @Mock private StudentRepository studentRepository;
     @Mock private SecurityUtil securityUtil;
+    @Mock private com.indraacademy.ias_management.repository.SchoolClassRepository schoolClassRepository;
+    @Mock private com.indraacademy.ias_management.repository.AcademicSessionRepository academicSessionRepository;
+    @Mock private com.indraacademy.ias_management.repository.StudentEnrollmentRepository studentEnrollmentRepository;
 
     private AttendanceService service;
 
@@ -45,7 +48,13 @@ class AttendanceServiceClassSummaryTest {
         ReflectionTestUtils.setField(service, "attendanceRepository", attendanceRepository);
         ReflectionTestUtils.setField(service, "studentRepository", studentRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
+        ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
+        ReflectionTestUtils.setField(service, "academicSessionRepository", academicSessionRepository);
+        ReflectionTestUtils.setField(service, "studentEnrollmentRepository", studentEnrollmentRepository);
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        // No SchoolClass/AcademicSession fixtures — this class has no E6B enrollment data, so
+        // getClassSummary must fall back to the pre-E6C ACTIVE-status-live-roster behavior this
+        // test exercises, unaugmented by any enrollment lookup.
     }
 
     private Student student(String id, String name, StudentStatus status) {

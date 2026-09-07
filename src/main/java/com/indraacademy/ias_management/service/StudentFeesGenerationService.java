@@ -120,6 +120,20 @@ public class StudentFeesGenerationService {
         int nextStartYear = (startMonth > today.getMonthValue()) ? today.getYear() : today.getYear() + 1;
         String nextAcademicYear = nextStartYear + "-" + (nextStartYear + 1);
 
+        // A student's current class is not evidence of their class in the next session:
+        // they may be promoted, detained, graduated, transferred, or withdrawn. Until the
+        // year-end workflow records that outcome authoritatively (via student_enrollment),
+        // automatic generation must not create financially real rows for a guessed class.
+        // Keep the scheduler and generation infrastructure in place so this gate can be
+        // replaced by an authoritative enrollment lookup when that model exists.
+        if (!hasAuthoritativeEnrollmentForAutomaticGeneration(school.getId(), nextAcademicYear)) {
+            log.warn("Automatic annual fee generation deferred for school {} and academic year {}: "
+                            + "authoritative student promotion/enrollment outcomes are not available; "
+                            + "no StudentFees will be created from predicted next classes",
+                    school.getId(), nextAcademicYear);
+            return;
+        }
+
         LocalDate currentAcademicYearStart = computeCurrentAcademicYearStart(today, startMonth);
 
         log.info("School {} generating fees for academic year {}", school.getId(), nextAcademicYear);
@@ -245,6 +259,16 @@ public class StudentFeesGenerationService {
 
         log.info("School {}: fee generation complete — {} students for year {}",
                 school.getId(), feesGeneratedCount, nextAcademicYear);
+    }
+
+    /**
+     * Safe integration seam for the future student_enrollment/year-end promotion workflow.
+     * There is currently no authoritative next-session enrollment source, so unattended
+     * annual generation is deliberately disabled even when the school's legacy
+     * automaticAnnualGeneration flag is true.
+     */
+    private boolean hasAuthoritativeEnrollmentForAutomaticGeneration(Long schoolId, String academicYear) {
+        return false;
     }
 
     /**

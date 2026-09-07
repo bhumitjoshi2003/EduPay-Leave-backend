@@ -4,13 +4,18 @@ import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
 import com.indraacademy.ias_management.dto.DailyAttendanceDTO;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.Attendance;
 import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentEnrollment;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
@@ -31,6 +36,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -54,6 +61,10 @@ public class AttendanceService {
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private AcademicSessionService academicSessionService;
+    @Autowired private StudentTemporalMembershipResolver temporalMembershipResolver;
+    @Autowired private StudentEnrollmentRepository studentEnrollmentRepository;
+    @Autowired private AcademicSessionRepository academicSessionRepository;
 
     @Transactional
     public void saveAttendance(List<Attendance> attendanceList, HttpServletRequest request) {
@@ -189,13 +200,18 @@ public class AttendanceService {
             Long schoolId = securityUtil.getSchoolId();
             List<Attendance> attendanceList = attendanceRepository.findByDateAndClassNameAndSchoolId(absentDate, className, schoolId);
             if (sectionId != null) {
-                Set<String> sectionStudentIds = studentRepository
+                // Historically-accurate readback (E6C): each row already snapshots the section it
+                // was marked under (see saveAttendance's dual-write) — use that snapshot directly
+                // rather than the student's CURRENT live section, which may have since changed.
+                // Only fall back to live Student data for legacy rows saved before sectionId was
+                // captured (row.getSectionId() == null).
+                Set<String> legacySectionStudentIds = studentRepository
                         .findByClassNameAndSectionIdAndSchoolId(className, sectionId, schoolId).stream()
                         .map(Student::getStudentId).collect(Collectors.toSet());
                 attendanceList = attendanceList.stream()
-                        .filter(a -> sectionStudentIds.contains(a.getStudentId())
-                                || ("X".equals(a.getStudentId())
-                                && (a.getSectionId() == null || Objects.equals(sectionId, a.getSectionId()))))
+                        .filter(a -> a.getSectionId() != null
+                                ? Objects.equals(sectionId, a.getSectionId())
+                                : (legacySectionStudentIds.contains(a.getStudentId()) || "X".equals(a.getStudentId())))
                         .collect(Collectors.toList());
             }
             log.info("Found {} attendance records for date: {} and class: {}", attendanceList.size(), absentDate, className);
@@ -218,82 +234,41 @@ public class AttendanceService {
         }
         log.info("Calculating attendance counts for student ID: {} for year: {} month: {}", studentId, year, month);
 
+        Long schoolId = securityUtil.getSchoolId();
         Student student;
-        String className;
         try {
-            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId());
+            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
             if (studentOptional.isEmpty()) {
                 log.warn("Student not found with ID: {}", studentId);
                 return counts;
             }
-            student = studentOptional.orElseThrow(() -> new IllegalArgumentException("Student not found: " + studentId));
-            className = student.getClassName();
+            student = studentOptional.get();
         } catch (DataAccessException e) {
             log.error("Data access error fetching student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve student info for counts", e);
         }
 
-        LocalDate studentJoiningDate = student.getJoiningDate();
-        LocalDate studentLeavingDate = student.getLeavingDate();
+        LocalDate monthStart = LocalDate.of(year, month, 1);
+        LocalDate monthEnd = monthStart.withDayOfMonth(monthStart.lengthOfMonth());
+        LocalDate effectiveStart = effectiveStart(student, monthStart);
+        LocalDate effectiveEnd = effectiveEnd(student, monthEnd);
 
         long studentAbsentCount;
         long totalWorkingDays;
-
         try {
-            studentAbsentCount = attendanceRepository.countAbsences(studentId, securityUtil.getSchoolId(), year, month);
-            // dummy student "X" = total working days (days school was open)
-            totalWorkingDays = attendanceRepository.countWorkingDaysForClass(className, securityUtil.getSchoolId(), year, month);
+            // Enrollment-aware resolution (see resolveHistoricalAttendance): correctly partitions
+            // the denominator across any mid-month class/section change, excludes authoritative
+            // enrollment gaps, and falls back to the legacy attendance-row bridge when no
+            // enrollment coverage exists — replacing the old whole-month COUNT queries plus
+            // separate before-join/after-leave subtraction, which effectiveStart/effectiveEnd
+            // above already achieve by construction.
+            HistoricalAttendanceResult result = resolveHistoricalAttendance(
+                    schoolId, studentId, effectiveStart, effectiveEnd, student.getClassName());
+            totalWorkingDays = result.workingDays().size();
+            studentAbsentCount = result.countableRows().stream().filter(this::isFullAbsence).count();
         } catch (DataAccessException e) {
             log.error("Data access error calculating absence counts for student ID: {}", studentId, e);
             throw new RuntimeException("Could not calculate attendance counts", e);
-        }
-
-        // Student joined after this month?
-        boolean joinedAfterMonth = (studentJoiningDate != null) &&
-                (studentJoiningDate.getYear() > year ||
-                        (studentJoiningDate.getYear() == year && studentJoiningDate.getMonthValue() > month));
-
-        // Student left before this month?
-        boolean leftBeforeMonth = (studentLeavingDate != null) &&
-                (studentLeavingDate.getYear() < year ||
-                        (studentLeavingDate.getYear() == year && studentLeavingDate.getMonthValue() < month));
-
-        // If no joining date, or joined after this month, or left before this month → no data
-        if (studentJoiningDate == null || joinedAfterMonth || leftBeforeMonth) {
-            studentAbsentCount = 0L;
-            totalWorkingDays   = 0L;
-            log.info("Student ID: {} was not active in {}/{}. Counts set to 0.", studentId, month, year);
-        } else {
-            // ✅ Joined in the same month/year → exclude days before joining
-            if (studentJoiningDate.getYear() == year &&
-                    studentJoiningDate.getMonthValue() == month) {
-
-                LocalDate joinDate = studentJoiningDate;
-                try {
-                    long daysBeforeJoin = attendanceRepository.countWorkingDaysBeforeJoin(className, securityUtil.getSchoolId(), year, month, joinDate);
-                    totalWorkingDays -= daysBeforeJoin;
-                    log.debug("Adjusted total working days for student ID: {} due to mid-month joining. Adjusted by: {}",
-                            studentId, daysBeforeJoin);
-                } catch (DataAccessException e) {
-                    log.error("Data access error adjusting total working days (before join) for student ID: {}", studentId, e);
-                }
-            }
-
-            // ✅ Left in the same month/year → exclude days after leaving
-            if (studentLeavingDate != null &&
-                    studentLeavingDate.getYear() == year &&
-                    studentLeavingDate.getMonthValue() == month) {
-
-                LocalDate leaveDate = studentLeavingDate;
-                try {
-                    long daysAfterLeave = attendanceRepository.countWorkingDaysAfterLeave(className, securityUtil.getSchoolId(), year, month, leaveDate);
-                    totalWorkingDays -= daysAfterLeave;
-                    log.debug("Adjusted total working days for student ID: {} due to mid-month leaving. Adjusted by: {}",
-                            studentId, daysAfterLeave);
-                } catch (DataAccessException e) {
-                    log.error("Data access error adjusting total working days (after leave) for student ID: {}", studentId, e);
-                }
-            }
         }
 
         counts.put("studentAbsent", studentAbsentCount);
@@ -334,23 +309,16 @@ public class AttendanceService {
         log.info("Fetching total unapplied leave count for student ID: {} and session: {}", studentId, session);
 
         try {
-            String[] years = session.split("-");
-            if (years.length != 2) {
-                log.error("Invalid session format: {}", session);
+            Long schoolId = securityUtil.getSchoolId();
+            Optional<AcademicSession> academicSession = academicSessionService.getSessionByLabel(schoolId, session);
+            if (academicSession.isEmpty()) {
+                log.warn("No AcademicSession found for schoolId={} label='{}' — returning 0 unapplied-leave count.", schoolId, session);
                 return 0L;
             }
-            int startYear = Integer.parseInt(years[0]);
-            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
-                    .map(School::getAcademicYearStartMonth).orElse(4);
-            LocalDate startDate = LocalDate.of(startYear, startMonth, 1);
-            LocalDate endDate = startDate.plusYears(1).minusDays(1);
-
-            long count = attendanceRepository.countUnappliedLeavesForAcademicYear(studentId, securityUtil.getSchoolId(), startDate, endDate);
+            long count = attendanceRepository.countUnappliedLeavesForAcademicYear(
+                    studentId, schoolId, academicSession.get().getStartDate(), academicSession.get().getEndDate());
             log.info("Total unapplied leave count for student ID: {} is {}", studentId, count);
             return count;
-        } catch (NumberFormatException e) {
-            log.error("Error parsing session year for session: {}", session, e);
-            return 0L;
         } catch (DataAccessException e) {
             log.error("Data access error fetching unapplied leave count for student ID: {}", studentId, e);
             throw new RuntimeException("Could not retrieve unapplied leave count", e);
@@ -369,15 +337,16 @@ public class AttendanceService {
         }
 
         try {
-            String[] years = session.split("-");
-            int startYear = Integer.parseInt(years[0]);
+            Long schoolId = securityUtil.getSchoolId();
+            Optional<AcademicSession> academicSession = academicSessionService.getSessionByLabel(schoolId, session);
+            if (academicSession.isEmpty()) {
+                log.warn("No AcademicSession found for schoolId={} label='{}' — skipping chargePaid update for student {}.",
+                        schoolId, session, studentId);
+                return;
+            }
 
-            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
-                    .map(s -> s.getAcademicYearStartMonth()).orElse(4);
-            LocalDate startDate = LocalDate.of(startYear, startMonth, 1);
-            LocalDate endDate = startDate.plusYears(1).minusDays(1);
-
-            attendanceRepository.updateChargePaidForSession(studentId, securityUtil.getSchoolId(), startDate, endDate);
+            attendanceRepository.updateChargePaidForSession(
+                    studentId, schoolId, academicSession.get().getStartDate(), academicSession.get().getEndDate());
 
             String ipAddress = (request != null) ? request.getRemoteAddr() : "SYSTEM";
 
@@ -495,10 +464,11 @@ public class AttendanceService {
     public AttendanceSummaryDTO getStudentSummary(String studentId, String type,
                                                    Integer month, Integer year,
                                                    String session) {
-        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
+        Long schoolId = securityUtil.getSchoolId();
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
-        String className = student.getClassName();
+        String currentClassName = student.getClassName();
 
         if ("month".equalsIgnoreCase(type)) {
             if (month == null || year == null) {
@@ -512,16 +482,22 @@ public class AttendanceService {
             LocalDate effectiveStart = effectiveStart(student, start);
             LocalDate effectiveEnd = effectiveEnd(student, end);
 
-            // NOTE: DO NOT filter 'X' from countDistinctWorkingDays — see getClassSummary.
-            long workingDays = countClassMarkedDays(student.getClassName(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd);
-            double absences = absenceEquivalent(attendanceRepository
-                    .findByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), effectiveStart, effectiveEnd));
+            // Enrollment-authoritative resolution (E6C): partitions the denominator across any
+            // mid-period class/section change using realized StudentEnrollment segments, excludes
+            // authoritative enrollment gaps, and falls back to the legacy attendance-row bridge
+            // (historicalClassNames/classMarkedDaysAcross) when no enrollment coverage exists at
+            // all. See resolveHistoricalAttendance.
+            HistoricalAttendanceResult result = resolveHistoricalAttendance(
+                    schoolId, studentId, effectiveStart, effectiveEnd, currentClassName);
+
+            long workingDays = result.workingDays().size();
+            double absences = absenceEquivalent(result.countableRows());
             double present = Math.max(0, workingDays - absences);
 
             AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
             dto.setStudentId(studentId);
             dto.setStudentName(student.getName());
-            dto.setClassName(className);
+            dto.setClassName(result.displayClassName());
             dto.setTotalWorkingDays(workingDays);
             dto.setDaysPresent(present);
             dto.setDaysAbsent(absences);
@@ -530,21 +506,23 @@ public class AttendanceService {
             return dto;
 
         } else if ("year".equalsIgnoreCase(type)) {
-            if (session == null || !session.matches("\\d{4}-\\d{4}")) {
-                throw new IllegalArgumentException("session is required in format YYYY-YYYY when type=year");
+            if (session == null || session.isBlank()) {
+                throw new IllegalArgumentException("session is required when type=year");
             }
-            int startYear = Integer.parseInt(session.substring(0, 4));
-            int endYear   = Integer.parseInt(session.substring(5));
-            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
-                    .map(s -> s.getAcademicYearStartMonth()).orElse(4);
-            LocalDate start = LocalDate.of(startYear, startMonth, 1);
-            LocalDate end   = start.plusYears(1).minusDays(1);
+            AcademicSession academicSession = academicSessionService.getSessionByLabel(schoolId, session)
+                    .orElseThrow(() -> new IllegalArgumentException("No academic session found for label: " + session));
+            LocalDate start = academicSession.getStartDate();
+            LocalDate end   = academicSession.getEndDate();
+            int startYear = start.getYear();
+            int endYear = end.getYear();
+            int startMonth = start.getMonthValue();
 
             LocalDate effectiveStart = effectiveStart(student, start);
             LocalDate effectiveEnd = effectiveEnd(student, end);
-            long totalWorkingDays = countClassMarkedDays(student.getClassName(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd);
-            double totalAbsences = absenceEquivalent(attendanceRepository
-                    .findByStudentIdAndSchoolIdAndDateBetween(studentId, securityUtil.getSchoolId(), effectiveStart, effectiveEnd));
+            HistoricalAttendanceResult result = resolveHistoricalAttendance(
+                    schoolId, studentId, academicSession.getId(), effectiveStart, effectiveEnd, currentClassName);
+            long totalWorkingDays = result.workingDays().size();
+            double totalAbsences = absenceEquivalent(result.countableRows());
             double totalPresent = Math.max(0, totalWorkingDays - totalAbsences);
 
             // Monthly breakdown: iterate all 12 academic months in order for this school's calendar
@@ -552,13 +530,13 @@ public class AttendanceService {
             for (int am = 1; am <= 12; am++) {
                 int calMonth = ((startMonth - 1 + am - 1) % 12) + 1;
                 int calYear  = (calMonth >= startMonth) ? startYear : endYear;
-                breakdown.add(buildMonthBreakdown(student, calYear, calMonth));
+                breakdown.add(buildMonthBreakdown(student, academicSession.getId(), calYear, calMonth));
             }
 
             AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
             dto.setStudentId(studentId);
             dto.setStudentName(student.getName());
-            dto.setClassName(className);
+            dto.setClassName(result.displayClassName());
             dto.setTotalWorkingDays(totalWorkingDays);
             dto.setDaysPresent(totalPresent);
             dto.setDaysAbsent(totalAbsences);
@@ -576,14 +554,10 @@ public class AttendanceService {
                                                             Integer month, Integer year,
                                                             String session, Long sectionId) {
         Long schoolId = securityUtil.getSchoolId();
-        // ACTIVE-only at the query level (not loaded-then-filtered) — an exited student must
-        // never appear in a class attendance summary, regardless of how this method is reached.
-        List<Student> students = (sectionId != null)
-                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
-                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
 
         LocalDate start;
         LocalDate end;
+        Long sessionId = null;
 
         if ("month".equalsIgnoreCase(type)) {
             if (month == null || year == null) {
@@ -591,41 +565,56 @@ public class AttendanceService {
             }
             start = LocalDate.of(year, month, 1);
             end   = start.withDayOfMonth(start.lengthOfMonth());
+            sessionId = resolveTenantSessionContaining(schoolId, start, end).map(AcademicSession::getId).orElse(null);
         } else if ("year".equalsIgnoreCase(type)) {
-            if (session == null || !session.matches("\\d{4}-\\d{4}")) {
-                throw new IllegalArgumentException("session is required in format YYYY-YYYY when type=year");
+            if (session == null || session.isBlank()) {
+                throw new IllegalArgumentException("session is required when type=year");
             }
-            int startYear = Integer.parseInt(session.substring(0, 4));
-            int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
-                    .map(s -> s.getAcademicYearStartMonth()).orElse(4);
-            start = LocalDate.of(startYear, startMonth, 1);
-            end   = start.plusYears(1).minusDays(1);
+            AcademicSession academicSession = academicSessionService.getSessionByLabel(schoolId, session)
+                    .orElseThrow(() -> new IllegalArgumentException("No academic session found for label: " + session));
+            start = academicSession.getStartDate();
+            end   = academicSession.getEndDate();
+            sessionId = academicSession.getId();
         } else {
             throw new IllegalArgumentException("type must be 'month' or 'year'");
         }
 
-        // Fetch all absences for the class in one query, group by studentId.
-        // 'X' rows (studentId = "X") are excluded here — they are sentinel records used
-        // to mark all-present days and must never appear in a student's absence count.
-        List<Attendance> allAbsences = attendanceRepository.findByClassNameAndSchoolIdAndDateBetween(className, securityUtil.getSchoolId(), start, end);
-        Map<String, Double> absencesByStudent = allAbsences.stream()
-                .filter(a -> !"X".equals(a.getStudentId()))
-                .collect(Collectors.groupingBy(Attendance::getStudentId,
-                        Collectors.summingDouble(this::absenceWeight)));
+        // Legacy roster: current ACTIVE students in this class(+section) — always included so a
+        // school with no StudentEnrollment data at all keeps working exactly as before.
+        List<Student> liveStudents = (sectionId != null)
+                ? studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(className, sectionId, StudentStatus.ACTIVE, schoolId)
+                : studentRepository.findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId);
+        Map<String, Student> rosterStudents = new LinkedHashMap<>();
+        liveStudents.forEach(s -> rosterStudents.put(s.getStudentId(), s));
 
-        // NOTE: 'X' sentinel rows (studentId = "X") are inserted by the frontend whenever
-        // attendance is submitted, including all-present days. These rows are essential —
-        // they make all-present days visible to this COUNT(DISTINCT date) query.
-        // DO NOT filter out 'X' from countDistinctWorkingDays.
-        Set<LocalDate> markedClassDays = allAbsences.stream().map(Attendance::getDate).collect(Collectors.toSet());
+        // Enrollment-authoritative roster augmentation (E6C): a student who was realized-enrolled
+        // in this class(+section) at any point during the range — even if promoted, transferred,
+        // or withdrawn since — must remain visible for the dates they were actually here.
+        Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className).map(SchoolClass::getId).orElse(null);
+        if (sessionId != null && classId != null) {
+            List<StudentEnrollment> enrollmentRows = (sectionId != null)
+                    ? studentEnrollmentRepository.findRealizedByAcademicSessionAndClassAndSectionOverlappingRange(
+                            schoolId, sessionId, classId, sectionId, start, end)
+                    : studentEnrollmentRepository.findRealizedByAcademicSessionAndClassOverlappingRange(
+                            schoolId, sessionId, classId, start, end);
+            for (StudentEnrollment e : enrollmentRows) {
+                rosterStudents.computeIfAbsent(e.getStudentId(),
+                        sid -> studentRepository.findByStudentIdAndSchoolId(sid, schoolId).orElse(null));
+            }
+            rosterStudents.values().removeIf(Objects::isNull);
+        }
 
-        List<ClassAttendanceSummaryDTO> result = students.stream()
+        Long finalSessionId = sessionId;
+        Long finalClassId = classId;
+        List<ClassAttendanceSummaryDTO> result = rosterStudents.values().stream()
                 .map(s -> {
                     LocalDate studentStart = effectiveStart(s, start);
                     LocalDate studentEnd = effectiveEnd(s, end);
-                    long workingDays = markedClassDays.stream()
-                            .filter(d -> !d.isBefore(studentStart) && !d.isAfter(studentEnd)).count();
-                    double absences = absencesByStudent.getOrDefault(s.getStudentId(), 0.0);
+                    HistoricalAttendanceResult r = resolveHistoricalAttendanceForClass(
+                            schoolId, s.getStudentId(), finalSessionId, finalClassId, className, sectionId,
+                            studentStart, studentEnd);
+                    long workingDays = r.workingDays().size();
+                    double absences = absenceEquivalent(r.countableRows());
                     double present  = Math.max(0, workingDays - absences);
                     return new ClassAttendanceSummaryDTO(
                             s.getStudentId(),
@@ -646,13 +635,38 @@ public class AttendanceService {
 
     /**
      * Same per-student attendance data as getClassSummary, but flattened across every
-     * active class in the school in one call — avoids N separate per-class requests
+     * relevant class in the school in one call — avoids N separate per-class requests
      * for school-wide comparisons/low-attendance lookups.
      */
     @Transactional(readOnly = true)
     public List<ClassAttendanceSummaryDTO> getSchoolSummary(String type, Integer month, Integer year, String session) {
         Long schoolId = securityUtil.getSchoolId();
-        List<String> classNames = studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId);
+        Set<String> classNames = new LinkedHashSet<>(studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId));
+
+        // Enrollment-authoritative augmentation (E6C): a class with realized enrollment during
+        // the requested historical period must appear here even if it currently has zero ACTIVE
+        // students (e.g. phased out, merged, or every student since promoted/exited).
+        LocalDate start = null;
+        LocalDate end = null;
+        Long sessionId = null;
+        if ("month".equalsIgnoreCase(type) && month != null && year != null) {
+            start = LocalDate.of(year, month, 1);
+            end = start.withDayOfMonth(start.lengthOfMonth());
+            sessionId = resolveTenantSessionContaining(schoolId, start, end).map(AcademicSession::getId).orElse(null);
+        } else if ("year".equalsIgnoreCase(type) && session != null && !session.isBlank()) {
+            Optional<AcademicSession> academicSession = academicSessionService.getSessionByLabel(schoolId, session);
+            if (academicSession.isPresent()) {
+                start = academicSession.get().getStartDate();
+                end = academicSession.get().getEndDate();
+                sessionId = academicSession.get().getId();
+            }
+        }
+        if (sessionId != null) {
+            for (StudentEnrollment e : studentEnrollmentRepository
+                    .findRealizedByAcademicSessionOverlappingRange(schoolId, sessionId, start, end)) {
+                if (e.getClassNameSnapshot() != null) classNames.add(e.getClassNameSnapshot());
+            }
+        }
 
         List<ClassAttendanceSummaryDTO> result = new ArrayList<>();
         for (String className : classNames) {
@@ -789,14 +803,54 @@ public class AttendanceService {
         return result;
     }
 
-    private AttendanceSummaryDTO.MonthlyBreakdown buildMonthBreakdown(Student student, int year, int monthNum) {
+    /** Historically-correct attendance figures for a student over an explicit date range —
+     *  the shared entry point other modules (currently ReportCardDataAssembler) should call
+     *  instead of recreating their own current-class attendance calculation. Resolves class(es)
+     *  from the student's own attendance rows in the range exactly like getStudentSummary (see
+     *  historicalClassNames/resolveHistoricalClassName), so a report card's embedded attendance
+     *  for an old session correctly reflects the class the student was actually in then. Takes
+     *  an explicit range rather than a session label so the caller keeps its own session→date
+     *  resolution (and whatever tolerance it has for a session with no matching AcademicSession
+     *  row) — this method has no opinion on where start/end came from. */
+    @Transactional(readOnly = true)
+    public AttendanceSummaryDTO getStudentAttendanceForDateRange(String studentId, LocalDate start, LocalDate end) {
+        Long schoolId = securityUtil.getSchoolId();
+        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
+                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
+
+        LocalDate effectiveStart = effectiveStart(student, start);
+        LocalDate effectiveEnd = effectiveEnd(student, end);
+        HistoricalAttendanceResult result = resolveHistoricalAttendance(
+                schoolId, studentId, effectiveStart, effectiveEnd, student.getClassName());
+        long workingDays = result.workingDays().size();
+        double absences = absenceEquivalent(result.countableRows());
+        double present = Math.max(0, workingDays - absences);
+
+        AttendanceSummaryDTO dto = new AttendanceSummaryDTO();
+        dto.setStudentId(studentId);
+        dto.setStudentName(student.getName());
+        dto.setClassName(result.displayClassName());
+        dto.setTotalWorkingDays(workingDays);
+        dto.setDaysPresent(present);
+        dto.setDaysAbsent(absences);
+        dto.setAttendancePercentage(pct(present, workingDays));
+        return dto;
+    }
+
+    private AttendanceSummaryDTO.MonthlyBreakdown buildMonthBreakdown(Student student, Long sessionId, int year, int monthNum) {
         LocalDate start = LocalDate.of(year, monthNum, 1);
         LocalDate end   = start.withDayOfMonth(start.lengthOfMonth());
         LocalDate effectiveStart = effectiveStart(student, start);
         LocalDate effectiveEnd = effectiveEnd(student, end);
-        long workingDays = countClassMarkedDays(student.getClassName(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd);
-        double absences = absenceEquivalent(attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(
-                student.getStudentId(), securityUtil.getSchoolId(), effectiveStart, effectiveEnd));
+        Long schoolId = securityUtil.getSchoolId();
+        // Same enrollment-authoritative resolution as getStudentSummary — this method IS the
+        // per-month figures inside a "year" summary, so it must never silently relabel a
+        // promoted student's earlier months under their current class, nor drop a mid-month
+        // class/section transition. sessionId is already known from the enclosing year call.
+        HistoricalAttendanceResult result = resolveHistoricalAttendance(
+                schoolId, student.getStudentId(), sessionId, effectiveStart, effectiveEnd, student.getClassName());
+        long workingDays = result.workingDays().size();
+        double absences = absenceEquivalent(result.countableRows());
         double present = Math.max(0, workingDays - absences);
         String monthName = Month.of(monthNum).getDisplayName(TextStyle.FULL, Locale.ENGLISH);
 
@@ -813,32 +867,28 @@ public class AttendanceService {
 
         LocalDate effectiveStart = effectiveStart(student, start);
         LocalDate effectiveEnd = effectiveEnd(student, end);
-
-        // School days = distinct dates on which this student's class submitted attendance.
-        // Another class being marked must never make this student appear present.
-        // 'X' rows (studentId = "X") are inserted by the frontend on all-present days,
-        // so they intentionally make those days visible here as "school was open".
-        // Do NOT filter out 'X' from this query — without it, all-present days would
-        // be indistinguishable from holidays.
         Long schoolId = securityUtil.getSchoolId();
-        List<String> schoolDays = attendanceRepository
-                .findByClassNameAndSchoolIdAndDateBetween(student.getClassName(), schoolId, effectiveStart, effectiveEnd)
-                .stream()
-                .map(a -> a.getDate().toString())
-                .distinct()
-                .sorted()
+
+        // Enrollment-authoritative resolution (E6C): school days = the union of marked days
+        // across each realized enrollment segment's own class, intersected to that segment's
+        // dates — never the student's CURRENT class for a historical period, and never a
+        // different class's marked days bleeding into this student's own gap/other-class
+        // dates. Falls back to the legacy attendance-row bridge when no enrollment coverage
+        // exists. 'X' sentinel rows are preserved by classMarkedDaysAcross (see its Javadoc) —
+        // without them, all-present days would be indistinguishable from holidays.
+        HistoricalAttendanceResult result = resolveHistoricalAttendance(
+                schoolId, studentId, effectiveStart, effectiveEnd, student.getClassName());
+        List<String> schoolDays = result.workingDays().stream()
+                .map(LocalDate::toString)
                 .collect(Collectors.toList());
 
-        // Absent days = dates this student was marked absent
-        List<Attendance> studentRows = attendanceRepository
-                .findByStudentIdAndSchoolIdAndDateBetween(studentId, schoolId, effectiveStart, effectiveEnd);
-        List<String> absentDays = studentRows
+        List<String> absentDays = result.countableRows()
                 .stream()
                 .filter(this::isFullAbsence)
                 .map(a -> a.getDate().toString())
                 .sorted()
                 .collect(Collectors.toList());
-        Map<String, String> statuses = studentRows.stream()
+        Map<String, String> statuses = result.countableRows().stream()
                 .filter(a -> a.getDate() != null)
                 .collect(Collectors.toMap(a -> a.getDate().toString(),
                         a -> a.getStatus() == null ? "ABSENT" : a.getStatus().toUpperCase(Locale.ROOT),
@@ -887,10 +937,312 @@ public class AttendanceService {
                 ? student.getLeavingDate() : periodEnd;
     }
 
-    private long countClassMarkedDays(String className, Long schoolId, LocalDate start, LocalDate end) {
-        if (end.isBefore(start)) return 0;
-        return attendanceRepository.findByClassNameAndSchoolIdAndDateBetween(className, schoolId, start, end).stream()
-                .map(Attendance::getDate).distinct().count();
+    // ─── E6C: enrollment-authoritative historical attendance resolution ───────
+    //
+    // StudentTemporalMembershipResolver (E6B) is the single source of truth for "who was
+    // realized-enrolled (ACTIVE/CLOSED) in which class/section on which date." The methods
+    // below are the ONLY place AttendanceService consults it — every reader (student summary,
+    // daily attendance, counts, class/school summary, the report-card-facing range method)
+    // goes through resolveHistoricalAttendance/resolveHistoricalAttendanceForClass rather than
+    // querying enrollment or re-deriving temporal-membership semantics itself. When enrollment
+    // coverage does not exist for a date (LEGACY_UNCOVERED — before the student's earliest
+    // realized enrollment, or no AcademicSession/enrollment data at all), the original
+    // attendance-row/live-Student bridge below (historicalClassNames/resolveHistoricalClassName/
+    // classMarkedDaysAcross) is preserved unchanged. An AUTHORITATIVE_GAP (e.g. an exit/
+    // readmission gap after enrollment adoption has begun) contributes zero working days and
+    // zero present/absent — attendance evidence found inside such a gap is logged and preserved
+    // in the database untouched, but never used to fabricate membership.
+
+    /** Per-student result of enrollment-aware historical attendance resolution over a range:
+     *  the countable working days, the student's own attendance rows restricted to dates that
+     *  actually count (excludes authoritative-gap dates), and the single class/section to
+     *  display — the segment effective at the end of the range, or the latest realized segment
+     *  in the range if it ends inside a gap (see StudentTemporalMembershipResolver's ordering
+     *  guarantee), or the legacy evidence-based resolution when no segment applies at all. */
+    private record HistoricalAttendanceResult(
+            List<LocalDate> workingDays, List<Attendance> countableRows,
+            String displayClassName, Long displaySectionId) {}
+
+    /** Resolves the tenant AcademicSession containing this student on {@code start}, via E6B —
+     *  reused rather than re-implemented so "which session/is this ambiguous" logic lives in
+     *  exactly one place. Empty means no session could be uniquely resolved (no AcademicSession
+     *  configured for that date, or — pathologically — more than one), in which case callers
+     *  fall back to the pre-E6C legacy bridge rather than fail the request. */
+    private Optional<StudentTemporalMembershipResolver.Session> resolveStudentSession(
+            Long schoolId, String studentId, LocalDate date) {
+        try {
+            return Optional.of(temporalMembershipResolver
+                    .resolveEffectiveRealizedEnrollment(schoolId, studentId, date).session());
+        } catch (NoSuchElementException | StudentTemporalMembershipResolver.TemporalMembershipConflictException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Same idea as resolveStudentSession but for class/school-level queries that have no
+     *  particular student to anchor on (getClassSummary/getSchoolSummary for type=month) —
+     *  looks up the tenant's own AcademicSession directly rather than going through the
+     *  resolver's per-student entry point. Empty when no session uniquely contains the range. */
+    private Optional<AcademicSession> resolveTenantSessionContaining(Long schoolId, LocalDate start, LocalDate end) {
+        List<AcademicSession> matches = academicSessionRepository
+                .findAllBySchoolIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(schoolId, start, start);
+        if (matches.size() != 1) return Optional.empty();
+        AcademicSession session = matches.get(0);
+        if (end.isBefore(session.getStartDate()) || end.isAfter(session.getEndDate())) return Optional.empty();
+        return Optional.of(session);
+    }
+
+    /** The unified entry point for per-student historical attendance over a date range —
+     *  resolves the tenant session containing {@code start} itself. Prefer the overload below
+     *  when the caller already knows the session (e.g. the "year" summary already resolved it
+     *  by label), to avoid a redundant lookup and stay consistent with the caller's own session
+     *  resolution. */
+    private HistoricalAttendanceResult resolveHistoricalAttendance(
+            Long schoolId, String studentId, LocalDate start, LocalDate end, String currentClassNameFallback) {
+        return resolveHistoricalAttendance(schoolId, studentId, null, start, end, currentClassNameFallback);
+    }
+
+    private HistoricalAttendanceResult resolveHistoricalAttendance(
+            Long schoolId, String studentId, Long knownSessionId, LocalDate start, LocalDate end,
+            String currentClassNameFallback) {
+        if (end.isBefore(start)) {
+            return new HistoricalAttendanceResult(List.of(), List.of(), currentClassNameFallback, null);
+        }
+
+        Long sessionId = knownSessionId;
+        if (sessionId == null) {
+            Optional<StudentTemporalMembershipResolver.Session> sessionOpt =
+                    resolveStudentSession(schoolId, studentId, start);
+            if (sessionOpt.isEmpty()) {
+                return legacyHistoricalAttendance(schoolId, studentId, start, end, currentClassNameFallback);
+            }
+            StudentTemporalMembershipResolver.Session session = sessionOpt.get();
+            if (start.isBefore(session.startDate()) || end.isAfter(session.endDate())) {
+                // Requested range isn't fully contained by the resolvable session (e.g. it
+                // spans a session boundary) — fail safe to the legacy bridge for the whole
+                // range rather than reject the request or guess a split point.
+                return legacyHistoricalAttendance(schoolId, studentId, start, end, currentClassNameFallback);
+            }
+            sessionId = session.id();
+        }
+
+        StudentTemporalMembershipResolver.RangeResolution range;
+        try {
+            range = temporalMembershipResolver.resolveRealizedEnrollmentRange(schoolId, studentId, sessionId, start, end);
+        } catch (RuntimeException e) {
+            log.error("Falling back to legacy attendance evidence for student {} over {}..{}: " +
+                    "could not resolve enrollment range.", studentId, start, end, e);
+            return legacyHistoricalAttendance(schoolId, studentId, start, end, currentClassNameFallback);
+        }
+
+        if (range.classification() == StudentTemporalMembershipResolver.CoverageClassification.CONFLICT) {
+            log.error("Ambiguous/conflicting enrollment data for student {} over {}..{}: {} — " +
+                            "reporting zero historical attendance rather than guessing.",
+                    studentId, start, end, range.conflictReason());
+            return new HistoricalAttendanceResult(List.of(), List.of(), currentClassNameFallback, null);
+        }
+
+        List<LocalDate> workingDays = new ArrayList<>();
+        List<Attendance> countableRows = new ArrayList<>();
+        List<StudentTemporalMembershipResolver.Segment> orderedSegments = new ArrayList<>();
+
+        for (StudentTemporalMembershipResolver.SegmentIntersection intersection : range.intersections()) {
+            StudentTemporalMembershipResolver.Segment segment = intersection.segment();
+            orderedSegments.add(segment);
+            workingDays.addAll(classMarkedDaysAcross(Set.of(segment.classNameSnapshot()), schoolId,
+                    intersection.intersectedFrom(), intersection.intersectedTo()));
+            countableRows.addAll(attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(
+                    studentId, schoolId, intersection.intersectedFrom(), intersection.intersectedTo()));
+        }
+
+        for (StudentTemporalMembershipResolver.UncoveredInterval uncovered : range.uncoveredIntervals()) {
+            List<Attendance> rowsInWindow = attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(
+                    studentId, schoolId, uncovered.from(), uncovered.to());
+            if (uncovered.classification() == StudentTemporalMembershipResolver.CoverageClassification.LEGACY_UNCOVERED) {
+                Set<String> legacyClasses = historicalClassNames(rowsInWindow, currentClassNameFallback);
+                workingDays.addAll(classMarkedDaysAcross(legacyClasses, schoolId, uncovered.from(), uncovered.to()));
+                countableRows.addAll(rowsInWindow);
+            } else if (!rowsInWindow.isEmpty()) {
+                // AUTHORITATIVE_GAP: zero working days, zero present, zero absent. Stray
+                // evidence is neither mutated nor deleted — just excluded from this calculation
+                // and logged as inconsistent, per the exit/readmission-gap contract.
+                log.warn("Attendance evidence exists for student {} within an authoritative enrollment gap " +
+                                "{}..{} ({} row(s)) — preserving the rows but excluding them from historical " +
+                                "attendance calculations.",
+                        studentId, uncovered.from(), uncovered.to(), rowsInWindow.size());
+            }
+        }
+
+        workingDays = workingDays.stream().distinct().sorted().collect(Collectors.toList());
+
+        String displayClassName;
+        Long displaySectionId;
+        if (!orderedSegments.isEmpty()) {
+            // range.intersections() is ordered ascending by effectiveFrom (see
+            // StudentTemporalMembershipResolver), so the last element is both "effective at the
+            // end of the range" (when it reaches end) and "latest realized segment in the range"
+            // (when the range ends inside a gap) — the single display rule the spec calls for.
+            StudentTemporalMembershipResolver.Segment last = orderedSegments.get(orderedSegments.size() - 1);
+            displayClassName = last.classNameSnapshot();
+            displaySectionId = last.sectionId();
+        } else {
+            List<Attendance> allRows = attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(studentId, schoolId, start, end);
+            Set<String> legacyClasses = historicalClassNames(allRows, currentClassNameFallback);
+            displayClassName = resolveHistoricalClassName(allRows, currentClassNameFallback, legacyClasses);
+            displaySectionId = null;
+        }
+
+        return new HistoricalAttendanceResult(workingDays, countableRows, displayClassName, displaySectionId);
+    }
+
+    /** The pre-E6C bridge, preserved verbatim as the fallback for LEGACY_UNCOVERED periods and
+     *  for schools/students with no resolvable enrollment/session context at all. */
+    private HistoricalAttendanceResult legacyHistoricalAttendance(
+            Long schoolId, String studentId, LocalDate start, LocalDate end, String currentClassNameFallback) {
+        List<Attendance> rows = attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(studentId, schoolId, start, end);
+        Set<String> historicalClasses = historicalClassNames(rows, currentClassNameFallback);
+        String resolvedClassName = resolveHistoricalClassName(rows, currentClassNameFallback, historicalClasses);
+        List<LocalDate> workingDays = classMarkedDaysAcross(historicalClasses, schoolId, start, end);
+        return new HistoricalAttendanceResult(workingDays, rows, resolvedClassName, null);
+    }
+
+    /** Class/section-scoped variant of resolveHistoricalAttendance, for getClassSummary: unlike
+     *  the per-student variant, the class is already known (the query parameter) rather than
+     *  something to display, so this restricts contribution to segments/legacy evidence for
+     *  exactly the requested classId(+sectionId) and returns zero for any other class/gap the
+     *  student's own history shows in the range — a different class's days must never inflate
+     *  or deflate THIS class's row for that student. */
+    private HistoricalAttendanceResult resolveHistoricalAttendanceForClass(
+            Long schoolId, String studentId, Long knownSessionId, Long classId, String className,
+            Long sectionFilter, LocalDate start, LocalDate end) {
+        if (end.isBefore(start)) {
+            return new HistoricalAttendanceResult(List.of(), List.of(), className, sectionFilter);
+        }
+        if (knownSessionId == null) {
+            return legacyHistoricalAttendanceForClass(schoolId, studentId, className, start, end);
+        }
+
+        StudentTemporalMembershipResolver.RangeResolution range;
+        try {
+            range = temporalMembershipResolver.resolveRealizedEnrollmentRange(schoolId, studentId, knownSessionId, start, end);
+        } catch (RuntimeException e) {
+            return legacyHistoricalAttendanceForClass(schoolId, studentId, className, start, end);
+        }
+
+        if (range.classification() == StudentTemporalMembershipResolver.CoverageClassification.CONFLICT) {
+            log.error("Ambiguous/conflicting enrollment data for student {} in class {} over {}..{}: {} — " +
+                            "excluding from class summary rather than guessing.",
+                    studentId, className, start, end, range.conflictReason());
+            return new HistoricalAttendanceResult(List.of(), List.of(), className, sectionFilter);
+        }
+
+        List<LocalDate> workingDays = new ArrayList<>();
+        List<Attendance> countableRows = new ArrayList<>();
+
+        for (StudentTemporalMembershipResolver.SegmentIntersection intersection : range.intersections()) {
+            StudentTemporalMembershipResolver.Segment segment = intersection.segment();
+            boolean classMatches = Objects.equals(segment.classId(), classId);
+            boolean sectionMatches = sectionFilter == null || Objects.equals(segment.sectionId(), sectionFilter);
+            if (!classMatches || !sectionMatches) continue;
+            workingDays.addAll(classMarkedDaysAcross(Set.of(segment.classNameSnapshot()), schoolId,
+                    intersection.intersectedFrom(), intersection.intersectedTo()));
+            countableRows.addAll(attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(
+                    studentId, schoolId, intersection.intersectedFrom(), intersection.intersectedTo()));
+        }
+
+        for (StudentTemporalMembershipResolver.UncoveredInterval uncovered : range.uncoveredIntervals()) {
+            if (uncovered.classification() != StudentTemporalMembershipResolver.CoverageClassification.LEGACY_UNCOVERED) {
+                List<Attendance> gapRows = attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(
+                        studentId, schoolId, uncovered.from(), uncovered.to());
+                if (!gapRows.isEmpty()) {
+                    log.warn("Attendance evidence exists for student {} within an authoritative enrollment gap " +
+                                    "{}..{} — preserving the rows but excluding them from the class summary for {}.",
+                            studentId, uncovered.from(), uncovered.to(), className);
+                }
+                continue;
+            }
+            // LEGACY_UNCOVERED: no enrollment coverage for this sub-window at all, so bridge to
+            // the requested class's own marked days for it — the same rule getClassSummary has
+            // always applied for schools with no enrollment data.
+            workingDays.addAll(classMarkedDaysAcross(Set.of(className), schoolId, uncovered.from(), uncovered.to()));
+            countableRows.addAll(attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(
+                    studentId, schoolId, uncovered.from(), uncovered.to()));
+        }
+
+        workingDays = workingDays.stream().distinct().sorted().collect(Collectors.toList());
+        return new HistoricalAttendanceResult(workingDays, countableRows, className, sectionFilter);
+    }
+
+    private HistoricalAttendanceResult legacyHistoricalAttendanceForClass(
+            Long schoolId, String studentId, String className, LocalDate start, LocalDate end) {
+        List<Attendance> rows = attendanceRepository.findByStudentIdAndSchoolIdAndDateBetween(studentId, schoolId, start, end);
+        List<LocalDate> workingDays = classMarkedDaysAcross(Set.of(className), schoolId, start, end);
+        return new HistoricalAttendanceResult(workingDays, rows, className, null);
+    }
+
+    // ─── Historical class resolution ─────────────────────────────────────────
+    //
+    // Attendance rows snapshot className/classId/sectionId at mark time and are never
+    // rewritten later — promotion (StudentPromotionService) only ever updates the live
+    // Student row. So for any historical period, "what class was this for" must come from
+    // the student's OWN attendance rows in that period, never from student.getClassName()
+    // (their CURRENT class) — that was the exact bug: a promoted student's old attendance
+    // summaries/daily views/counts silently searched for THEIR NEW class's marked days
+    // against OLD dates, when the rows are (correctly, and permanently) still labeled with
+    // the old class. No student_enrollment table exists yet to look this up structurally —
+    // these helpers derive it deterministically from the data that's already there.
+
+    /** The class name(s) a student's own attendance rows show within a period. The
+     *  overwhelmingly common result is a single class. Falls back to the student's current
+     *  className only when they have no attendance rows at all in the period (nothing to
+     *  derive from — e.g. before attendance was ever marked for them, or a period before
+     *  they joined). More than one distinct name means a genuine mid-period class change —
+     *  handled explicitly by resolveHistoricalClassName / classMarkedDaysAcross below, never
+     *  silently collapsed to one guess. */
+    private Set<String> historicalClassNames(List<Attendance> studentRowsInPeriod, String fallbackClassName) {
+        Set<String> names = studentRowsInPeriod.stream()
+                .map(Attendance::getClassName)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return names.isEmpty() ? new LinkedHashSet<>(Set.of(fallbackClassName)) : names;
+    }
+
+    /** The single class name to report for a period (e.g. AttendanceSummaryDTO.className).
+     *  The common one-class case returns it directly. A genuine mid-period class change is
+     *  not silently guessed: it's logged with every class name involved, and the class shown
+     *  is the one on the most recently dated row in the period — the most decision-relevant
+     *  single label when a caller needs exactly one. The working-day COUNT for the period is
+     *  unaffected by this choice; see classMarkedDaysAcross, which covers every class involved
+     *  regardless of which one is shown here. */
+    private String resolveHistoricalClassName(List<Attendance> studentRowsInPeriod, String fallbackClassName, Set<String> classNames) {
+        if (classNames.size() <= 1) {
+            return classNames.isEmpty() ? fallbackClassName : classNames.iterator().next();
+        }
+        log.warn("Student attendance rows show {} different classes ({}) within one requested historical period — " +
+                        "a genuine mid-period class change with no student_enrollment table yet to disambiguate by date. " +
+                        "Reporting the most recently marked class for display; working-day totals still cover every class involved.",
+                classNames.size(), classNames);
+        return studentRowsInPeriod.stream()
+                .filter(a -> a.getClassName() != null)
+                .max(Comparator.comparing(Attendance::getDate))
+                .map(Attendance::getClassName)
+                .orElse(fallbackClassName);
+    }
+
+    /** Distinct marked school days across every class in the set, for the given period —
+     *  the correct working-day denominator even when a student's own rows span more than one
+     *  class (see historicalClassNames): a working day the school actually held is a working
+     *  day regardless of which class label it was marked under, so every class the student
+     *  was actually in during the period contributes its marked days, unioned (not summed —
+     *  Set/distinct — so a day both classes happened to mark on isn't double-counted). The
+     *  common single-class case is just that one class's marked days, unchanged from before. */
+    private List<LocalDate> classMarkedDaysAcross(Set<String> classNames, Long schoolId, LocalDate start, LocalDate end) {
+        if (end.isBefore(start)) return List.of();
+        return classNames.stream()
+                .flatMap(cn -> attendanceRepository.findByClassNameAndSchoolIdAndDateBetween(cn, schoolId, start, end).stream())
+                .map(Attendance::getDate)
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
     }
 
     private boolean isConfiguredWorkingDay(LocalDate date, String workingDays) {

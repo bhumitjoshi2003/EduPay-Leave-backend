@@ -2,11 +2,13 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.CheckoutQuoteDto;
 import com.indraacademy.ias_management.dto.OverdueStudentDto;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SnapshotStatus;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentStatus;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
@@ -21,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -55,6 +58,7 @@ class FeeReminderServiceTest {
     @Mock private AuditService auditService;
     @Mock private BusinessNotificationService businessNotifications;
     @Mock private HttpServletRequest request;
+    @Mock private AcademicSessionRepository academicSessionRepository;
 
     private FeeReminderService service;
 
@@ -73,6 +77,10 @@ class FeeReminderServiceTest {
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "businessNotifications", businessNotifications);
+        ReflectionTestUtils.setField(service, "academicSessionRepository", academicSessionRepository);
+        // Real instance, not a mock: academicMonthToDate/academicMonthForDate are pure date
+        // computations with no dependency on this service's own @Autowired fields.
+        ReflectionTestUtils.setField(service, "academicSessionService", new AcademicSessionService());
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         School school = new School();
@@ -81,20 +89,15 @@ class FeeReminderServiceTest {
         lenient().when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
         lenient().when(paymentRepository.findLatestPaymentDateByStudentIdAndSchoolIdAndSession(any(), any(), any()))
                 .thenReturn(Optional.empty());
-        // FeeReminderService delegates parseSession/academicMonthStart to FeeCalculationService
-        // (relocated there in an earlier phase) — since feeCalculationService is mocked here,
-        // these need real stubbed behavior, not the calculation methods this test targets.
-        lenient().when(feeCalculationService.parseSession(SESSION)).thenReturn(new int[]{2025, 2026});
-        lenient().when(feeCalculationService.academicMonthStart(anyInt(), anyInt(), anyInt(), anyInt()))
-                .thenAnswer(inv -> {
-                    int academicMonth = inv.getArgument(0);
-                    int startYear = inv.getArgument(1);
-                    int endYear = inv.getArgument(2);
-                    int startMonth = inv.getArgument(3);
-                    int calendarMonth = ((startMonth - 1 + academicMonth - 1) % 12) + 1;
-                    int year = calendarMonth >= startMonth ? startYear : endYear;
-                    return java.time.LocalDate.of(year, calendarMonth, 1);
-                });
+        // Real, resolved AcademicSession boundaries — getOverdueStudents/buildReminderEmailContent
+        // now derive each month's date from this row's own startDate rather than a parsed label +
+        // the school's global academicYearStartMonth.
+        AcademicSession session = new AcademicSession();
+        session.setSchoolId(SCHOOL_ID);
+        session.setLabel(SESSION);
+        session.setStartDate(java.time.LocalDate.of(2025, 4, 1));
+        session.setEndDate(java.time.LocalDate.of(2026, 3, 31));
+        lenient().when(academicSessionRepository.findBySchoolIdAndLabel(SCHOOL_ID, SESSION)).thenReturn(Optional.of(session));
     }
 
     private Student activeStudent(String studentId, String className) {
@@ -322,5 +325,45 @@ class FeeReminderServiceTest {
         Map<String, String> outcomes = service.sendReminderEmailsWithOutcomes(List.of("EXITED"), SESSION);
 
         assertThat(outcomes).containsEntry("EXITED", "skipped_not_active");
+    }
+
+    // ─── sendMonthlyFeeReminders: session authority (Fees/Payments audit phase) ────────────
+
+    @Test
+    void sendMonthlyFeeReminders_usesTheConfiguredCurrentSessionLabel_neverATodaysDateGuess() {
+        School school = new School();
+        school.setId(SCHOOL_ID);
+        school.setActive(true);
+        school.setAcademicYearStartMonth(4);
+        when(schoolRepository.findAll()).thenReturn(List.of(school));
+
+        // A label that could never be produced by "today's year" +/- 1 arithmetic — proving
+        // the value used came from the DB's current-session row, not date math.
+        AcademicSession currentSession = new AcademicSession();
+        currentSession.setSchoolId(SCHOOL_ID);
+        currentSession.setLabel("CUSTOM-SESSION-9000");
+        currentSession.setStartDate(LocalDate.of(2000, 1, 1));
+        currentSession.setEndDate(LocalDate.of(2099, 12, 31));
+        when(academicSessionRepository.findBySchoolIdAndCurrentTrue(SCHOOL_ID)).thenReturn(Optional.of(currentSession));
+        when(studentFeesRepository.findAllUnpaidBySchoolIdAndYearAndMonth(eq(SCHOOL_ID), eq("CUSTOM-SESSION-9000"), anyInt()))
+                .thenReturn(List.of());
+
+        service.sendMonthlyFeeReminders();
+
+        verify(studentFeesRepository).findAllUnpaidBySchoolIdAndYearAndMonth(eq(SCHOOL_ID), eq("CUSTOM-SESSION-9000"), anyInt());
+    }
+
+    @Test
+    void sendMonthlyFeeReminders_noCurrentSessionConfigured_skipsTheSchoolRatherThanGuessing() {
+        School school = new School();
+        school.setId(SCHOOL_ID);
+        school.setActive(true);
+        school.setAcademicYearStartMonth(4);
+        when(schoolRepository.findAll()).thenReturn(List.of(school));
+        when(academicSessionRepository.findBySchoolIdAndCurrentTrue(SCHOOL_ID)).thenReturn(Optional.empty());
+
+        service.sendMonthlyFeeReminders();
+
+        verify(studentFeesRepository, never()).findAllUnpaidBySchoolIdAndYearAndMonth(any(), any(), anyInt());
     }
 }

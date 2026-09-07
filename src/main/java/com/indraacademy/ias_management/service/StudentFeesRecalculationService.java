@@ -3,8 +3,8 @@ package com.indraacademy.ias_management.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.RecalculationEntryDto;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.LineItemType;
-import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.SnapshotStatus;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
@@ -13,7 +13,6 @@ import com.indraacademy.ias_management.repository.AllocationRefundRepository;
 import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
-import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.repository.StudentOneTimeFeeChargedRepository;
@@ -70,13 +69,13 @@ public class StudentFeesRecalculationService {
     private static final Logger log = LoggerFactory.getLogger(StudentFeesRecalculationService.class);
 
     @Autowired private StudentFeesRepository studentFeesRepository;
-    @Autowired private SchoolRepository schoolRepository;
     @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private StudentFeesLineItemRepository studentFeesLineItemRepository;
     @Autowired private StudentOneTimeFeeChargedRepository studentOneTimeFeeChargedRepository;
     @Autowired private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Autowired private AllocationRefundRepository allocationRefundRepository;
     @Autowired private AcademicSessionRepository academicSessionRepository;
+    @Autowired private AcademicSessionService academicSessionService;
     @Autowired private InvoiceRepository invoiceRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
@@ -306,10 +305,14 @@ public class StudentFeesRecalculationService {
     private FeeCalculationService.MonthSnapshot computeSnapshotFor(StudentFees fee, Long schoolId, String session,
                                                                      Integer month, Boolean transportOverride,
                                                                      Double distanceOverride) {
-        School school = schoolRepository.findById(schoolId).orElse(null);
-        int startMonth = school != null ? school.getAcademicYearStartMonth() : 4;
-        int[] years = feeCalculationService.parseSession(session);
-        LocalDate asOfDate = feeCalculationService.academicMonthStart(month, years[0], years[1], startMonth);
+        // Real configured boundaries — both callers (preview/recalculateOne) already call
+        // validateFeeConfiguration before reaching here, which guarantees this AcademicSession
+        // exists for `session`, so this never silently guesses.
+        AcademicSession academicSession = academicSessionRepository
+                .findBySchoolIdAndLabel(schoolId, session)
+                .orElseThrow(() -> new IllegalStateException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
+        LocalDate asOfDate = academicSessionService.academicMonthToDate(academicSession, month);
         boolean isFirstRow = computeIsFirstRow(fee, schoolId, session);
 
         List<StudentFeesLineItem> currentActive =

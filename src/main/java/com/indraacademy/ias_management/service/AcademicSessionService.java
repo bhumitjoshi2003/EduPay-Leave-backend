@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -62,6 +63,45 @@ public class AcademicSessionService {
                 .orElseThrow(() -> new IllegalStateException("No current academic session found."));
     }
 
+    /** Canonical school-scoped session lookup by id — a caller-supplied sessionId belonging
+     *  to a different school never resolves, regardless of whether that id exists at all. */
+    @Transactional(readOnly = true)
+    public Optional<AcademicSession> getSessionById(Long schoolId, Long sessionId) {
+        return sessionRepository.findByIdAndSchoolId(sessionId, schoolId);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<AcademicSession> getSessionByLabel(Long schoolId, String label) {
+        return sessionRepository.findBySchoolIdAndLabel(schoolId, label);
+    }
+
+    /** The session whose date range contains the given date (inclusive of both boundaries),
+     *  or empty if the date falls outside every session configured for the school — e.g. a
+     *  date before the school's first session or after its last one. */
+    @Transactional(readOnly = true)
+    public Optional<AcademicSession> getSessionForDate(Long schoolId, LocalDate date) {
+        return sessionRepository.findBySchoolIdAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                schoolId, date, date);
+    }
+
+    /** The session immediately before the given one (by start date), or empty if it's the
+     *  school's earliest session. Empty also if sessionId doesn't resolve for this school. */
+    @Transactional(readOnly = true)
+    public Optional<AcademicSession> getPreviousSession(Long schoolId, Long sessionId) {
+        return getSessionById(schoolId, sessionId)
+                .flatMap(session -> sessionRepository
+                        .findFirstBySchoolIdAndStartDateLessThanOrderByStartDateDesc(schoolId, session.getStartDate()));
+    }
+
+    /** The session immediately after the given one (by start date), or empty if it's the
+     *  school's latest session. Empty also if sessionId doesn't resolve for this school. */
+    @Transactional(readOnly = true)
+    public Optional<AcademicSession> getNextSession(Long schoolId, Long sessionId) {
+        return getSessionById(schoolId, sessionId)
+                .flatMap(session -> sessionRepository
+                        .findFirstBySchoolIdAndStartDateGreaterThanOrderByStartDateAsc(schoolId, session.getStartDate()));
+    }
+
     @Transactional
     public AcademicSessionDto createSession(AcademicSessionDto dto) {
         Long schoolId = securityUtil.getSchoolId();
@@ -100,8 +140,7 @@ public class AcademicSessionService {
                     sessionRepository.save(existing);
                 });
 
-        AcademicSession session = sessionRepository.findById(sessionId)
-                .filter(s -> s.getSchoolId().equals(schoolId))
+        AcademicSession session = getSessionById(schoolId, sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found."));
 
         session.setCurrent(true);
@@ -143,12 +182,27 @@ public class AcademicSessionService {
         return start.plusMonths(academicMonth - 1);
     }
 
+    /**
+     * Inverse of academicMonthToDate: which academic month (1-12) a calendar date falls in,
+     * relative to THIS session's own start date — never the school's academicYearStartMonth
+     * config, so a session with non-standard boundaries (a manually-edited start date that
+     * doesn't match the school-wide convention) is still resolved correctly. Wraps modulo-12
+     * defensively so a date outside the session's actual [startDate, endDate] range (e.g. a
+     * stale "current" flag that wasn't rolled over in time) still returns a plausible 1-12
+     * value rather than 0/negative/>12 — callers that care about that drift should compare
+     * the date against session.getStartDate()/getEndDate() themselves.
+     */
+    public int academicMonthForDate(AcademicSession session, LocalDate date) {
+        long months = java.time.temporal.ChronoUnit.MONTHS.between(
+                session.getStartDate().withDayOfMonth(1), date.withDayOfMonth(1));
+        return (int) (((months % 12) + 12) % 12) + 1;
+    }
+
     @Transactional
     public void deleteSession(Long sessionId) {
         Long schoolId = securityUtil.getSchoolId();
 
-        AcademicSession session = sessionRepository.findById(sessionId)
-                .filter(s -> s.getSchoolId().equals(schoolId))
+        AcademicSession session = getSessionById(schoolId, sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found."));
 
         if (session.isCurrent()) {

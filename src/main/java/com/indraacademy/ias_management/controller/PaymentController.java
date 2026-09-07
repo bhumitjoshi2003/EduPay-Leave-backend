@@ -127,11 +127,18 @@ public class PaymentController {
         long platformFeePaise = quote.getPlatformFee().movePointRight(2).longValueExact();
         long serverAmountPaise = serverCorePaise + req.getAdditionalCharges();
 
+        // className is server-derived from the actual StudentFees row(s) behind the months
+        // just validated above (computeCheckoutQuote already guarantees every one of `months`
+        // resolves to a real row), rather than trusted from the client — req.getClassName()
+        // was previously persisted onto PaymentOrder/Payment verbatim with no check that it
+        // matched anything real for this student.
+        String serverClassName = resolveClassNameForOrder(req.getStudentId(), req.getSession(), months, req.getClassName());
+
         Map<String, Object> order = razorpayService.createOrder(
                 (int) serverAmountPaise,
                 req.getStudentId(),
                 req.getStudentName(),
-                req.getClassName(),
+                serverClassName,
                 req.getSession(),
                 req.getMonthSelectionString(),
                 // Legacy 5-bucket breakdown (tuitionFee/annualCharges/labCharges/ecaProject/
@@ -151,6 +158,22 @@ public class PaymentController {
         );
         log.info("Razorpay order created successfully for student {}.", req.getStudentId());
         return ResponseEntity.ok(order);
+    }
+
+    /** The class this order/payment is actually for, taken from the real StudentFees row(s)
+     * behind the requested months rather than the client-supplied className — a client could
+     * otherwise submit any string here and have it persisted verbatim onto PaymentOrder/Payment
+     * (shown on receipts and payment history) with no relation to what the student was actually
+     * billed under. The fallback to the client value only matters if `months` is empty (no
+     * month selected) since computeCheckoutQuote's unresolvedMonths check already guarantees
+     * every requested month resolves to a real row otherwise. */
+    private String resolveClassNameForOrder(String studentId, String session, List<Integer> months, String clientClassName) {
+        return studentFeesService.getStudentFees(studentId, session).stream()
+                .filter(fee -> months.contains(fee.getMonth()))
+                .map(com.indraacademy.ias_management.entity.StudentFees::getClassName)
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .orElse(clientClassName);
     }
 
     /** Decodes a 12-char "010000000000"-style bitmask (bit i = academic month i+1) into the

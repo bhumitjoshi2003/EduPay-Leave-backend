@@ -61,6 +61,10 @@ class FeeWorkflowServiceTest {
     @Mock private FeeGenerationBatchRepository generationBatchRepository;
     @Mock private FeeCalculationService calculationService;
     @Mock private StudentFeesRecalculationService recalculationService;
+    // Real instance, not a mock: academicMonthToDate is a pure plusMonths computation with no
+    // dependency on this service's own @Autowired fields, so exercising the real logic here is
+    // both simpler and more faithful than stubbing every (session, month) combination.
+    private final AcademicSessionService academicSessionService = new AcademicSessionService();
     @Mock private AuditService auditService;
     @Mock private SecurityUtil securityUtil;
     @Mock private PlatformTransactionManager transactionManager;
@@ -178,17 +182,20 @@ class FeeWorkflowServiceTest {
         lenient().when(securityUtil.getSchoolId()).thenReturn(1L);
         lenient().when(securityUtil.getUsername()).thenReturn("admin1");
         lenient().when(securityUtil.getRole()).thenReturn("ADMIN");
-        lenient().when(calculationService.parseSession("2026-2027")).thenReturn(new int[]{2026, 2027});
-        lenient().when(calculationService.academicMonthStart(anyInt(), eq(2026), eq(2027), eq(4)))
-                .thenAnswer(invocation -> LocalDate.of(2026, 4, 1).plusMonths(invocation.<Integer>getArgument(0) - 1L));
         School school = new School();
         school.setId(1L);
         school.setAcademicYearStartMonth(4);
         lenient().when(schoolRepository.findById(1L)).thenReturn(Optional.of(school));
+        // Real, resolved AcademicSession boundaries — academicMonthStart(month) now derives its
+        // date from this row's own startDate (via AcademicSessionService.academicMonthToDate)
+        // rather than a parsed label + the school's global academicYearStartMonth, so tests must
+        // resolve a real session with real dates instead of stubbing academicMonthStart directly.
+        lenient().when(academicSessionRepository.findBySchoolIdAndLabel(1L, "2026-2027")).thenReturn(Optional.of(session()));
         service = new FeeWorkflowService(settingsRepository, assignmentRepository, transportRepository,
                 studentRepository, studentFeesRepository, lineItemRepository, oneTimeRepository,
                 schoolRepository, academicSessionRepository, feeHeadRepository, feeConfigRepository,
-                generationBatchRepository, calculationService, recalculationService, auditService, securityUtil, transactionManager);
+                generationBatchRepository, calculationService, recalculationService, academicSessionService,
+                auditService, securityUtil, transactionManager);
     }
 
     @Test
@@ -512,6 +519,8 @@ class FeeWorkflowServiceTest {
         value.setId(10L);
         value.setSchoolId(1L);
         value.setLabel("2026-2027");
+        value.setStartDate(LocalDate.of(2026, 4, 1));
+        value.setEndDate(LocalDate.of(2027, 3, 31));
         return value;
     }
 

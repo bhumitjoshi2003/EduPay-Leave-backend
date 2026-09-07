@@ -4,9 +4,12 @@ import com.indraacademy.ias_management.dto.ClassRemarksDTO;
 import com.indraacademy.ias_management.dto.CoScholasticRequest;
 import com.indraacademy.ias_management.dto.RemarksRequest;
 import com.indraacademy.ias_management.dto.ReportCardDataDTO;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.CoScholasticEntry;
 import com.indraacademy.ias_management.entity.ReportCardRemark;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentEnrollment;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +29,9 @@ public class RemarksService {
     @Autowired private StudentRepository studentRepo;
     @Autowired private ReportCardTemplateRepository templateRepo;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private SchoolClassRepository schoolClassRepo;
+    @Autowired private AcademicSessionRepository academicSessionRepo;
+    @Autowired private StudentEnrollmentRepository studentEnrollmentRepo;
 
     // ── Bulk save remarks ─────────────────────────────────────────────────
 
@@ -87,12 +93,18 @@ public class RemarksService {
         templateRepo.findByIdAndSchoolId(templateId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("Template not found: " + templateId));
 
-        // Load active students for the class (ACTIVE + UPCOMING)
-        List<Student> students = studentRepo.findByClassNameAndSchoolId(className, schoolId)
-                .stream()
+        // Live roster: active + upcoming students in the class (unchanged default for schools
+        // with no enrollment data). E6E: unioned with every student realized-enrolled in this
+        // class(+section) at any point during the session, so a promoted/transferred/withdrawn
+        // student's remarks remain part of the historical cohort for this session — reuses the
+        // same StudentEnrollmentRepository queries E6C/E6D already added.
+        Map<String, Student> roster = new LinkedHashMap<>();
+        studentRepo.findByClassNameAndSchoolId(className, schoolId).stream()
                 .filter(s -> s.getStatus() != null && !s.getStatus().isExitStatus())
                 .filter(s -> sectionId == null || sectionId.equals(s.getSectionId()))
-                .collect(Collectors.toList());
+                .forEach(s -> roster.put(s.getStudentId(), s));
+        augmentRosterWithHistoricalEnrollment(roster, schoolId, className, sectionId, session);
+        List<Student> students = new ArrayList<>(roster.values());
 
         // Batch load all remarks for this template+session+school
         List<ReportCardRemark> allRemarks =
@@ -150,6 +162,27 @@ public class RemarksService {
                 .stream()
                 .map(e -> new ReportCardDataDTO.CoScholasticGrade(e.getActivity(), e.getGrade()))
                 .collect(Collectors.toList());
+    }
+
+    /** See getClassRemarks' call site. Mutates {@code roster} in place; no-ops gracefully when
+     *  the class/session can't be resolved to a tenant SchoolClass/AcademicSession (leaves the
+     *  live-only roster untouched, exactly as before E6E). */
+    private void augmentRosterWithHistoricalEnrollment(
+            Map<String, Student> roster, Long schoolId, String className, Long sectionId, String session) {
+        Long classId = schoolClassRepo.findBySchoolIdAndName(schoolId, className).map(SchoolClass::getId).orElse(null);
+        if (classId == null) return;
+        academicSessionRepo.findBySchoolIdAndLabel(schoolId, session).ifPresent(as -> {
+            List<StudentEnrollment> rows = (sectionId != null)
+                    ? studentEnrollmentRepo.findRealizedByAcademicSessionAndClassAndSectionOverlappingRange(
+                            schoolId, as.getId(), classId, sectionId, as.getStartDate(), as.getEndDate())
+                    : studentEnrollmentRepo.findRealizedByAcademicSessionAndClassOverlappingRange(
+                            schoolId, as.getId(), classId, as.getStartDate(), as.getEndDate());
+            for (StudentEnrollment row : rows) {
+                roster.computeIfAbsent(row.getStudentId(),
+                        sid -> studentRepo.findByStudentIdAndSchoolId(sid, schoolId).orElse(null));
+            }
+        });
+        roster.values().removeIf(Objects::isNull);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────

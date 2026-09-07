@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.dto.ManualPaymentRequest;
 import com.indraacademy.ias_management.dto.MonthFeeBreakdownDto;
 import com.indraacademy.ias_management.dto.StudentFeesAdminUpdateRequest;
 import com.indraacademy.ias_management.dto.StudentFeesCreateRequest;
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.LineItemType;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.PaymentStudentFeesAllocation;
@@ -13,6 +14,7 @@ import com.indraacademy.ias_management.entity.SnapshotStatus;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
 import com.indraacademy.ias_management.entity.StudentOneTimeFeeCharged;
+import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.AllocationRefundRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
@@ -62,6 +64,7 @@ class StudentFeesServiceTest {
     @Mock private AllocationRefundRepository allocationRefundRepository;
     @Mock private StudentFeesLineItemRepository studentFeesLineItemRepository;
     @Mock private BusinessNotificationService businessNotifications;
+    @Mock private AcademicSessionRepository academicSessionRepository;
 
     private StudentFeesService service;
 
@@ -82,6 +85,10 @@ class StudentFeesServiceTest {
         ReflectionTestUtils.setField(service, "studentFeesLineItemRepository", studentFeesLineItemRepository);
         ReflectionTestUtils.setField(service, "businessNotifications", businessNotifications);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
+        ReflectionTestUtils.setField(service, "academicSessionRepository", academicSessionRepository);
+        // Real instance, not a mock: academicMonthToDate/academicMonthForDate are pure date
+        // computations with no dependency on this service's own @Autowired fields.
+        ReflectionTestUtils.setField(service, "academicSessionService", new AcademicSessionService());
 
         // Default: a fresh StudentFees row has no prior allocations/reversals — tests that
         // care about partial/multi-payment accumulation override these explicitly.
@@ -115,13 +122,6 @@ class StudentFeesServiceTest {
         lenient().when(securityUtil.getRole()).thenReturn("ADMIN");
         lenient().when(studentOneTimeFeeChargedRepository.findFeeHeadIdBySchoolIdAndStudentId(any(), any()))
                 .thenReturn(java.util.Set.of());
-        lenient().when(feeCalculationService.parseSession(anyString())).thenAnswer(inv -> {
-            String s = inv.getArgument(0);
-            String[] parts = s.split("-");
-            return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])};
-        });
-        lenient().when(feeCalculationService.academicMonthStart(anyInt(), anyInt(), anyInt(), anyInt()))
-                .thenReturn(LocalDate.of(2025, 1, 1));
         lenient().when(feeCalculationService.validateFeeConfiguration(any(), any(), any()))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
         lenient().when(feeCalculationService.computeMonthSnapshot(
@@ -129,13 +129,37 @@ class StudentFeesServiceTest {
                 .thenReturn(new FeeCalculationService.MonthSnapshot(
                         BigDecimal.valueOf(2000, 2), BigDecimal.ZERO, BigDecimal.ZERO, "{}", List.of(),
                         SnapshotStatus.COMPUTED, List.of()));
+        // Real, resolved AcademicSession boundaries — createDefaultStudentFees/createStudentFees
+        // now derive asOfDate and the join-month conversion from this row's own startDate
+        // rather than a parsed label + the school's global academicYearStartMonth. Default:
+        // April-start "2025-2026" (the convention most tests in this file assume); tests
+        // exercising a non-standard start month override this with academicSession(...).
+        academicSession(LocalDate.of(2025, 4, 1));
     }
 
+    /** Not used by createDefaultStudentFees/createStudentFees any more (they resolve the real
+     * AcademicSession instead — see academicSession() below), but schoolRepository is still
+     * consulted elsewhere in StudentFeesService (e.g. calculateLateFees' academic-month-ordinal
+     * conversion), so this stub remains for tests that exercise those paths. lenient() because
+     * not every test that calls it reaches such a path. */
     private void school(int startMonth) {
         School s = new School();
         s.setId(SCHOOL_ID);
         s.setAcademicYearStartMonth(startMonth);
-        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(s));
+        lenient().when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(s));
+    }
+
+    /** Stubs the school's actual configured AcademicSession for label "2025-2026" with the
+     * given real start date — the authoritative source createDefaultStudentFees/
+     * createStudentFees now use for join-month conversion and per-month asOfDate, replacing
+     * the old school(startMonth) + parsed-label reconstruction. */
+    private void academicSession(LocalDate startDate) {
+        AcademicSession s = new AcademicSession();
+        s.setSchoolId(SCHOOL_ID);
+        s.setLabel("2025-2026");
+        s.setStartDate(startDate);
+        s.setEndDate(startDate.plusYears(1).minusDays(1));
+        lenient().when(academicSessionRepository.findBySchoolIdAndLabel(SCHOOL_ID, "2025-2026")).thenReturn(Optional.of(s));
     }
 
     @Test
@@ -195,7 +219,7 @@ class StudentFeesServiceTest {
 
     @Test
     void januaryStartSchool_midSessionAdmission_joinMonthComputedCorrectly() {
-        school(1); // January-start: academic month = calendar month
+        academicSession(LocalDate.of(2025, 1, 1)); // January-start: academic month = calendar month
         // Joins in May 2025 -> academic month 5 for a January-start school.
         service.createDefaultStudentFees("NEW2", "6A", "2025-2026", false, null, LocalDate.of(2025, 5, 1));
 
@@ -206,7 +230,7 @@ class StudentFeesServiceTest {
 
     @Test
     void julyStartSchool_midSessionAdmission_joinMonthComputedCorrectly() {
-        school(7);
+        academicSession(LocalDate.of(2025, 7, 1));
         // Joins in September 2025 -> academic month 3 for a July-start school (Jul=1,Aug=2,Sep=3).
         service.createDefaultStudentFees("NEW3", "6A", "2025-2026", false, null, LocalDate.of(2025, 9, 1));
 
@@ -217,7 +241,7 @@ class StudentFeesServiceTest {
 
     @Test
     void decemberStartSchool_midSessionAdmission_joinMonthComputedCorrectly() {
-        school(12);
+        academicSession(LocalDate.of(2025, 12, 1));
         // Joins in February 2026 -> academic month 3 for a December-start school (Dec=1,Jan=2,Feb=3).
         service.createDefaultStudentFees("NEW4", "6A", "2025-2026", false, null, LocalDate.of(2026, 2, 1));
 
@@ -1170,5 +1194,69 @@ class StudentFeesServiceTest {
         List<StudentFees> result = service.getStudentFees("S1", "2025-2026");
 
         assertThat(result.get(0).getPaymentProvenance()).isNull();
+    }
+
+    // ─── updateStudentFeesForClassChange / updateStudentBusFees: session authority ────────
+
+    private AcademicSession currentSession(String label) {
+        AcademicSession s = new AcademicSession();
+        s.setSchoolId(SCHOOL_ID);
+        s.setLabel(label);
+        s.setStartDate(LocalDate.of(2000, 1, 1));
+        s.setEndDate(LocalDate.of(2099, 12, 31));
+        return s;
+    }
+
+    @Test
+    void updateStudentFeesForClassChange_usesTheConfiguredCurrentSessionLabel_neverATodaysDateGuess() {
+        // A label no date-arithmetic guess could ever produce, proving it came from the DB's
+        // current-session row rather than today's date + academicYearStartMonth.
+        when(academicSessionRepository.findBySchoolIdAndCurrentTrue(SCHOOL_ID))
+                .thenReturn(Optional.of(currentSession("CUSTOM-SESSION-9000")));
+        StudentFees fee = existingRow(3, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
+        fee.setYear("CUSTOM-SESSION-9000");
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", SCHOOL_ID, "CUSTOM-SESSION-9000"))
+                .thenReturn(List.of(fee));
+
+        service.updateStudentFeesForClassChange("S1", "7B");
+
+        assertThat(fee.getClassName()).isEqualTo("7B");
+        verify(studentFeesRepository).save(fee);
+    }
+
+    @Test
+    void updateStudentFeesForClassChange_noCurrentSessionConfigured_isANoOpRatherThanGuessing() {
+        when(academicSessionRepository.findBySchoolIdAndCurrentTrue(SCHOOL_ID)).thenReturn(Optional.empty());
+
+        service.updateStudentFeesForClassChange("S1", "7B");
+
+        verify(studentFeesRepository, never()).findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(any(), any(), any());
+        verify(studentFeesRepository, never()).save(any());
+    }
+
+    @Test
+    void updateStudentBusFees_usesTheConfiguredCurrentSessionLabel_neverATodaysDateGuess() {
+        when(academicSessionRepository.findBySchoolIdAndCurrentTrue(SCHOOL_ID))
+                .thenReturn(Optional.of(currentSession("CUSTOM-SESSION-9000")));
+        StudentFees fee = existingRow(6, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
+        fee.setYear("CUSTOM-SESSION-9000");
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", SCHOOL_ID, "CUSTOM-SESSION-9000"))
+                .thenReturn(List.of(fee));
+
+        service.updateStudentBusFees("S1", true, 9.0, 6);
+
+        assertThat(fee.getTakesBus()).isTrue();
+        assertThat(fee.getDistance()).isEqualTo(9.0);
+        verify(studentFeesRepository).save(fee);
+    }
+
+    @Test
+    void updateStudentBusFees_noCurrentSessionConfigured_isANoOpRatherThanGuessing() {
+        when(academicSessionRepository.findBySchoolIdAndCurrentTrue(SCHOOL_ID)).thenReturn(Optional.empty());
+
+        service.updateStudentBusFees("S1", true, 9.0, 6);
+
+        verify(studentFeesRepository, never()).findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(any(), any(), any());
+        verify(studentFeesRepository, never()).save(any());
     }
 }

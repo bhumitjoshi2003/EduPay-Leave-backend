@@ -19,6 +19,8 @@ public interface StudentMarkRepository extends JpaRepository<StudentMark, Long> 
 
     List<StudentMark> findByStudentIdAndExamSubjectEntryIdInAndSchoolId(String studentId, List<Long> examSubjectEntryIds, Long schoolId);
 
+    List<StudentMark> findByStudentIdAndSchoolId(String studentId, Long schoolId);
+
     @Transactional
     void deleteByExamSubjectEntryIdAndSchoolId(Long examSubjectEntryId, Long schoolId);
 

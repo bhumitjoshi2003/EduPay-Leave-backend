@@ -33,6 +33,7 @@ public class FeeWorkflowService {
     private final FeeGenerationBatchRepository generationBatchRepository;
     private final FeeCalculationService calculationService;
     private final StudentFeesRecalculationService recalculationService;
+    private final AcademicSessionService academicSessionService;
     private final AuditService auditService;
     private final SecurityUtil securityUtil;
     private final TransactionTemplate transactionTemplate;
@@ -51,6 +52,7 @@ public class FeeWorkflowService {
                               FeeGenerationBatchRepository generationBatchRepository,
                               FeeCalculationService calculationService,
                               StudentFeesRecalculationService recalculationService,
+                              AcademicSessionService academicSessionService,
                               AuditService auditService,
                               SecurityUtil securityUtil,
                               PlatformTransactionManager transactionManager) {
@@ -68,6 +70,7 @@ public class FeeWorkflowService {
         this.generationBatchRepository = generationBatchRepository;
         this.calculationService = calculationService;
         this.recalculationService = recalculationService;
+        this.academicSessionService = academicSessionService;
         this.auditService = auditService;
         this.securityUtil = securityUtil;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
@@ -533,15 +536,15 @@ public class FeeWorkflowService {
                                                                 FeeHead feeHead, BulkDiscountRequest request,
                                                                 String ip) {
         Long schoolId = securityUtil.getSchoolId();
-        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
-        int[] years = calculationService.parseSession(session.getLabel());
         String suppliedReason = request.reason() == null ? "" : request.reason().trim();
         String auditReason = suppliedReason.isBlank()
                 ? "Discount or waiver applied from fee assignment."
                 : suppliedReason;
         List<Integer> selectedMonths = request.months().stream().distinct().sorted().toList();
+        // session is already the real, resolved AcademicSession — use its own actual
+        // start date directly rather than reconstructing one from a parsed label.
         List<LocalDate> monthStarts = selectedMonths.stream()
-                .map(month -> calculationService.academicMonthStart(month, years[0], years[1], startMonth))
+                .map(month -> academicSessionService.academicMonthToDate(session, month))
                 .toList();
 
         for (LocalDate selectedMonth : monthStarts) {
@@ -589,13 +592,11 @@ public class FeeWorkflowService {
 
     private List<Integer> generatedMonthsInRange(String studentId, String session, LocalDate from, LocalDate until) {
         Long schoolId = securityUtil.getSchoolId();
-        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
-        int[] years = calculationService.parseSession(session);
         return studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, session).stream()
                 .map(StudentFees::getMonth)
                 .filter(Objects::nonNull)
                 .filter(month -> {
-                    LocalDate date = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
+                    LocalDate date = academicMonthStart(session, schoolId, month);
                     return !date.withDayOfMonth(1).isBefore(from.withDayOfMonth(1))
                             && (until == null || !date.withDayOfMonth(1).isAfter(until.withDayOfMonth(1)));
                 })
@@ -675,15 +676,13 @@ public class FeeWorkflowService {
         Long schoolId = securityUtil.getSchoolId();
         FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, student.getClassName());
         if (!config.valid()) return new StudentPreview(student.getStudentId(), student.getName(), false, BigDecimal.ZERO, List.of(), config.reason());
-        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
-        int[] years = calculationService.parseSession(session);
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         List<MonthPreview> rows = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
         boolean first = true;
         PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
         for (int month : months) {
-            MonthDecision decision = monthDecision(month, session, policy, startMonth);
+            MonthDecision decision = monthDecision(month, session, policy);
             if (!decision.eligible()) {
                 rows.add(new MonthPreview(month, false, false, BigDecimal.ZERO, BigDecimal.ZERO,
                         BigDecimal.ZERO, BigDecimal.ZERO, policy.effectiveDate(), null, decision.message()));
@@ -696,7 +695,7 @@ public class FeeWorkflowService {
                         policy.effectiveDate(), existing.getProrationFactor(), "Already generated"));
                 continue;
             }
-            LocalDate asOf = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
+            LocalDate asOf = academicMonthStart(session, schoolId, month);
             TransportState transport = transportState(student, session, asOf);
             FeeCalculationService.MonthSnapshot snapshot = calculationService.computeMonthSnapshot(schoolId, session,
                     student.getClassName(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
@@ -724,16 +723,14 @@ public class FeeWorkflowService {
         int generated = 0, skipped = 0;
         FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, student.getClassName());
         if (!config.valid()) throw new IllegalStateException(config.reason());
-        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
-        int[] years = calculationService.parseSession(session);
         PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         boolean first = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session).isEmpty();
         for (int month : months) {
-            MonthDecision decision = monthDecision(month, session, policy, startMonth);
+            MonthDecision decision = monthDecision(month, session, policy);
             if (!decision.eligible()) { skipped++; continue; }
             if (studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(student.getStudentId(), schoolId, session, month) != null) { skipped++; continue; }
-            LocalDate asOf = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
+            LocalDate asOf = academicMonthStart(session, schoolId, month);
             TransportState transport = transportState(student, session, asOf);
             FeeCalculationService.MonthSnapshot snapshot = calculationService.computeMonthSnapshot(schoolId, session,
                     student.getClassName(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
@@ -798,20 +795,17 @@ public class FeeWorkflowService {
     private PolicyContext resolvePolicyContext(Student student, String session, LocalDate requestedEffectiveDate,
                                                MidSessionFeePolicy requestPolicy, SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
-        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
-        int[] years = calculationService.parseSession(session);
-        LocalDate sessionStart = calculationService.academicMonthStart(1, years[0], years[1], startMonth);
-        LocalDate sessionEnd = calculationService.academicMonthStart(12, years[0], years[1], startMonth).withDayOfMonth(
-                calculationService.academicMonthStart(12, years[0], years[1], startMonth).lengthOfMonth());
+        LocalDate sessionStart = academicMonthStart(session, schoolId, 1);
+        LocalDate sessionEndMonthStart = academicMonthStart(session, schoolId, 12);
+        LocalDate sessionEnd = sessionEndMonthStart.withDayOfMonth(sessionEndMonthStart.lengthOfMonth());
         LocalDate effective = latest(requestedEffectiveDate, student.getJoiningDate(), settings.getActivationDate(), sessionStart);
         MidSessionFeePolicy policy = requestPolicy != null ? requestPolicy : settings.getMidSessionPolicy() != null
                 ? settings.getMidSessionPolicy() : MidSessionFeePolicy.FROM_EFFECTIVE_MONTH;
         return new PolicyContext(effective, policy, sessionStart, sessionEnd, effective.isAfter(sessionStart));
     }
 
-    private MonthDecision monthDecision(int month, String session, PolicyContext context, int startMonth) {
-        int[] years = calculationService.parseSession(session);
-        LocalDate monthStart = calculationService.academicMonthStart(month, years[0], years[1], startMonth);
+    private MonthDecision monthDecision(int month, String session, PolicyContext context) {
+        LocalDate monthStart = academicMonthStart(session, securityUtil.getSchoolId(), month);
         if (context.effectiveDate().isAfter(context.sessionEnd())) {
             return new MonthDecision(false, false, "Effective billing date is after this academic session.");
         }
@@ -838,9 +832,19 @@ public class FeeWorkflowService {
                 .orElseThrow(() -> new IllegalArgumentException("An effective billing date is required."));
     }
     private LocalDate sessionStart(String session, Long schoolId) {
-        int startMonth = schoolRepository.findById(schoolId).map(School::getAcademicYearStartMonth).orElse(4);
-        int[] years = calculationService.parseSession(session);
-        return calculationService.academicMonthStart(1, years[0], years[1], startMonth);
+        return academicMonthStart(session, schoolId, 1);
+    }
+
+    /** Real, configured session boundaries — resolves the actual AcademicSession row rather
+     * than reconstructing a calendar date from the label's parsed years + the school's global
+     * academicYearStartMonth, which can diverge from an individual session's real configured
+     * start date (e.g. the school's global setting was changed after this session was
+     * created, or a session was manually given non-standard dates). */
+    private LocalDate academicMonthStart(String session, Long schoolId, int academicMonth) {
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
+        return academicSessionService.academicMonthToDate(academicSession, academicMonth);
     }
     private long count(List<AssignmentRow> rows, StudentFeeAssignmentStatus status) { return rows.stream().filter(r -> r.status() == status).count(); }
     private StudentFeeAssignmentStatus resolveAssignmentStatus(StudentFeeAssignment assignment,

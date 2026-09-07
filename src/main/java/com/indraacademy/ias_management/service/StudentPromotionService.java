@@ -3,252 +3,252 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.dto.PromotionDecisionRequest;
 import com.indraacademy.ias_management.dto.PromotionPreviewDTO;
 import com.indraacademy.ias_management.dto.PromotionResultDTO;
-import com.indraacademy.ias_management.dto.StudentLeaveDTO;
-import com.indraacademy.ias_management.entity.Student;
-import com.indraacademy.ias_management.entity.StudentStatus;
-import com.indraacademy.ias_management.repository.SchoolClassRepository;
-import com.indraacademy.ias_management.repository.SectionRepository;
-import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.entity.*;
+import com.indraacademy.ias_management.repository.*;
+import com.indraacademy.ias_management.util.SchoolTimeUtil;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import com.indraacademy.ias_management.entity.SchoolClass;
-import com.indraacademy.ias_management.entity.Section;
+import static com.indraacademy.ias_management.dto.PromotionPreviewDTO.*;
 
+/** E2 preview and batch coordinator. StudentYearEndService remains the mutation authority. */
 @Service
 public class StudentPromotionService {
-
     private static final Logger log = LoggerFactory.getLogger(StudentPromotionService.class);
 
-    @Autowired private StudentRepository studentRepository;
-    @Autowired private SchoolClassRepository schoolClassRepository;
-    @Autowired private SectionRepository sectionRepository;
-    @Autowired private AuditService auditService;
-    @Autowired private SecurityUtil securityUtil;
-    @Autowired private ParentPortalService parentPortalService;
+    private final StudentRepository students;
+    private final StudentEnrollmentRepository enrollments;
+    private final AcademicSessionRepository sessions;
+    private final SchoolClassRepository classes;
+    private final SectionRepository sections;
+    private final SchoolRepository schools;
+    private final StudentYearEndWorker worker;
+    private final SecurityUtil security;
+    private final Clock clock;
 
-    /**
-     * Returns the school's active class names in display order (from DB). SchoolClass is
-     * authoritative — a school with no classes configured has no valid promotion sequence,
-     * full stop. A hardcoded fallback sequence here would let promotion silently save a
-     * student against a class name with no matching SchoolClass row, bypassing the same
-     * invariant enforced in addStudent/updateStudent.
-     */
-    private List<String> getSchoolClassSequence() {
-        Long schoolId = securityUtil.getSchoolId();
-        return schoolClassRepository
-                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
-                .stream()
-                .map(c -> c.getName())
-                .collect(Collectors.toList());
+    public StudentPromotionService(
+            StudentRepository students, StudentEnrollmentRepository enrollments,
+            AcademicSessionRepository sessions, SchoolClassRepository classes,
+            SectionRepository sections, SchoolRepository schools,
+            StudentYearEndWorker worker, SecurityUtil security, Clock clock) {
+        this.students = students;
+        this.enrollments = enrollments;
+        this.sessions = sessions;
+        this.classes = classes;
+        this.sections = sections;
+        this.schools = schools;
+        this.worker = worker;
+        this.security = security;
+        this.clock = clock;
     }
-
-    // ─── Preview ─────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<PromotionPreviewDTO> getPromotionPreview() {
-        List<Student> activeStudents = studentRepository.findByStatusAndSchoolId(StudentStatus.ACTIVE, securityUtil.getSchoolId());
+    public PromotionPreviewDTO getPromotionPreview(
+            Long sourceSessionId, Long targetSessionId, Long classId, String studentId) {
+        Long schoolId = security.getSchoolId();
+        List<Issue> globalErrors = validateSessionPair(schoolId, sourceSessionId, targetSessionId);
+        if (!globalErrors.isEmpty()) {
+            return new PromotionPreviewDTO(sourceSessionId, targetSessionId, false,
+                    globalErrors, List.of(), uncoveredForFilter(schoolId, studentId, Set.of()));
+        }
 
-        List<String> classSequence = getSchoolClassSequence();
-        Map<String, List<Student>> byClass = activeStudents.stream()
-                .collect(Collectors.groupingBy(Student::getClassName));
+        AcademicSession targetSession = sessions.findByIdAndSchoolId(targetSessionId, schoolId).orElseThrow();
+        School school = schools.findById(schoolId).orElseThrow();
+        LocalDate today = LocalDate.now(clock.withZone(SchoolTimeUtil.zoneId(school)));
+        StudentEnrollmentStatus proposedStatus = today.isBefore(targetSession.getStartDate())
+                ? StudentEnrollmentStatus.PLANNED : StudentEnrollmentStatus.ACTIVE;
+        List<SchoolClass> sequence = classes.findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true);
 
-        return byClass.entrySet().stream()
-                .sorted(Comparator.comparingInt(e -> classOrder(e.getKey(), classSequence)))
-                .map(e -> {
-                    List<StudentLeaveDTO> stubs = e.getValue().stream()
-                            .sorted(Comparator.comparing(Student::getName))
-                            .map(s -> new StudentLeaveDTO(s.getStudentId(), s.getName()))
-                            .collect(Collectors.toList());
-                    return new PromotionPreviewDTO(e.getKey(), stubs);
-                })
-                .collect(Collectors.toList());
+        Map<String,List<StudentEnrollment>> sourceByStudent = enrollments
+                .findBySchoolIdAndAcademicSessionIdOrderByStudentIdAscEffectiveFromAsc(schoolId, sourceSessionId)
+                .stream().filter(e -> classId == null || Objects.equals(e.getClassId(), classId))
+                .filter(e -> studentId == null || studentId.isBlank() || e.getStudentId().equals(studentId))
+                .collect(Collectors.groupingBy(StudentEnrollment::getStudentId, LinkedHashMap::new, Collectors.toList()));
+        Map<String,List<StudentEnrollment>> targetByStudent = enrollments
+                .findBySchoolIdAndAcademicSessionIdOrderByStudentIdAscEffectiveFromAsc(schoolId, targetSessionId)
+                .stream().collect(Collectors.groupingBy(StudentEnrollment::getStudentId));
+        Map<String,Student> studentById = students.findByStudentIdInAndSchoolId(
+                        new ArrayList<>(sourceByStudent.keySet()), schoolId).stream()
+                .collect(Collectors.toMap(Student::getStudentId, Function.identity()));
+
+        List<Candidate> candidates = sourceByStudent.entrySet().stream()
+                .map(entry -> previewCandidate(entry.getValue(), targetByStudent.getOrDefault(entry.getKey(), List.of()),
+                        studentById.get(entry.getKey()), sequence, schoolId, proposedStatus))
+                .sorted(Comparator.comparing(Candidate::sourceClassName,
+                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                        .thenComparing(Candidate::studentName, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                .toList();
+        return new PromotionPreviewDTO(sourceSessionId, targetSessionId, true, List.of(), candidates,
+                uncoveredForFilter(schoolId, studentId, sourceByStudent.keySet()));
     }
 
-    // ─── Execute ──────────────────────────────────────────────────────────────
-
-    @Transactional
-    public PromotionResultDTO executePromotion(PromotionDecisionRequest request,
-                                               HttpServletRequest httpRequest) {
-        int promoted = 0;
-        int detained = 0;
-        int passedOut = 0;
-        List<PromotionResultDTO.PromotionError> errors = new ArrayList<>();
-
-        Long schoolId = securityUtil.getSchoolId();
-
-        // Pre-load class sequence, class-by-name map, and sections-by-classId map
-        // to avoid N+1 queries inside the loop
-        List<String> seq = getSchoolClassSequence();
-        Map<String, SchoolClass> classByName = schoolClassRepository
-                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
-                .stream().collect(Collectors.toMap(SchoolClass::getName, c -> c, (a, b) -> a));
-        Map<Long, List<Section>> sectionsByClassId = sectionRepository
-                .findBySchoolIdAndActiveOrderByDisplayOrderAsc(schoolId, true)
-                .stream().collect(Collectors.groupingBy(Section::getClassId));
-
-        for (PromotionDecisionRequest.Decision decision : request.getDecisions()) {
-            String studentId = decision.getStudentId();
-            String action    = decision.getAction();
-
+    /** Intentionally non-transactional: each worker invocation owns REQUIRES_NEW. */
+    public PromotionResultDTO executePromotion(PromotionDecisionRequest batch, HttpServletRequest request) {
+        Long schoolId = security.getSchoolId();
+        StudentYearEndDecision.AuditContext actor = new StudentYearEndDecision.AuditContext(
+                security.getUsername(), security.getRole(), request.getRemoteAddr());
+        List<PromotionResultDTO.StudentOutcome> outcomes = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (PromotionDecisionRequest.Decision decision : batch.getDecisions()) {
+            if (!seen.add(decision.getStudentId())) {
+                outcomes.add(validationOutcome(decision.getStudentId(), "Duplicate student decision in batch"));
+                continue;
+            }
+            StudentYearEndDecision.Request command = new StudentYearEndDecision.Request(
+                    schoolId, decision.getStudentId(), batch.getSourceSessionId(),
+                    batch.getTargetSessionId(), decision.getExpectedSourceEnrollmentId(),
+                    decision.getExpectedSourceClassId(), decision.getAction(),
+                    decision.getTargetClassId(), decision.getTargetSectionId(), actor);
             try {
-                Optional<Student> opt = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
-                if (opt.isEmpty()) {
-                    errors.add(new PromotionResultDTO.PromotionError(studentId, "Student not found"));
-                    continue;
-                }
-
-                Student student  = opt.get();
-                String oldClass  = student.getClassName();
-
-                if ("PROMOTE".equalsIgnoreCase(action)) {
-                    String nextClass = determineNextClass(oldClass, seq);
-                    if (nextClass == null) {
-                        errors.add(new PromotionResultDTO.PromotionError(studentId,
-                                "Cannot promote: '" + oldClass + "' is the final class in the sequence, " +
-                                "or no classes are configured for this school."));
-                        continue;
-                    }
-
-                    // SchoolClass is authoritative — nextClass is drawn from seq, which is
-                    // itself built from schoolClassRepository, so this should always resolve;
-                    // treated as a hard error rather than silently saved if it somehow doesn't
-                    // (e.g. the class was deleted by another request mid-batch).
-                    SchoolClass targetClass = classByName.get(nextClass);
-                    if (targetClass == null) {
-                        errors.add(new PromotionResultDTO.PromotionError(studentId,
-                                "Cannot promote: target class '" + nextClass + "' is not configured for this school."));
-                        continue;
-                    }
-
-                    student.setClassName(targetClass.getName());
-                    student.setClassId(targetClass.getId());
-
-                    // Resolve section for the target class using pre-loaded data
-                    List<Section> targetSections = sectionsByClassId.getOrDefault(targetClass.getId(), List.of());
-                    if (targetSections.isEmpty()) {
-                        student.setSectionId(null);
-                        student.setSectionName(null);
-                    } else if (student.getSectionName() != null) {
-                        Optional<Section> matched = targetSections.stream()
-                                .filter(s -> s.getName().equalsIgnoreCase(student.getSectionName()))
-                                .findFirst();
-                        if (matched.isPresent()) {
-                            student.setSectionId(matched.get().getId());
-                            student.setSectionName(matched.get().getName());
-                        } else {
-                            student.setSectionId(null);
-                            student.setSectionName(null);
-                        }
-                    }
-
-                    studentRepository.save(student);
-                    auditService.log(
-                            securityUtil.getUsername(), securityUtil.getRole(),
-                            "PROMOTE_STUDENT", "Student", studentId,
-                            oldClass, nextClass, httpRequest.getRemoteAddr());
-                    promoted++;
-                    log.info("Promoted student {} from {} → {}", studentId, oldClass, nextClass);
-
-                } else if ("DETAIN".equalsIgnoreCase(action)) {
-                    // No DB change needed — student stays in current class
-                    detained++;
-                    log.info("Detained student {} in {}", studentId, oldClass);
-
-                } else if ("PASS_OUT".equalsIgnoreCase(action)) {
-                    student.setStatus(StudentStatus.GRADUATED);
-                    student.setReasonForLeaving("Completed final year");
-                    if (student.getLeavingDate() == null) {
-                        student.setLeavingDate(java.time.LocalDate.now());
-                    }
-                    studentRepository.save(student);
-                    parentPortalService.endRelationshipsForExitedStudent(
-                            securityUtil.getSchoolId(), studentId, student.getLeavingDate());
-                    auditService.log(
-                            securityUtil.getUsername(), securityUtil.getRole(),
-                            "PASS_OUT_STUDENT", "Student", studentId,
-                            "ACTIVE", "GRADUATED", httpRequest.getRemoteAddr());
-                    passedOut++;
-                    log.info("Graduated student {} (class {})", studentId, oldClass);
-
-                } else {
-                    errors.add(new PromotionResultDTO.PromotionError(studentId,
-                            "Unknown action: '" + action + "'. Valid values: PROMOTE, DETAIN, PASS_OUT"));
-                }
-
+                StudentYearEndDecision.Result result = worker.apply(command);
+                outcomes.add(new PromotionResultDTO.StudentOutcome(decision.getStudentId(),
+                        result.outcome().name(), result.message(), result.sourceEnrollmentId(),
+                        result.targetEnrollmentId(), result.targetEnrollmentStatus() == null
+                                ? null : result.targetEnrollmentStatus().name(),
+                        result.lifecycleFinalizationPending()));
+            } catch (IllegalArgumentException | NoSuchElementException e) {
+                outcomes.add(validationOutcome(decision.getStudentId(), e.getMessage()));
+            } catch (IllegalStateException e) {
+                outcomes.add(new PromotionResultDTO.StudentOutcome(decision.getStudentId(),
+                        StudentYearEndDecision.Outcome.CONFLICT.name(), e.getMessage(),
+                        decision.getExpectedSourceEnrollmentId(), null, null, false));
             } catch (Exception e) {
-                log.error("Error processing promotion for student {}: {}", studentId, e.getMessage());
-                errors.add(new PromotionResultDTO.PromotionError(studentId,
-                        "Processing error: " + e.getMessage()));
+                log.error("Year-end decision failed: schoolId={}, studentId={}, type={}",
+                        schoolId, decision.getStudentId(), e.getClass().getSimpleName());
+                outcomes.add(new PromotionResultDTO.StudentOutcome(decision.getStudentId(),
+                        "VALIDATION_ERROR", "Decision could not be applied",
+                        decision.getExpectedSourceEnrollmentId(), null, null, false));
             }
         }
-
-        log.info("Promotion batch complete — promoted: {}, detained: {}, passedOut: {}, errors: {}",
-                promoted, detained, passedOut, errors.size());
-        return new PromotionResultDTO(promoted, detained, passedOut, errors);
+        Map<String,Long> summary = outcomes.stream().collect(Collectors.groupingBy(
+                PromotionResultDTO.StudentOutcome::code, LinkedHashMap::new, Collectors.counting()));
+        return new PromotionResultDTO(outcomes.size(), summary, outcomes);
     }
 
-    // ─── Cleanup ─────────────────────────────────────────────────────────────
-
-    /**
-     * Clears section assignments for students whose sectionId belongs to a different class
-     * than their current class — a state that can occur if promotion happened before
-     * section-aware logic was in place.
-     *
-     * @return number of students whose orphaned section was cleared
-     */
     @Transactional
     public int fixOrphanedSections() {
-        Long schoolId = securityUtil.getSchoolId();
-        int affected = studentRepository.clearOrphanedSections(schoolId);
-        if (affected > 0) {
-            log.warn("Cleared orphaned section assignments for {} student(s) in school {}",
-                    affected, schoolId);
+        return students.clearOrphanedSections(security.getSchoolId());
+    }
+
+    private Candidate previewCandidate(
+            List<StudentEnrollment> sourceHistory, List<StudentEnrollment> targetHistory,
+            Student student, List<SchoolClass> sequence, Long schoolId,
+            StudentEnrollmentStatus proposedStatus) {
+        StudentEnrollment source = selectYearEndSource(sourceHistory);
+        List<Issue> errors = new ArrayList<>();
+        List<Issue> warnings = new ArrayList<>();
+        if (student == null) errors.add(issue("STUDENT_NOT_FOUND", "Student row does not exist in this school"));
+
+        int index = -1;
+        for (int i=0;i<sequence.size();i++) if (Objects.equals(sequence.get(i).getId(), source.getClassId())) index=i;
+        boolean finalClass = index >= 0 && index == sequence.size()-1;
+        SchoolClass sourceClass = index < 0 ? null : sequence.get(index);
+        SchoolClass promoteTarget = index >= 0 && !finalClass ? sequence.get(index+1) : null;
+        if (sourceClass == null) errors.add(issue("INVALID_SOURCE_CLASS", "Source class is not in the active class sequence"));
+
+        boolean initial = source.getStatus() == StudentEnrollmentStatus.ACTIVE && source.getEffectiveUntil() == null;
+        String appliedState = appliedState(source, targetHistory);
+        if (!initial && "NOT_APPLIED".equals(appliedState)) {
+            errors.add(issue("INVALID_SOURCE", "Source enrollment is not open and ACTIVE"));
         }
-        return affected;
-    }
-
-    // ─── Helpers ─────────────────────────────────────────────────────────────
-
-    /**
-     * Returns the class that follows {@code currentClass} in the school's class sequence,
-     * or {@code null} if it is the last class or unrecognised.
-     */
-    private String determineNextClass(String currentClass, List<String> classSequence) {
-        if (currentClass == null) return null;
-        int idx = indexOfClass(currentClass, classSequence);
-        if (idx < 0 || idx >= classSequence.size() - 1) return null;
-        return classSequence.get(idx + 1);
-    }
-
-    /**
-     * Returns a sort key for the class name based on the school's class order.
-     * Unrecognised classes sort to the end.
-     */
-    private int classOrder(String className, List<String> classSequence) {
-        int idx = indexOfClass(className, classSequence);
-        return idx < 0 ? Integer.MAX_VALUE : idx;
-    }
-
-    /** Case-insensitive lookup of {@code className} in the provided sequence. */
-    private int indexOfClass(String className, List<String> classSequence) {
-        if (className == null) return -1;
-        String normalised = className.trim();
-        for (int i = 0; i < classSequence.size(); i++) {
-            if (classSequence.get(i).equalsIgnoreCase(normalised)) return i;
+        if (initial && !targetHistory.isEmpty()) {
+            errors.add(issue("CONFLICT", "Target-session enrollment already exists"));
+            appliedState = "CONFLICT";
         }
-        return -1;
+
+        boolean promoteSectionRequired = promoteTarget != null && !sections
+                .findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(schoolId, promoteTarget.getId(), true)
+                .isEmpty();
+        if (promoteSectionRequired && initial) {
+            warnings.add(issue("TARGET_SECTION_SELECTION_REQUIRED",
+                    "PROMOTE requires an explicit target section"));
+        }
+        Long detainSection = null;
+        if (sourceClass != null && source.getSectionId() != null) {
+            detainSection = sections.findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(
+                            schoolId, sourceClass.getId(), true).stream()
+                    .anyMatch(s -> Objects.equals(s.getId(), source.getSectionId()))
+                    ? source.getSectionId() : null;
+        }
+        if (student != null && (!Objects.equals(student.getClassId(), source.getClassId())
+                || !Objects.equals(student.getSectionId(), source.getSectionId()))) {
+            warnings.add(issue("PROJECTION_DIFFERS", "Student projection differs from authoritative source enrollment"));
+        }
+
+        List<StudentYearEndDecision.Action> available = finalClass
+                ? List.of(StudentYearEndDecision.Action.DETAIN, StudentYearEndDecision.Action.PASS_OUT)
+                : List.of(StudentYearEndDecision.Action.PROMOTE, StudentYearEndDecision.Action.DETAIN);
+        return new Candidate(source.getStudentId(), student == null ? null : student.getName(),
+                source.getId(), source.getAcademicSessionId(), source.getClassId(), source.getClassNameSnapshot(),
+                source.getSectionId(), source.getSectionNameSnapshot(), available,
+                finalClass ? StudentYearEndDecision.Action.PASS_OUT : StudentYearEndDecision.Action.PROMOTE,
+                promoteTarget == null ? null : promoteTarget.getId(),
+                promoteTarget == null ? null : promoteTarget.getName(),
+                sourceClass == null ? null : sourceClass.getId(), source.getClassNameSnapshot(),
+                promoteSectionRequired, null, detainSection, proposedStatus,
+                List.copyOf(errors), List.copyOf(warnings), appliedState);
+    }
+
+    private StudentEnrollment selectYearEndSource(List<StudentEnrollment> history) {
+        return history.stream().filter(e -> e.getStatus() == StudentEnrollmentStatus.ACTIVE
+                        && e.getEffectiveUntil() == null).findFirst()
+                .orElseGet(() -> history.stream()
+                        .filter(e -> e.getStatus() == StudentEnrollmentStatus.CLOSED)
+                        .filter(e -> e.getClosureReason() == StudentEnrollmentClosureReason.SESSION_COMPLETED
+                                || e.getClosureReason() == StudentEnrollmentClosureReason.GRADUATED)
+                        .findFirst().orElse(history.getLast()));
+    }
+
+    private String appliedState(StudentEnrollment source, List<StudentEnrollment> targetHistory) {
+        if (source.getStatus() != StudentEnrollmentStatus.CLOSED) return "NOT_APPLIED";
+        if (source.getClosureReason() == StudentEnrollmentClosureReason.GRADUATED) return "ALREADY_APPLIED:PASS_OUT";
+        if (source.getClosureReason() != StudentEnrollmentClosureReason.SESSION_COMPLETED || targetHistory.size() != 1)
+            return "CONFLICT";
+        return Objects.equals(source.getClassId(), targetHistory.getFirst().getClassId())
+                ? "ALREADY_APPLIED:DETAIN" : "ALREADY_APPLIED:PROMOTE";
+    }
+
+    private List<Issue> validateSessionPair(Long schoolId, Long sourceId, Long targetId) {
+        List<Issue> errors = new ArrayList<>();
+        if (sourceId == null) errors.add(issue("SOURCE_SESSION_REQUIRED", "sourceSessionId is required"));
+        if (targetId == null) errors.add(issue("TARGET_SESSION_REQUIRED", "targetSessionId is required"));
+        if (!errors.isEmpty()) return errors;
+        Optional<AcademicSession> source = sessions.findByIdAndSchoolId(sourceId, schoolId);
+        Optional<AcademicSession> target = sessions.findByIdAndSchoolId(targetId, schoolId);
+        if (source.isEmpty()) errors.add(issue("SOURCE_SESSION_NOT_FOUND", "Source session not found for school"));
+        if (target.isEmpty()) errors.add(issue("TARGET_SESSION_NOT_FOUND", "Target session not found for school"));
+        if (!errors.isEmpty()) return errors;
+        if (Objects.equals(sourceId, targetId)) errors.add(issue("SESSIONS_MUST_DIFFER", "Source and target sessions must differ"));
+        if (!target.orElseThrow().getStartDate().equals(source.orElseThrow().getEndDate().plusDays(1)))
+            errors.add(issue("SESSIONS_NOT_CONTIGUOUS", "Target session must start the day after source session ends"));
+        School school = schools.findById(schoolId).orElse(null);
+        if (school == null) errors.add(issue("SCHOOL_NOT_FOUND", "School not found"));
+        else if (LocalDate.now(clock.withZone(SchoolTimeUtil.zoneId(school))).isAfter(target.orElseThrow().getEndDate()))
+            errors.add(issue("TARGET_SESSION_ENDED", "Target session has already ended"));
+        return errors;
+    }
+
+    private List<UncoveredStudent> uncoveredForFilter(Long schoolId, String studentId, Set<String> covered) {
+        if (studentId == null || studentId.isBlank() || covered.contains(studentId)) return List.of();
+        return students.findByStudentIdAndSchoolId(studentId, schoolId)
+                .map(s -> List.of(new UncoveredStudent(s.getStudentId(), s.getName(),
+                        "INVALID_SOURCE", "No authoritative source enrollment exists for the selected session")))
+                .orElse(List.of());
+    }
+
+    private Issue issue(String code, String message) { return new Issue(code, message); }
+    private PromotionResultDTO.StudentOutcome validationOutcome(String studentId, String message) {
+        return new PromotionResultDTO.StudentOutcome(studentId, "VALIDATION_ERROR",
+                message == null ? "Validation failed" : message, null, null, null, false);
     }
 }
