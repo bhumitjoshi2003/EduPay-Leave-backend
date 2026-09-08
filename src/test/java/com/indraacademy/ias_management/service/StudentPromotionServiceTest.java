@@ -148,6 +148,60 @@ class StudentPromotionServiceTest {
         assertThat(response.outcomes()).extracting(o->o.code()).containsExactly("ALREADY_APPLIED","CONFLICT");
     }
 
+    /** Regression for the PASS_OUT-through-executePromotion defect: the batch-level
+     *  targetSessionId is @NotNull/@Valid at the controller and therefore always non-null here,
+     *  but StudentYearEndService.applyPassOut correctly rejects any non-null target
+     *  session/class/section for PASS_OUT. The coordinator must adapt the internal command to
+     *  omit all three for PASS_OUT, regardless of what the batch (or an errant caller) supplies. */
+    @Test void executeOmitsTargetSessionClassAndSectionForPassOutRegardlessOfBatchTarget(){
+        when(worker.apply(any())).thenReturn(new StudentYearEndDecision.Result(
+                StudentYearEndDecision.Outcome.PASSED_OUT,"Graduation scheduled",1001L,null,null,true));
+        var response=service.executePromotion(batch(passOutDecision("S1")),servletRequest);
+        assertThat(response.outcomes()).singleElement().satisfies(o->{
+            assertThat(o.code()).isEqualTo("PASSED_OUT");
+            assertThat(o.targetEnrollmentId()).isNull();
+            assertThat(o.lifecycleFinalizationPending()).isTrue();
+        });
+        verify(worker).apply(argThat(c->c.action()==StudentYearEndDecision.Action.PASS_OUT
+                && c.targetSessionId()==null && c.targetClassId()==null && c.targetSectionId()==null
+                && c.sourceSessionId().equals(11L) && c.expectedSourceEnrollmentId().equals(1001L)));
+    }
+
+    @Test void executeStillForwardsBatchTargetSessionForPromoteAndDetain(){
+        when(worker.apply(any())).thenReturn(
+                new StudentYearEndDecision.Result(StudentYearEndDecision.Outcome.PROMOTED,"applied",1001L,2001L,StudentEnrollmentStatus.PLANNED,false),
+                new StudentYearEndDecision.Result(StudentYearEndDecision.Outcome.DETAINED,"applied",1002L,2002L,StudentEnrollmentStatus.PLANNED,false));
+        service.executePromotion(batch(
+                decision("S1",StudentYearEndDecision.Action.PROMOTE),
+                decision("S2",StudentYearEndDecision.Action.DETAIN)),servletRequest);
+        verify(worker).apply(argThat(c->c.action()==StudentYearEndDecision.Action.PROMOTE
+                && c.targetSessionId().equals(12L) && c.targetClassId().equals(101L)));
+        verify(worker).apply(argThat(c->c.action()==StudentYearEndDecision.Action.DETAIN
+                && c.targetSessionId().equals(12L) && c.targetClassId().equals(91L)));
+    }
+
+    /** Proves the adapter operates per-decision, not by silently changing the whole batch's
+     *  target-session behavior — a PROMOTE and a PASS_OUT sharing the same batch-level
+     *  targetSessionId must each reach the worker with their own, action-correct command. */
+    @Test void mixedBatchAdaptsPassOutIndependentlyOfSiblingPromoteDecision(){
+        when(worker.apply(any())).thenReturn(
+                new StudentYearEndDecision.Result(StudentYearEndDecision.Outcome.PROMOTED,"applied",1001L,2001L,StudentEnrollmentStatus.PLANNED,false),
+                new StudentYearEndDecision.Result(StudentYearEndDecision.Outcome.PASSED_OUT,"Graduation scheduled",1002L,null,null,true));
+        var response=service.executePromotion(batch(
+                decision("S1",StudentYearEndDecision.Action.PROMOTE),
+                passOutDecision("S2")),servletRequest);
+        assertThat(response.outcomes()).extracting(o->o.code()).containsExactly("PROMOTED","PASSED_OUT");
+        verify(worker).apply(argThat(c->c.studentId().equals("S1") && c.action()==StudentYearEndDecision.Action.PROMOTE
+                && c.targetSessionId().equals(12L)));
+        verify(worker).apply(argThat(c->c.studentId().equals("S2") && c.action()==StudentYearEndDecision.Action.PASS_OUT
+                && c.targetSessionId()==null && c.targetClassId()==null && c.targetSectionId()==null));
+    }
+
+    @Test void batchLevelTargetSessionIdRemainsRequiredExternally() throws Exception {
+        var field = PromotionDecisionRequest.class.getDeclaredField("targetSessionId");
+        assertThat(field.getAnnotation(jakarta.validation.constraints.NotNull.class)).isNotNull();
+    }
+
     @Test void previewAndExecuteAreSchoolAdminOnly() throws Exception {
         PreAuthorize preview=StudentController.class.getMethod("getPromotionPreview",
                 Long.class,Long.class,Long.class,String.class).getAnnotation(PreAuthorize.class);
@@ -159,6 +213,9 @@ class StudentPromotionServiceTest {
 
     private PromotionDecisionRequest batch(PromotionDecisionRequest.Decision... decisions){var b=new PromotionDecisionRequest();b.setSourceSessionId(11L);b.setTargetSessionId(12L);b.setDecisions(List.of(decisions));return b;}
     private PromotionDecisionRequest.Decision decision(String id,StudentYearEndDecision.Action action){var d=new PromotionDecisionRequest.Decision();d.setStudentId(id);d.setAction(action);d.setExpectedSourceEnrollmentId(id.equals("S1")?1001L:1002L);d.setExpectedSourceClassId(91L);d.setTargetClassId(action==StudentYearEndDecision.Action.DETAIN?91L:101L);return d;}
+    /** Mirrors exactly what the real frontend sends for PASS_OUT (web/Android both null out
+     *  targetClassId/targetSectionId client-side) — only targetSessionId is ever batch-forced. */
+    private PromotionDecisionRequest.Decision passOutDecision(String id){var d=new PromotionDecisionRequest.Decision();d.setStudentId(id);d.setAction(StudentYearEndDecision.Action.PASS_OUT);d.setExpectedSourceEnrollmentId(id.equals("S1")?1001L:1002L);d.setExpectedSourceClassId(91L);return d;}
     private AcademicSession session(long id,String label,LocalDate start,LocalDate end){var s=new AcademicSession();s.setId(id);s.setSchoolId(1L);s.setLabel(label);s.setStartDate(start);s.setEndDate(end);return s;}
     private SchoolClass schoolClass(long id,String name,int order){var c=new SchoolClass();c.setId(id);c.setSchoolId(1L);c.setName(name);c.setActive(true);c.setDisplayOrder(order);return c;}
     private Section section(long id,long classId,String name){var s=new Section();s.setId(id);s.setSchoolId(1L);s.setClassId(classId);s.setName(name);s.setActive(true);return s;}

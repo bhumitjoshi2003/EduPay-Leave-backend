@@ -104,11 +104,19 @@ public class StudentPromotionService {
                 outcomes.add(validationOutcome(decision.getStudentId(), "Duplicate student decision in batch"));
                 continue;
             }
+            // The external batch always carries one explicit targetSessionId (it represents the
+            // source-session -> target-session year-end transition as a whole and stays
+            // @NotNull/@Valid at the controller). PASS_OUT, however, creates no target enrollment
+            // at all, and StudentYearEndService.applyPassOut correctly rejects any target
+            // session/class/section as meaningless for it — so the coordinator must adapt the
+            // batch-level contract to the action-specific internal one here, never forwarding a
+            // target for PASS_OUT regardless of what the batch or the individual decision carries.
+            boolean passOut = decision.getAction() == StudentYearEndDecision.Action.PASS_OUT;
             StudentYearEndDecision.Request command = new StudentYearEndDecision.Request(
                     schoolId, decision.getStudentId(), batch.getSourceSessionId(),
-                    batch.getTargetSessionId(), decision.getExpectedSourceEnrollmentId(),
+                    passOut ? null : batch.getTargetSessionId(), decision.getExpectedSourceEnrollmentId(),
                     decision.getExpectedSourceClassId(), decision.getAction(),
-                    decision.getTargetClassId(), decision.getTargetSectionId(), actor);
+                    passOut ? null : decision.getTargetClassId(), passOut ? null : decision.getTargetSectionId(), actor);
             try {
                 StudentYearEndDecision.Result result = worker.apply(command);
                 outcomes.add(new PromotionResultDTO.StudentOutcome(decision.getStudentId(),

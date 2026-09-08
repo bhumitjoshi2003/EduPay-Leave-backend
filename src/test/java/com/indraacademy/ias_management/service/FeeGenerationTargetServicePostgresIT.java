@@ -414,8 +414,16 @@ class FeeGenerationTargetServicePostgresIT {
         return new GenerationRequest(SESSION, List.of(decisions));
     }
     private void cleanupCommittedFixtures() {
-        // student_fees_line_item FK-references student_fees — must be deleted first.
-        jdbc.update("DELETE FROM student_fees_line_item WHERE school_id=?", SCHOOL);
+        // student_fees_line_item FK-references both student_fees_id and fee_head_id and must be
+        // deleted before either parent. Scoped by school_id alone was found to occasionally leave
+        // rows behind for this test specifically (its concurrent-generation scenario commits from
+        // separate worker-thread transactions, outside this method's own visibility guarantees) —
+        // matched transitively via student_fees/fee_head ownership as well, so every line item
+        // connected to this school's sentinel fixture is removed regardless of why school_id alone
+        // didn't catch it.
+        jdbc.update("DELETE FROM student_fees_line_item WHERE school_id=? " +
+                "OR student_fees_id IN (SELECT id FROM student_fees WHERE school_id=?) " +
+                "OR fee_head_id IN (SELECT id FROM fee_head WHERE school_id=?)", SCHOOL, SCHOOL, SCHOOL);
         jdbc.update("DELETE FROM student_fees WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM student_one_time_fee_charged WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM student_fee_config WHERE school_id=?", SCHOOL);
