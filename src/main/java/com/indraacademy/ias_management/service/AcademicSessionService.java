@@ -220,7 +220,9 @@ public class AcademicSessionService {
         sessionRepository.delete(session);
     }
 
-    private AcademicSessionDto toDto(AcademicSession entity) {
+    /** Package-private (not public) — reused by {@link AcademicSessionActivationService} so the
+     *  entity→DTO mapping isn't duplicated, without widening this service's public API. */
+    AcademicSessionDto toDto(AcademicSession entity) {
         return new AcademicSessionDto(
                 entity.getId(),
                 entity.getLabel(),

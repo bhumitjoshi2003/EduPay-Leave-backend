@@ -1,7 +1,12 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.dto.AcademicSessionDto;
+import com.indraacademy.ias_management.dto.ClassTeacherResponsibilityDtos.ActivationPreviewResult;
+import com.indraacademy.ias_management.dto.ClassTeacherResponsibilityDtos.SessionActivationOutcome;
+import com.indraacademy.ias_management.service.AcademicSessionActivationService;
 import com.indraacademy.ias_management.service.AcademicSessionService;
+import com.indraacademy.ias_management.service.ClassTeacherActivationService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +21,12 @@ public class AcademicSessionController {
 
     @Autowired
     private AcademicSessionService sessionService;
+
+    @Autowired
+    private AcademicSessionActivationService sessionActivationService;
+
+    @Autowired
+    private ClassTeacherActivationService classTeacherActivationService;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER', 'STUDENT', 'PARENT', 'SUB_ADMIN')")
@@ -35,10 +46,22 @@ public class AcademicSessionController {
         return ResponseEntity.ok(sessionService.createSession(dto));
     }
 
+    /** Phase G: making a session current now also activates its class-teacher responsibilities
+     *  into the live Teacher projection, in one atomic transaction — see
+     *  {@link AcademicSessionActivationService} for exactly why and how. */
     @PutMapping("/{sessionId}/set-current")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<AcademicSessionDto> setCurrentSession(@PathVariable Long sessionId) {
-        return ResponseEntity.ok(sessionService.setCurrentSession(sessionId));
+    public ResponseEntity<SessionActivationOutcome> setCurrentSession(@PathVariable Long sessionId, HttpServletRequest request) {
+        return ResponseEntity.ok(sessionActivationService.setCurrentSessionAndActivate(sessionId, request));
+    }
+
+    /** Read-only: what activating {@code sessionId}'s class-teacher configuration WOULD do if it
+     *  were made current right now — lets the "Make Current" confirmation show gains/changes/
+     *  removals (and whether the target has zero/invalid configuration) before committing. */
+    @GetMapping("/{sessionId}/activation-preview")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ActivationPreviewResult> getActivationPreview(@PathVariable Long sessionId) {
+        return ResponseEntity.ok(classTeacherActivationService.previewForSession(sessionId));
     }
 
     @DeleteMapping("/{sessionId}")

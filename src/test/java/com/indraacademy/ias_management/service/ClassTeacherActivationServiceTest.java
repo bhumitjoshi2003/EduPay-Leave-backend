@@ -425,6 +425,72 @@ class ClassTeacherActivationServiceTest {
         assertThat(preview.hasIssues()).isTrue();
     }
 
+    // ── previewForSession: Phase G "Make Current" pre-confirmation preview ─────────────────
+
+    @Test
+    void previewForSession_targetsAnExplicitSession_notWhateverIsCurrent() {
+        AcademicSession other = session(OTHER_SESSION_ID, false);
+        when(sessionAccess.requireOwnedSession(SCHOOL_ID, OTHER_SESSION_ID)).thenReturn(other);
+        when(responsibilityRepository.findByAcademicSessionIdAndSchoolId(OTHER_SESSION_ID, SCHOOL_ID))
+                .thenReturn(List.of());
+
+        ActivationPreviewResult preview = service.previewForSession(OTHER_SESSION_ID);
+
+        assertThat(preview.academicSessionId()).isEqualTo(OTHER_SESSION_ID);
+        verify(academicSessionService, never()).getCurrentSessionEntity();
+    }
+
+    @Test
+    void previewForSession_zeroConfiguredResponsibilities_reportsConfiguredCountZero() {
+        AcademicSession other = session(OTHER_SESSION_ID, false);
+        when(sessionAccess.requireOwnedSession(SCHOOL_ID, OTHER_SESSION_ID)).thenReturn(other);
+        when(responsibilityRepository.findByAcademicSessionIdAndSchoolId(OTHER_SESSION_ID, SCHOOL_ID))
+                .thenReturn(List.of());
+
+        ActivationPreviewResult preview = service.previewForSession(OTHER_SESSION_ID);
+
+        assertThat(preview.configuredCount()).isZero();
+        assertThat(preview.ineligibleTeacher()).isZero();
+        assertThat(preview.invalidClassOrSection()).isZero();
+    }
+
+    @Test
+    void previewForSession_configuredButAllIneligible_isDistinctFromZeroConfigured() {
+        AcademicSession other = session(OTHER_SESSION_ID, false);
+        when(sessionAccess.requireOwnedSession(SCHOOL_ID, OTHER_SESSION_ID)).thenReturn(other);
+        // Configured row exists, but its teacher does not resolve — ineligible, not absent.
+        when(responsibilityRepository.findByAcademicSessionIdAndSchoolId(OTHER_SESSION_ID, SCHOOL_ID))
+                .thenReturn(List.of(configured(CLASS_A_ID, null, "GHOST")));
+
+        ActivationPreviewResult preview = service.previewForSession(OTHER_SESSION_ID);
+
+        assertThat(preview.configuredCount()).isEqualTo(1);
+        assertThat(preview.ineligibleTeacher()).isEqualTo(1);
+        assertThat(preview.becomingLive()).isZero(); // nothing would go live — same numeric shape as zero-configured
+        assertThat(preview.clearing()).isZero();     // but this is NOT the "nothing configured" case
+    }
+
+    @Test
+    void previewForSession_configuredAndValidButAlreadyLive_isDistinctFromZeroConfigured() {
+        AcademicSession other = session(OTHER_SESSION_ID, false);
+        when(sessionAccess.requireOwnedSession(SCHOOL_ID, OTHER_SESSION_ID)).thenReturn(other);
+        Teacher t1 = teacher("T1", TeacherStatus.ACTIVE, "A", null);
+        stubTeacher(t1);
+        when(teacherRepository.findBySchoolIdAndClassTeacherIsNotNull(SCHOOL_ID)).thenReturn(List.of(t1));
+        when(teacherRepository.findByClassTeacherAndClassTeacherSectionIdIsNullAndSchoolId("A", SCHOOL_ID)).thenReturn(List.of(t1));
+        when(responsibilityRepository.findByAcademicSessionIdAndSchoolId(OTHER_SESSION_ID, SCHOOL_ID))
+                .thenReturn(List.of(configured(CLASS_A_ID, null, "T1")));
+
+        ActivationPreviewResult preview = service.previewForSession(OTHER_SESSION_ID);
+
+        assertThat(preview.configuredCount()).isEqualTo(1);
+        assertThat(preview.unchanged()).isEqualTo(1);
+        assertThat(preview.becomingLive()).isZero();
+        assertThat(preview.clearing()).isZero(); // same numeric shape as zero-configured, but genuinely configured
+        assertThat(preview.ineligibleTeacher()).isZero();
+        assertThat(preview.invalidClassOrSection()).isZero();
+    }
+
     // ── apply: unchanged from F4 ─────────────────────────────────────────────────────────────
 
     @Test

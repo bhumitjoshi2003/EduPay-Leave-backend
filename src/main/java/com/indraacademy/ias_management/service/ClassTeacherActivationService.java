@@ -78,19 +78,35 @@ public class ClassTeacherActivationService {
     public ActivationPreviewResult preview() {
         Long schoolId = securityUtil.getSchoolId();
         AcademicSession current = academicSessionService.getCurrentSessionEntity();
-        Diff diff = computeDiff(schoolId, current.getId());
+        return buildPreviewResult(schoolId, current);
+    }
+
+    /** As {@link #preview()}, but for an EXPLICIT target session rather than whatever is
+     *  currently current — lets a caller (e.g. the "Make Current" confirmation) see what
+     *  activating session X would do BEFORE X is actually made current. Tenant-scoped, read-only,
+     *  never writes. Reuses the exact same diff/state logic as {@link #preview()} so the two can
+     *  never drift out of sync with each other. */
+    @Transactional(readOnly = true)
+    public ActivationPreviewResult previewForSession(Long sessionId) {
+        Long schoolId = securityUtil.getSchoolId();
+        AcademicSession session = sessionAccess.requireOwnedSession(schoolId, sessionId);
+        return buildPreviewResult(schoolId, session);
+    }
+
+    private ActivationPreviewResult buildPreviewResult(Long schoolId, AcademicSession session) {
+        Diff diff = computeDiff(schoolId, session.getId());
         boolean inSync = diff.becomingLive() == 0 && diff.changing() == 0 && diff.clearing() == 0;
         boolean hasIssues = diff.ineligibleCount() > 0 || diff.invalidCount() > 0;
 
         Optional<ClassTeacherActivation> record =
-                activationRepository.findBySchoolIdAndAcademicSessionId(schoolId, current.getId());
+                activationRepository.findBySchoolIdAndAcademicSessionId(schoolId, session.getId());
         String currentFingerprint = fingerprint(diff.validConfigured());
         ActivationState state = resolveState(record, currentFingerprint, inSync);
 
-        return new ActivationPreviewResult(current.getId(), inSync, state,
+        return new ActivationPreviewResult(session.getId(), inSync, state,
                 record.map(ClassTeacherActivation::getAppliedAt).orElse(null),
                 record.map(ClassTeacherActivation::getAppliedBy).orElse(null),
-                hasIssues, diff.becomingLive(), diff.changing(), diff.unchanged(), diff.clearing(),
+                hasIssues, diff.configuredCount(), diff.becomingLive(), diff.changing(), diff.unchanged(), diff.clearing(),
                 diff.ineligibleCount(), diff.invalidCount(), diff.details());
     }
 
@@ -313,7 +329,7 @@ public class ClassTeacherActivationService {
             }
         }
 
-        return new Diff(validConfigured, protectedSlotKeys, details, becomingLive, changing, unchanged, clearing, ineligibleCount, invalidCount);
+        return new Diff(configuredRows.size(), validConfigured, protectedSlotKeys, details, becomingLive, changing, unchanged, clearing, ineligibleCount, invalidCount);
     }
 
     private Teacher lookupLiveTeacher(Long schoolId, String className, Long sectionId) {
@@ -336,7 +352,7 @@ public class ClassTeacherActivationService {
         TargetScope(String className, Long sectionId) { this.className = className; this.sectionId = sectionId; }
     }
 
-    private record Diff(List<ResolvedRow> validConfigured, java.util.Set<String> protectedSlotKeys,
+    private record Diff(int configuredCount, List<ResolvedRow> validConfigured, java.util.Set<String> protectedSlotKeys,
                          List<ActivationRowResult> details,
                          int becomingLive, int changing, int unchanged, int clearing,
                          int ineligibleCount, int invalidCount) {

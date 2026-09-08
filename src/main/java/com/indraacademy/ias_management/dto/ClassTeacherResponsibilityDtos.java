@@ -96,7 +96,14 @@ public class ClassTeacherResponsibilityDtos {
      *  ever explicitly activated (see {@code activationState} for that claim instead; do not
      *  treat one as proof of the other). {@code hasIssues} flags configuration problems
      *  (ineligible teacher, deleted class/section) that block a slot from ever going live until
-     *  an admin fixes the underlying row, independent of sync state. */
+     *  an admin fixes the underlying row, independent of sync state.
+     *
+     *  <p>{@code configuredCount} is the raw {@code class_teacher_responsibility} row count for
+     *  this session, BEFORE any validity filtering — deliberately exposed so a caller (e.g. the
+     *  "Make Current" confirmation) can distinguish "zero rows configured at all" from "rows
+     *  configured but every one is ineligible/invalid" from "rows configured and valid, but they
+     *  happen to already match live" without guessing from becomingLive/changing/clearing alone,
+     *  which cannot tell those three cases apart on their own. */
     public record ActivationPreviewResult(
             Long academicSessionId,
             boolean inSync,
@@ -104,6 +111,7 @@ public class ClassTeacherResponsibilityDtos {
             LocalDateTime lastAppliedAt,
             String lastAppliedBy,
             boolean hasIssues,
+            int configuredCount,
             int becomingLive,
             int changing,
             int unchanged,
@@ -128,6 +136,17 @@ public class ClassTeacherResponsibilityDtos {
             int ineligibleTeacher,
             int invalidClassOrSection,
             List<ActivationRowResult> details
+    ) {}
+
+    /** Result of the combined "make session current + activate its class-teacher
+     *  responsibilities" lifecycle action. {@code activationPerformed=false} means the target
+     *  was ALREADY the current session — a genuine no-op (no session-flag rewrite, no new
+     *  activation event, no provenance touched) rather than a redundant re-apply; {@code
+     *  activation} is null in that case. */
+    public record SessionActivationOutcome(
+            AcademicSessionDto session,
+            boolean activationPerformed,
+            ActivationApplyResult activation
     ) {}
 
     private ClassTeacherResponsibilityDtos() {}
