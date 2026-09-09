@@ -29,26 +29,11 @@ public class TimetableDtos {
     ) {}
 
     /**
-     * Body for POST /api/timetable/{id}/simultaneous. Deliberately carries only what actually
-     * differs between the two subjects — class/section/day/period/time are inherited from the
-     * existing entry server-side (see TimetableService#addSimultaneous), so the client can never
-     * send a mismatched slot, and the simultaneousGroup tag is generated/reused automatically
-     * rather than typed by the admin. {@code academicSessionId} must match the existing entry's
-     * actual session (fail closed otherwise) — see the class-level note on
-     * {@link TimetableEntryRequest} for why a TEACHER caller's value is ignored instead.
-     */
-    public record AddSimultaneousRequest(
-            Long academicSessionId,
-            @NotBlank(message = "Subject name is required.") String subjectName,
-            @NotBlank(message = "Please select a teacher.") String teacherId
-    ) {}
-
-    /**
      * Body for POST /api/timetable/copy-session — an explicit ADMIN action, never implicit or
      * automatic. The copy itself is always additive/idempotent: it never deletes, overwrites, or
      * replaces an existing target row (see TimetableSessionCopyWorker) — an exact match is
-     * reported {@code ALREADY_COPIED}, a genuinely different occupant is reported {@code CONFLICT}
-     * and left untouched, and only a truly empty, compatible slot is actually written.
+     * reported {@code ALREADY_COPIED}, and only a truly empty, compatible slot is actually
+     * written; any number of rows may otherwise coexist in the same target slot.
      * {@code confirmCurrentTarget} must be true when {@code targetAcademicSessionId} is the
      * school's current session — that's the one case worth a deliberate second thought, since the
      * target is a live, operational timetable, not because the copy would destroy anything there.
@@ -71,7 +56,6 @@ public class TimetableDtos {
             int skippedIneligibleTeacher,
             int skippedInvalidClass,
             int skippedInvalidSection,
-            int conflicts,
             int failures,
             java.util.List<CopyRowResult> details
     ) {}

@@ -17,7 +17,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -30,9 +29,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -41,12 +38,11 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for TimetableService's manual create/update/delete flow — wiring, tenant/session
- * isolation, canonical class/section resolution, and delegation to TimetableValidationService.
- * The validation rule matrix itself is covered exhaustively in TimetableValidationServiceTest;
- * here we mock that service and only assert TimetableService calls it correctly and respects its
- * verdict. Session ownership/writability is mocked via TimetableSessionAccessService directly
- * (its own rules are covered by TimetableSessionAccessServiceTest-equivalent behavior baked into
- * these mocks).
+ * isolation, canonical class/section resolution, and ownership authorization. The timetable is a
+ * permissive schedule record: this service never rejects a write because another row already
+ * occupies the same slot (same or different subject, same or different teacher) — reviewing and
+ * correcting such rows is the ADMIN's responsibility, not this service's. Session
+ * ownership/writability is mocked via TimetableSessionAccessService directly.
  */
 @ExtendWith(MockitoExtension.class)
 class TimetableServiceTest {
@@ -55,7 +51,6 @@ class TimetableServiceTest {
     @Mock private TeacherRepository teacherRepository;
     @Mock private SectionRepository sectionRepository;
     @Mock private SchoolClassRepository schoolClassRepository;
-    @Mock private TimetableValidationService timetableValidationService;
     @Mock private TeacherClassScopeService teacherClassScopeService;
     @Mock private com.indraacademy.ias_management.repository.TeacherClassGrantRepository teacherClassGrantRepository;
     @Mock private TimetableSessionAccessService sessionAccess;
@@ -80,7 +75,6 @@ class TimetableServiceTest {
         ReflectionTestUtils.setField(service, "teacherRepository", teacherRepository);
         ReflectionTestUtils.setField(service, "sectionRepository", sectionRepository);
         ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
-        ReflectionTestUtils.setField(service, "timetableValidationService", timetableValidationService);
         ReflectionTestUtils.setField(service, "teacherClassScopeService", teacherClassScopeService);
         ReflectionTestUtils.setField(service, "teacherClassGrantRepository", teacherClassGrantRepository);
         ReflectionTestUtils.setField(service, "sessionAccess", sessionAccess);
@@ -157,7 +151,7 @@ class TimetableServiceTest {
         return new TimetableEntryRequest(SESSION_ID, classId, sectionId, Day.MONDAY, 3, "09:00", "09:40", subject, teacherId);
     }
 
-    private TimetableEntry existing(String subject, String teacherId, Long classId, Long sectionId, String group) {
+    private TimetableEntry existing(String subject, String teacherId, Long classId, Long sectionId) {
         TimetableEntry e = new TimetableEntry();
         e.setId(5L);
         e.setSchoolId(SCHOOL_ID);
@@ -171,7 +165,6 @@ class TimetableServiceTest {
         e.setEndTime("09:40");
         e.setSubjectName(subject);
         e.setTeacherId(teacherId);
-        e.setSimultaneousGroup(group);
         return e;
     }
 
@@ -179,7 +172,7 @@ class TimetableServiceTest {
 
     @Test
     void getByClass_operationalRead_resolvesCurrentSessionAndScopesQuery() {
-        TimetableEntry row = existing("Mathematics", "T1", CLASS_10_ID, null, null);
+        TimetableEntry row = existing("Mathematics", "T1", CLASS_10_ID, null);
         when(timetableRepository.findByAcademicSessionIdAndClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(
                 SESSION_ID, "10", SCHOOL_ID)).thenReturn(List.of(row));
 
@@ -210,7 +203,7 @@ class TimetableServiceTest {
     void getByClassForSession_adminExplicitRead_usesRequestedSessionNotCurrent() {
         Long historicalSessionId = 5L;
         when(sessionAccess.requireOwnedSession(SCHOOL_ID, historicalSessionId)).thenReturn(session(historicalSessionId));
-        TimetableEntry row = existing("Mathematics", "T1", CLASS_10_ID, null, null);
+        TimetableEntry row = existing("Mathematics", "T1", CLASS_10_ID, null);
         when(timetableRepository.findByAcademicSessionIdAndClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(
                 historicalSessionId, "10", SCHOOL_ID)).thenReturn(List.of(row));
 
@@ -234,7 +227,7 @@ class TimetableServiceTest {
     // ── create ───────────────────────────────────────────────────────────────────────────────
 
     @Test
-    void create_resolvesCanonicalClassAndValidatesThenSaves() {
+    void create_resolvesCanonicalClassAndSaves() {
         TimetableEntryRequest req = req(CLASS_10_ID, null, "Mathematics", "T1");
 
         TimetableEntry saved = service.create(req, "ADMIN", "admin1", request);
@@ -244,7 +237,6 @@ class TimetableServiceTest {
         assertThat(saved.getClassId()).isEqualTo(CLASS_10_ID);
         assertThat(saved.getClassName()).isEqualTo("10");
         assertThat(saved.getTeacherName()).isEqualTo("Teacher Name");
-        verify(timetableValidationService).validate(any(TimetableEntry.class), eq(SCHOOL_ID), eq(SESSION_ID), eq(null));
         verify(timetableRepository).save(any(TimetableEntry.class));
     }
 
@@ -297,21 +289,24 @@ class TimetableServiceTest {
     }
 
     @Test
-    void create_propagatesValidationFailure_neverSaves() {
-        doThrow(new DataIntegrityViolationException("Period already assigned"))
-                .when(timetableValidationService).validate(any(), eq(SCHOOL_ID), eq(SESSION_ID), eq(null));
+    void create_neverChecksForAnExistingOccupantOfTheSameSlot() {
+        // The NEW product rule: the timetable never rejects a row for colliding with another row
+        // in the same school/session/class/section/day/period — same subject, different teacher,
+        // or anything else. Reviewing/correcting mistakes is the ADMIN's job, not this service's.
+        // Proven here by the absence of any query for existing occupants before saving.
+        TimetableEntry saved = service.create(req(CLASS_10_ID, null, "Mathematics", "T2"), "ADMIN", "admin1", request);
 
-        assertThatThrownBy(() -> service.create(req(CLASS_10_ID, null, "Mathematics", "T1"), "ADMIN", "admin1", request))
-                .isInstanceOf(DataIntegrityViolationException.class);
-
-        verify(timetableRepository, never()).save(any());
+        assertThat(saved).isNotNull();
+        assertThat(saved.getTeacherId()).isEqualTo("T2");
+        verify(timetableRepository).save(any(TimetableEntry.class));
+        verify(timetableRepository, never()).findByAcademicSessionIdAndClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(any(), any(), any());
     }
 
     // ── create — TEACHER self-service ("+ Add Period" from a teacher's own schedule) ──
 
     @Test
     void create_teacherRole_targetsCurrentSessionRegardlessOfRequest_andForcesOwnTeacherId() {
-        TimetableEntry alreadyTeaches = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID, null);
+        TimetableEntry alreadyTeaches = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID);
         when(timetableRepository.findByAcademicSessionIdAndTeacherIdAndSchoolId(SESSION_ID, "T1", SCHOOL_ID))
                 .thenReturn(List.of(alreadyTeaches));
 
@@ -347,7 +342,7 @@ class TimetableServiceTest {
 
     @Test
     void create_teacherRole_alreadyTeachesClassAndSectionThisSession_allowed() {
-        TimetableEntry alreadyTeaches = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID, null);
+        TimetableEntry alreadyTeaches = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID);
         when(timetableRepository.findByAcademicSessionIdAndTeacherIdAndSchoolId(SESSION_ID, "T1", SCHOOL_ID))
                 .thenReturn(List.of(alreadyTeaches));
 
@@ -367,7 +362,6 @@ class TimetableServiceTest {
         TimetableEntry saved = service.create(req(CLASS_11_ID, SECTION_5_ID, "Mathematics", "T1"), "TEACHER", "T1", request);
 
         assertThat(saved).isNotNull();
-        verify(timetableValidationService).validate(any(), eq(SCHOOL_ID), eq(SESSION_ID), eq(null));
     }
 
     @Test
@@ -380,7 +374,6 @@ class TimetableServiceTest {
         assertThatThrownBy(() -> service.create(req(CLASS_11_ID, SECTION_5_ID, "Mathematics", "T1"), "TEACHER", "T1", request))
                 .isInstanceOf(SecurityException.class);
 
-        verify(timetableValidationService, never()).validate(any(), anyLong(), anyLong(), any());
         verify(timetableRepository, never()).save(any());
     }
 
@@ -413,7 +406,6 @@ class TimetableServiceTest {
         TimetableEntry saved = service.create(req(CLASS_12_ID, SECTION_9_ID, "Mathematics", "T1"), "TEACHER", "T1", request);
 
         assertThat(saved).isNotNull();
-        verify(timetableValidationService).validate(any(), eq(SCHOOL_ID), eq(SESSION_ID), eq(null));
     }
 
     @Test
@@ -434,22 +426,34 @@ class TimetableServiceTest {
     // ── update ───────────────────────────────────────────────────────────────────────────────
 
     @Test
-    void update_mergesIncomingFieldsAndValidatesExcludingSelf() {
-        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null, null);
+    void update_mergesIncomingFieldsAndSaves() {
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
         TimetableEntry saved = service.update(5L, req(CLASS_10_ID, null, "Mathematics", "T2"), request);
 
-        ArgumentCaptor<TimetableEntry> captor = ArgumentCaptor.forClass(TimetableEntry.class);
-        verify(timetableValidationService).validate(captor.capture(), eq(SCHOOL_ID), eq(SESSION_ID), eq(5L));
-        assertThat(captor.getValue().getSubjectName()).isEqualTo("Mathematics");
         assertThat(saved.getSubjectName()).isEqualTo("Mathematics");
         assertThat(saved.getTeacherId()).isEqualTo("T2");
     }
 
     @Test
+    void update_targetSlotAlreadyOccupiedByAnotherRow_stillSucceeds() {
+        // The service performs no slot-occupancy check at all any more — updating into a slot
+        // that another row (or several) already occupies is not even a query it makes, let alone
+        // a rejection.
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+
+        TimetableEntry saved = service.update(5L, req(CLASS_10_ID, null, "Mathematics", "T1"), request);
+
+        assertThat(saved.getSubjectName()).isEqualTo("Mathematics");
+        verify(timetableRepository).save(existing);
+        verify(timetableRepository, never()).findByAcademicSessionIdAndClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(any(), any(), any());
+    }
+
+    @Test
     void update_requestedSessionDoesNotMatchEntrysActualSession_rejectedClosed() {
-        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null, null);
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
         existing.setAcademicSessionId(999L); // different session than the request will claim
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
@@ -457,13 +461,12 @@ class TimetableServiceTest {
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("does not match");
 
-        verify(timetableValidationService, never()).validate(any(), anyLong(), anyLong(), any());
         verify(timetableRepository, never()).save(any());
     }
 
     @Test
     void update_targetsHistoricalSession_rejected() {
-        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null, null);
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
         when(sessionAccess.requireWritableOwnedSession(SCHOOL_ID, SESSION_ID))
                 .thenThrow(new IllegalStateException("Session has ended and is read-only."));
@@ -474,21 +477,19 @@ class TimetableServiceTest {
 
     @Test
     void update_entryFromAnotherSchool_notFound() {
-        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null, null);
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
         existing.setSchoolId(999L); // different school
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> service.update(5L, req(CLASS_10_ID, null, "Mathematics", "T2"), request))
                 .isInstanceOf(NoSuchElementException.class);
-
-        verify(timetableValidationService, never()).validate(any(), anyLong(), anyLong(), any());
     }
 
     // ── delete ───────────────────────────────────────────────────────────────────────────────
 
     @Test
     void delete_entryFromAnotherSchool_notFound() {
-        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null, null);
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
         existing.setSchoolId(999L);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
@@ -500,7 +501,7 @@ class TimetableServiceTest {
 
     @Test
     void delete_requestedSessionMismatch_rejectedClosed() {
-        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null, null);
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> service.delete(5L, 999L /* wrong session */, request))
@@ -511,7 +512,7 @@ class TimetableServiceTest {
 
     @Test
     void delete_ownSchoolAndSessionEntry_succeeds() {
-        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null, null);
+        TimetableEntry existing = existing("Hindi", "T1", CLASS_10_ID, null);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
         service.delete(5L, SESSION_ID, request);
@@ -519,132 +520,52 @@ class TimetableServiceTest {
         verify(timetableRepository, times(1)).deleteById(5L);
     }
 
-    // ── addSimultaneous ("+ Simultaneous" — automatic tag, no admin input) ────────────
+    // ── TEACHER self-service update/delete — ownership only, never a class-authorization bypass ──
 
     @Test
-    void addSimultaneous_existingHasNoGroup_generatesAndSharesTagWithNewEntry() {
-        TimetableEntry existing = existing("Mathematics", "T1", CLASS_10_ID, null, null);
+    void update_teacherOwnEntry_allowed() {
+        TimetableEntry existing = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
-
-        TimetableEntry saved = service.addSimultaneous(5L, SESSION_ID, "Biology", "T2", "ADMIN", "admin1", request);
-
-        assertThat(existing.getSimultaneousGroup()).isNotBlank();
-        assertThat(saved.getSimultaneousGroup()).isEqualTo(existing.getSimultaneousGroup());
-        assertThat(saved.getSubjectName()).isEqualTo("Biology");
-        assertThat(saved.getTeacherId()).isEqualTo("T2");
-        assertThat(saved.getClassId()).isEqualTo(CLASS_10_ID);
-        assertThat(saved.getAcademicSessionId()).isEqualTo(SESSION_ID);
-        assertThat(saved.getDay()).isEqualTo(existing.getDay());
-        assertThat(saved.getPeriodNumber()).isEqualTo(existing.getPeriodNumber());
-        assertThat(saved.getSchoolId()).isEqualTo(SCHOOL_ID);
-
-        // existing was re-saved with its new tag, and the candidate was saved with the same tag
-        verify(timetableRepository, times(2)).save(any(TimetableEntry.class));
-    }
-
-    @Test
-    void addSimultaneous_existingAlreadyHasGroup_reusesTag_doesNotResaveExisting() {
-        TimetableEntry existing = existing("Mathematics", "T1", CLASS_10_ID, null, "MATH_BIO");
-        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
-
-        TimetableEntry saved = service.addSimultaneous(5L, SESSION_ID, "Biology", "T2", "ADMIN", "admin1", request);
-
-        assertThat(saved.getSimultaneousGroup()).isEqualTo("MATH_BIO");
-        // existing already had a tag — only the new candidate should be persisted
-        verify(timetableRepository, times(1)).save(any(TimetableEntry.class));
-    }
-
-    @Test
-    void addSimultaneous_requestedSessionMismatch_rejectedClosed() {
-        TimetableEntry existing = existing("Mathematics", "T1", CLASS_10_ID, null, "MATH_BIO");
-        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
-
-        assertThatThrownBy(() -> service.addSimultaneous(5L, 999L, "Biology", "T2", "ADMIN", "admin1", request))
-                .isInstanceOf(DataIntegrityViolationException.class);
-
-        verify(timetableRepository, never()).save(any());
-    }
-
-    @Test
-    void addSimultaneous_validatesCandidateAgainstSharedValidationService() {
-        TimetableEntry existing = existing("Mathematics", "T1", CLASS_10_ID, null, "MATH_BIO");
-        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
-
-        service.addSimultaneous(5L, SESSION_ID, "Biology", "T2", "ADMIN", "admin1", request);
-
-        ArgumentCaptor<TimetableEntry> captor = ArgumentCaptor.forClass(TimetableEntry.class);
-        verify(timetableValidationService).validate(captor.capture(), eq(SCHOOL_ID), eq(SESSION_ID), org.mockito.ArgumentMatchers.isNull());
-        assertThat(captor.getValue().getSimultaneousGroup()).isEqualTo("MATH_BIO");
-        assertThat(captor.getValue().getSubjectName()).isEqualTo("Biology");
-    }
-
-    @Test
-    void addSimultaneous_validationFails_candidateNeverSaved() {
-        TimetableEntry existing = existing("Mathematics", "T1", CLASS_10_ID, null, "MATH_BIO");
-        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
-        doThrow(new DataIntegrityViolationException("Teacher already has an overlapping period"))
-                .when(timetableValidationService).validate(any(TimetableEntry.class), eq(SCHOOL_ID), eq(SESSION_ID), org.mockito.ArgumentMatchers.isNull());
-
-        assertThatThrownBy(() -> service.addSimultaneous(5L, SESSION_ID, "Biology", "T2", "ADMIN", "admin1", request))
-                .isInstanceOf(DataIntegrityViolationException.class);
-
-        // existing already had a tag (no pre-save needed), and validation rejected the
-        // candidate before it could be persisted
-        verify(timetableRepository, never()).save(any());
-    }
-
-    @Test
-    void addSimultaneous_entryFromAnotherSchool_notFound() {
-        TimetableEntry existing = existing("Mathematics", "T1", CLASS_10_ID, null, null);
-        existing.setSchoolId(999L);
-        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
-
-        assertThatThrownBy(() -> service.addSimultaneous(5L, SESSION_ID, "Biology", "T2", "ADMIN", "admin1", request))
-                .isInstanceOf(NoSuchElementException.class);
-
-        verify(timetableValidationService, never()).validate(any(), anyLong(), anyLong(), any());
-    }
-
-    // ── addSimultaneous — TEACHER self-service ────────────────────────────────────────
-
-    @Test
-    void addSimultaneous_teacherRole_forcesOwnTeacherId_ignoringRequestedTeacherId() {
-        TimetableEntry existing = existing("Mathematics", "T1", CLASS_11_ID, SECTION_5_ID, "MATH_BIO");
-        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
-        TimetableEntry alreadyTeaches = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID, null);
         when(timetableRepository.findByAcademicSessionIdAndTeacherIdAndSchoolId(SESSION_ID, "T1", SCHOOL_ID))
-                .thenReturn(List.of(alreadyTeaches));
+                .thenReturn(List.of(existing));
 
-        TimetableEntry saved = service.addSimultaneous(5L, null /* ignored for TEACHER */, "Biology",
-                "T999" /* spoofed */, "TEACHER", "T1", request);
+        TimetableEntry saved = service.update(5L, req(CLASS_11_ID, SECTION_5_ID, "Mathematics", "T1"), "TEACHER", "T1", request);
 
+        assertThat(saved.getSubjectName()).isEqualTo("Mathematics");
         assertThat(saved.getTeacherId()).isEqualTo("T1");
     }
 
     @Test
-    void addSimultaneous_teacherRole_entryNotInCurrentSession_rejected() {
-        TimetableEntry existing = existing("Mathematics", "T2", CLASS_11_ID, SECTION_5_ID, "MATH_BIO");
-        existing.setAcademicSessionId(999L); // not the current session
+    void update_teacherAnotherTeachersEntry_rejected() {
+        TimetableEntry existing = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> service.addSimultaneous(5L, null, "Biology", "T1", "TEACHER", "T1", request))
-                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> service.update(5L, req(CLASS_11_ID, SECTION_5_ID, "Mathematics", "T2"), "TEACHER", "T2", request))
+                .isInstanceOf(SecurityException.class);
 
         verify(timetableRepository, never()).save(any());
     }
 
     @Test
-    void addSimultaneous_teacherRole_notConnectedToExistingEntrysClass_rejected() {
-        TimetableEntry existing = existing("Mathematics", "T2", CLASS_11_ID, SECTION_5_ID, "MATH_BIO");
+    void delete_teacherOwnEntry_allowed() {
+        TimetableEntry existing = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID);
         when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
         when(timetableRepository.findByAcademicSessionIdAndTeacherIdAndSchoolId(SESSION_ID, "T1", SCHOOL_ID))
-                .thenReturn(List.of());
-        when(teacherClassScopeService.resolveOwnScope("T1", SCHOOL_ID))
-                .thenReturn(new TeacherClassScopeService.TeacherScope(null, null, false));
+                .thenReturn(List.of(existing));
 
-        assertThatThrownBy(() -> service.addSimultaneous(5L, null, "Biology", "T1", "TEACHER", "T1", request))
+        service.delete(5L, SESSION_ID, "TEACHER", "T1", request);
+
+        verify(timetableRepository).deleteById(5L);
+    }
+
+    @Test
+    void delete_teacherAnotherTeachersEntry_rejected() {
+        TimetableEntry existing = existing("Physics", "T1", CLASS_11_ID, SECTION_5_ID);
+        when(timetableRepository.findById(5L)).thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> service.delete(5L, SESSION_ID, "TEACHER", "T2", request))
                 .isInstanceOf(SecurityException.class);
 
-        verify(timetableRepository, never()).save(any());
+        verify(timetableRepository, never()).deleteById(any());
     }
 }

@@ -9,7 +9,6 @@ import com.indraacademy.ias_management.repository.SchoolClassRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.TimetableRepository;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,19 +28,16 @@ public class TimetableSessionCopyWorker {
     private final SchoolClassRepository schoolClassRepository;
     private final SectionRepository sectionRepository;
     private final TeacherRepository teacherRepository;
-    private final TimetableValidationService timetableValidationService;
 
     public TimetableSessionCopyWorker(
             TimetableRepository timetableRepository,
             SchoolClassRepository schoolClassRepository,
             SectionRepository sectionRepository,
-            TeacherRepository teacherRepository,
-            TimetableValidationService timetableValidationService) {
+            TeacherRepository teacherRepository) {
         this.timetableRepository = timetableRepository;
         this.schoolClassRepository = schoolClassRepository;
         this.sectionRepository = sectionRepository;
         this.teacherRepository = teacherRepository;
-        this.timetableValidationService = timetableValidationService;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -99,12 +95,6 @@ public class TimetableSessionCopyWorker {
             }
         }
 
-        try {
-            timetableValidationService.validate(candidate, schoolId, targetSessionId, null);
-        } catch (DataIntegrityViolationException e) {
-            return Evaluation.conflict(e.getMessage());
-        }
-
         TimetableEntry saved = timetableRepository.save(candidate);
         return Evaluation.copied(saved);
     }
@@ -135,14 +125,13 @@ public class TimetableSessionCopyWorker {
 
     public enum Outcome {
         COPIED, ALREADY_COPIED, SKIPPED_INELIGIBLE_TEACHER, SKIPPED_INVALID_CLASS,
-        SKIPPED_INVALID_SECTION, CONFLICT, FAILURE
+        SKIPPED_INVALID_SECTION, FAILURE
     }
 
     public record Evaluation(Outcome outcome, String reason, TimetableEntry entry) {
         static Evaluation copied(TimetableEntry entry) { return new Evaluation(Outcome.COPIED, "Copied", entry); }
         static Evaluation alreadyCopied(TimetableEntry entry) { return new Evaluation(Outcome.ALREADY_COPIED, "Already copied", entry); }
         static Evaluation skipped(Outcome outcome, String reason) { return new Evaluation(outcome, reason, null); }
-        static Evaluation conflict(String reason) { return new Evaluation(Outcome.CONFLICT, reason, null); }
         static Evaluation failure(String reason) { return new Evaluation(Outcome.FAILURE, reason, null); }
     }
 }

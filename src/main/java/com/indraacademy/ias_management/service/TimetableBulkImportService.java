@@ -52,16 +52,17 @@ import java.util.regex.Pattern;
  *  End Time     | endTime      | yes      | HH:mm, 24-hour, must be after Start Time
  *  Subject      | subjectName  | yes      |
  *  Teacher ID   | teacherId    | yes      | Must match an existing teacher in this school
- *  Simultaneous Group | simultaneousGroup | no | Blank = normal entry. A shared, admin-defined
- *                 tag (e.g. "MATH_BIO") lets two or more rows occupy the exact same
- *                 class+section+day+period+time — see TimetableValidationService.
+ *
+ * <p>The timetable is a permissive schedule record — any number of rows may occupy the same
+ * school/session/class/section/day/period, including the same subject or the same teacher. This
+ * import never rejects a row for colliding with another row, in the file or already saved; the
+ * admin is responsible for reviewing and correcting the imported schedule.
+ *
+ * <p>Columns matched by name, not position: an older CSV that still carries a now-obsolete
+ * "Simultaneous Group" column continues to import cleanly — that column is simply never looked up.
  *
  * Processing rules:
- * - Each valid row is saved immediately, so a slot/teacher-schedule state already saved earlier
- *   in the same file is visible to {@link TimetableValidationService} when validating later rows
- *   — two rows conflicting with each other are caught exactly like a conflict against a row that
- *   already existed before the import, matching TimetableService.create()'s own behavior. This
- *   is also how two Simultaneous-Group rows in the same file correctly link to each other.
+ * - Each valid row is saved immediately.
  * - A row whose Class doesn't match an existing school class is rejected rather than silently
  *   stored as free text: an unmatched class name would create a timetable no admin's class
  *   dropdown could ever surface.
@@ -73,7 +74,7 @@ public class TimetableBulkImportService {
     private static final Logger log = LoggerFactory.getLogger(TimetableBulkImportService.class);
 
     public static final String[] TEMPLATE_HEADERS = {
-            "Class", "Section", "Day", "Period", "Start Time", "End Time", "Subject", "Teacher ID", "Simultaneous Group"
+            "Class", "Section", "Day", "Period", "Start Time", "End Time", "Subject", "Teacher ID"
     };
 
     private static final Pattern TIME_PATTERN = Pattern.compile("^([01]\\d|2[0-3]):[0-5]\\d$");
@@ -82,7 +83,6 @@ public class TimetableBulkImportService {
     @Autowired private TeacherRepository teacherRepository;
     @Autowired private SectionRepository sectionRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
-    @Autowired private TimetableValidationService timetableValidationService;
     @Autowired private TimetableSessionAccessService sessionAccess;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
@@ -123,16 +123,14 @@ public class TimetableBulkImportService {
                     label = buildLabel(entry);
                     entry.setSchoolId(schoolId);
                     entry.setAcademicSessionId(academicSessionId);
-                    timetableValidationService.validate(entry, schoolId, academicSessionId, null);
 
                     TimetableEntry saved = timetableRepository.save(entry);
                     created.add(new RowSuccess(rowNum, label, saved.getId()));
                     log.info("Bulk import: row {} saved (timetableEntryId={}, sessionId={})", rowNum, saved.getId(), academicSessionId);
 
                 } catch (DataIntegrityViolationException e) {
-                    // Expected business-rule rejection (slot conflict, group mismatch, teacher
-                    // double-booking, exact duplicate) — the message is already specific and
-                    // user-facing, not a bug, so it's reported as-is without an "Unexpected" prefix.
+                    // A genuine DB-level constraint violation (not a business collision rule —
+                    // those no longer exist here) — reported as-is, not a bug.
                     errors.add(new RowError(rowNum, label, e.getMessage()));
                 } catch (Exception e) {
                     log.error("Bulk import: unexpected error on row {}", rowNum, e);
@@ -162,7 +160,6 @@ public class TimetableBulkImportService {
         String endTime      = getCol(row, columnIndex, "end time");
         String subjectName  = getCol(row, columnIndex, "subject");
         String teacherId    = getCol(row, columnIndex, "teacher id");
-        String simultaneousGroup = getCol(row, columnIndex, "simultaneous group");
 
         if (className.isEmpty()) {
             errors.add(new RowError(rowNum, "row " + rowNum, "Class is required")); return null;
@@ -241,7 +238,6 @@ public class TimetableBulkImportService {
         entry.setSubjectName(subjectName);
         entry.setTeacherId(teacherId);
         entry.setTeacherName(teacher.get().getName());
-        entry.setSimultaneousGroup(simultaneousGroup.isEmpty() ? null : simultaneousGroup);
         return entry;
     }
 

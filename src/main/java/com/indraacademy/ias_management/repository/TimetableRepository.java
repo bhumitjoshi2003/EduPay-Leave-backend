@@ -27,15 +27,6 @@ public interface TimetableRepository extends JpaRepository<TimetableEntry, Long>
     // ── Teacher schedule ───────────────────────────────────────────────────
     List<TimetableEntry> findByTeacherIdAndSchoolIdOrderByDayAscPeriodNumberAsc(String teacherId, Long schoolId);
 
-    // ── Slot occupants (section-specific) — used by TimetableValidationService to check
-    //    whether a candidate row may join an existing slot (same or matching simultaneousGroup)
-    //    or must be rejected as a conflict. ───────────────────────────────────────────────
-    List<TimetableEntry> findByClassNameAndSectionIdAndDayAndPeriodNumberAndSchoolId(String className, Long sectionId, Day day, Integer periodNumber, Long schoolId);
-    List<TimetableEntry> findByClassNameAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(String className, Day day, Integer periodNumber, Long schoolId);
-
-    // ── A teacher's schedule for one day — used for cross-class time-overlap conflict checks.
-    List<TimetableEntry> findByTeacherIdAndDayAndSchoolId(String teacherId, Day day, Long schoolId);
-
     List<TimetableEntry> findBySchoolId(Long schoolId);
 
     // ── Phase F3: session-scoped authority. Every method below binds a non-null
@@ -54,17 +45,14 @@ public interface TimetableRepository extends JpaRepository<TimetableEntry, Long>
     List<TimetableEntry> findByAcademicSessionIdAndTeacherIdAndSchoolId(
             Long academicSessionId, String teacherId, Long schoolId);
 
-    // Slot occupants keyed by canonical classId (not the className string) — used by the
-    // session-scoped validator for new/updated entries.
+    // Slot occupants keyed by canonical classId (not the className string) — used by
+    // TimetableSessionCopyWorker's idempotency check (has this exact row already been copied
+    // into the target session?). The timetable itself imposes no collision rule on a slot: any
+    // number of rows may occupy it.
     List<TimetableEntry> findByAcademicSessionIdAndClassIdAndSectionIdAndDayAndPeriodNumberAndSchoolId(
             Long academicSessionId, Long classId, Long sectionId, Day day, Integer periodNumber, Long schoolId);
     List<TimetableEntry> findByAcademicSessionIdAndClassIdAndSectionIdIsNullAndDayAndPeriodNumberAndSchoolId(
             Long academicSessionId, Long classId, Day day, Integer periodNumber, Long schoolId);
-
-    // A teacher's schedule for one day, within one session — the session-scoped teacher-overlap
-    // check ("same weekly teacher/time slot in two different sessions is valid").
-    List<TimetableEntry> findByAcademicSessionIdAndTeacherIdAndDayAndSchoolId(
-            Long academicSessionId, String teacherId, Day day, Long schoolId);
 
     List<TimetableEntry> findByAcademicSessionIdAndSchoolId(Long academicSessionId, Long schoolId);
 

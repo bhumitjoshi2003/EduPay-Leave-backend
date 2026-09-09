@@ -70,7 +70,7 @@ public class TimetableSessionCopyService {
 
         List<TimetableEntry> sourceRows = timetableRepository.findByAcademicSessionIdAndSchoolId(sourceSessionId, schoolId);
 
-        int copied = 0, alreadyCopied = 0, skippedTeacher = 0, skippedClass = 0, skippedSection = 0, conflicts = 0, failures = 0;
+        int copied = 0, alreadyCopied = 0, skippedTeacher = 0, skippedClass = 0, skippedSection = 0, failures = 0;
         List<CopyRowResult> details = new ArrayList<>(sourceRows.size());
 
         for (TimetableEntry row : sourceRows) {
@@ -92,7 +92,6 @@ public class TimetableSessionCopyService {
                 case SKIPPED_INELIGIBLE_TEACHER -> skippedTeacher++;
                 case SKIPPED_INVALID_CLASS -> skippedClass++;
                 case SKIPPED_INVALID_SECTION -> skippedSection++;
-                case CONFLICT -> conflicts++;
                 case FAILURE -> failures++;
             }
             Long targetEntryId = evaluation.entry() != null ? evaluation.entry().getId() : null;
@@ -101,12 +100,12 @@ public class TimetableSessionCopyService {
 
         CopySessionResult result = new CopySessionResult(
                 sourceSessionId, targetSessionId, sourceRows.size(), copied, alreadyCopied,
-                skippedTeacher, skippedClass, skippedSection, conflicts, failures, List.copyOf(details));
+                skippedTeacher, skippedClass, skippedSection, failures, List.copyOf(details));
 
         log.warn("Timetable session copy completed: source={}, target={}, scanned={}, copied={}, alreadyCopied={}, "
-                        + "skippedIneligibleTeacher={}, skippedInvalidClass={}, skippedInvalidSection={}, conflicts={}, failures={}",
+                        + "skippedIneligibleTeacher={}, skippedInvalidClass={}, skippedInvalidSection={}, failures={}",
                 sourceSessionId, targetSessionId, result.scanned(), copied, alreadyCopied,
-                skippedTeacher, skippedClass, skippedSection, conflicts, failures);
+                skippedTeacher, skippedClass, skippedSection, failures);
 
         try {
             auditService.log(

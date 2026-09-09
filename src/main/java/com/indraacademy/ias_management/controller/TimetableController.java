@@ -133,8 +133,6 @@ public class TimetableController {
         try {
             TimetableEntry saved = timetableService.create(req, authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.status(HttpStatus.CREATED).body(saved);
-        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             // Surfaces the specific reason (slot conflict, group mismatch, teacher double-booking,
             // session mismatch, etc.) rather than letting GlobalExceptionHandler's generic 409
@@ -162,41 +160,6 @@ public class TimetableController {
         try {
             TimetableEntry saved = timetableService.update(id, req, authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.ok(saved);
-        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
-        } catch (DataIntegrityViolationException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
-        } catch (SecurityException e) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
-        } catch (java.util.NoSuchElementException | IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (IllegalStateException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
-        }
-    }
-
-    /**
-     * POST /api/timetable/{id}/simultaneous
-     * ADMIN / SUPER_ADMIN: any teacher, {@code body.academicSessionId} must match entry {id}'s
-     * actual session. TEACHER: always assigned to themselves regardless of {@code body.teacherId},
-     * must already teach or be the class-teacher of entry {id}'s class/section in the current
-     * session, and entry {id} must itself belong to the current session — enforced server-side in
-     * TimetableService#addSimultaneous. Adds a second subject to the same slot as entry {id} —
-     * the "+ Simultaneous" action. Class/section/day/period/time/session are inherited
-     * server-side from the existing entry and the simultaneousGroup tag is generated/reused
-     * automatically.
-     */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
-    @PostMapping("/{id}/simultaneous")
-    public ResponseEntity<?> addSimultaneous(@PathVariable Long id,
-            @Valid @RequestBody TimetableDtos.AddSimultaneousRequest body, HttpServletRequest request) {
-        log.info("POST timetable/{}/simultaneous", id);
-        try {
-            TimetableEntry saved = timetableService.addSimultaneous(id, body.academicSessionId(), body.subjectName(),
-                    body.teacherId(), authService.getRole(), authService.getUserId(), request);
-            return ResponseEntity.status(HttpStatus.CREATED).body(saved);
-        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         } catch (SecurityException e) {
@@ -221,8 +184,6 @@ public class TimetableController {
         try {
             timetableService.delete(id, academicSessionId, authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.noContent().build();
-        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         } catch (SecurityException e) {
@@ -255,8 +216,6 @@ public class TimetableController {
             return ResponseEntity.ok(result);
         } catch (java.util.NoSuchElementException | IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         }

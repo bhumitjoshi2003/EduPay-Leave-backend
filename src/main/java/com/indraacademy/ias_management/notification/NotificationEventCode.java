@@ -1,9 +1,6 @@
 package com.indraacademy.ias_management.notification;
 
 public enum NotificationEventCode {
-    TIMETABLE_CORRECTION_SUBMITTED,
-    TIMETABLE_CORRECTION_APPROVED,
-    TIMETABLE_CORRECTION_REJECTED,
     NOTICE_PUBLISHED,
     LEAVE_SUBMITTED,
     LEAVE_APPROVED,

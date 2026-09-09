@@ -91,7 +91,7 @@ import static org.mockito.Mockito.mock;
         ReportCardTemplateService.class, WeightageCalculationEngine.class,
         ReportCardPublicationService.class,
         TimetableSessionCopyService.class, TimetableSessionCopyWorker.class,
-        TimetableSessionAccessService.class, TimetableValidationService.class,
+        TimetableSessionAccessService.class,
         ClassTeacherResponsibilityService.class, FeeRuleService.class, TeacherClassScopeService.class,
         StudentPromotionService.class, StudentYearEndWorker.class, StudentYearEndService.class,
         FeeGenerationTargetService.class, FeeCalculationService.class,
@@ -429,7 +429,6 @@ class AcademicYearRolloverE2EPostgresIT {
         CopySessionResult first = timetableSessionCopyService.copy(SESSION_2026, target, false, req);
         assertThat(first.scanned()).isEqualTo(3);
         assertThat(first.copied()).isEqualTo(3);
-        assertThat(first.conflicts()).isZero();
         assertThat(first.failures()).isZero();
 
         assertThat(jdbc.queryForObject(

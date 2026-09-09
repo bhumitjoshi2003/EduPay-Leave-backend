@@ -38,15 +38,18 @@ import java.util.Set;
  * admin-facing observation) whenever this row would be the ONLY occupant of its class/section/day
  * /period slot carrying that tag — a genuine simultaneous pairing normally has 2+ rows sharing a
  * slot. This is deliberately independent of {@code outcome}: a lone tag does not itself violate
- * any technical rule (an ungrouped single-occupant slot is exactly today's normal case, and
- * {@link TimetableValidationService#validate} already treats "first entry in this slot" as fine),
- * so it never by itself blocks adoption. What DOES block adoption (technical conflict, not
- * semantic concern) is two candidates at the same slot with different/missing tags, mismatched
- * times, or a duplicate subject/teacher pair within the same tag — the exact rules
- * {@code TimetableValidationService} already enforces for live writes, reimplemented here against
- * the whole legacy batch at once (that service operates on one already-persisted candidate at a
- * time and requires a resolved {@code classId}, neither of which fits a batch-classification pass
- * over rows that don't have one yet).
+ * any rule, so it never by itself blocks adoption.
+ *
+ * <p><b>Note (post-timetable-rearchitecture)</b>: the live timetable write path
+ * ({@link TimetableService}) no longer enforces any slot/teacher-overlap/subject-ownership
+ * collision rule — any number of rows may occupy the same school/session/class/section/day/period.
+ * This worker's own technical-conflict classification below (two candidates at the same slot with
+ * different/missing tags, mismatched times, or a duplicate subject/teacher pair within the same
+ * tag) is this tool's own, self-contained batch-classification logic for the separate,
+ * one-time legacy-adoption use case — it was never delegated to the (now-removed)
+ * {@code TimetableValidationService}, and is unaffected by its removal. It remains solely because
+ * PROD currently has zero rows with {@code academic_session_id IS NULL} left to adopt (verified
+ * read-only); revisit this tool's semantics if that ever changes.
  *
  * <p>Collision tracking (V55 slot uniqueness, teacher-overlap) is seeded from whatever already
  * legitimately occupies the target session (rows F3+ already wrote there, if any) and then grown

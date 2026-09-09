@@ -134,27 +134,35 @@ class TimetableSessionCopyServiceTest {
 
     @Test
     void aggregatesWorkerOutcomesAcrossAllOutcomeTypes() {
-        TimetableEntry r1 = row(1L), r2 = row(2L), r3 = row(3L), r4 = row(4L), r5 = row(5L), r6 = row(6L);
+        TimetableEntry r1 = row(1L), r2 = row(2L), r3 = row(3L), r4 = row(4L), r5 = row(5L);
         when(timetableRepository.findByAcademicSessionIdAndSchoolId(SOURCE_ID, SCHOOL_ID))
-                .thenReturn(List.of(r1, r2, r3, r4, r5, r6));
+                .thenReturn(List.of(r1, r2, r3, r4, r5));
         when(worker.attempt(SCHOOL_ID, r1, TARGET_ID)).thenReturn(Evaluation.copied(row(101L)));
         when(worker.attempt(SCHOOL_ID, r2, TARGET_ID)).thenReturn(Evaluation.alreadyCopied(row(102L)));
         when(worker.attempt(SCHOOL_ID, r3, TARGET_ID)).thenReturn(Evaluation.skipped(Outcome.SKIPPED_INELIGIBLE_TEACHER, "left"));
         when(worker.attempt(SCHOOL_ID, r4, TARGET_ID)).thenReturn(Evaluation.skipped(Outcome.SKIPPED_INVALID_CLASS, "gone"));
         when(worker.attempt(SCHOOL_ID, r5, TARGET_ID)).thenReturn(Evaluation.skipped(Outcome.SKIPPED_INVALID_SECTION, "gone"));
-        when(worker.attempt(SCHOOL_ID, r6, TARGET_ID)).thenReturn(Evaluation.conflict("slot taken"));
 
         CopySessionResult result = service.copy(SOURCE_ID, TARGET_ID, false, request);
 
-        assertThat(result.scanned()).isEqualTo(6);
+        assertThat(result.scanned()).isEqualTo(5);
         assertThat(result.copied()).isEqualTo(1);
         assertThat(result.alreadyCopied()).isEqualTo(1);
         assertThat(result.skippedIneligibleTeacher()).isEqualTo(1);
         assertThat(result.skippedInvalidClass()).isEqualTo(1);
         assertThat(result.skippedInvalidSection()).isEqualTo(1);
-        assertThat(result.conflicts()).isEqualTo(1);
         assertThat(result.failures()).isZero();
-        assertThat(result.details()).hasSize(6);
+        assertThat(result.details()).hasSize(5);
+    }
+
+    @Test
+    void existingTargetRowDoesNotBlockCopy_bothOutcomesJustReportedNotRejected() {
+        // The worker itself no longer produces a CONFLICT outcome at all — copying into a slot
+        // that already has a (possibly different) occupant in the target session simply succeeds,
+        // exactly like any other row; this test documents that Outcome has no CONFLICT case left.
+        assertThat(Outcome.values()).containsExactlyInAnyOrder(
+                Outcome.COPIED, Outcome.ALREADY_COPIED, Outcome.SKIPPED_INELIGIBLE_TEACHER,
+                Outcome.SKIPPED_INVALID_CLASS, Outcome.SKIPPED_INVALID_SECTION, Outcome.FAILURE);
     }
 
     @Test

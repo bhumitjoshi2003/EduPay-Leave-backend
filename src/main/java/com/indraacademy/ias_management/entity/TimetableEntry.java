@@ -64,12 +64,13 @@ public class TimetableEntry {
     @Column(name = "teacher_name")
     private String teacherName;
 
-    /** Null = a normal, single-occupant period (today's default/only behavior). A shared,
-     *  admin-defined value (e.g. "MATH_BIO") tags this row as one of several legitimate
-     *  simultaneous/elective subject assignments occupying the same class+section+day+period —
-     *  see TimetableValidationService for how this is enforced. This identifies the logical
-     *  subject-alternative relationship, not a specific slot, so the same tag is reusable
-     *  across different days/periods wherever that same elective pairing recurs. */
+    /** Legacy tag from the retired "simultaneous group" feature (historical rows only). The
+     *  timetable no longer has any grouping/pairing concept — any number of rows may
+     *  independently occupy the same class+section+day+period, tagged or not, and this column is
+     *  no longer written or interpreted by any live business path. It is kept only because
+     *  {@link com.indraacademy.ias_management.service.LegacyTimetableAdoptionWorker} (a separate,
+     *  one-time, SUPER_ADMIN-only diagnostic/migration tool) still reads it when classifying
+     *  pre-Phase-F2 legacy rows. */
     @Column(name = "simultaneous_group", length = 100)
     private String simultaneousGroup;
 

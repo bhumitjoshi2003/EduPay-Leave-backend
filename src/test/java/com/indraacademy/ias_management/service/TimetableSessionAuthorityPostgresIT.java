@@ -23,9 +23,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Phase F3 (V55) migration/constraint proof, plus TimetableSessionCopyWorker's real-DB behavior,
- * against a real, PROD-shaped PostgreSQL database with Flyway enabled — H2 cannot validate
- * PostgreSQL's partial unique indexes or composite tenant foreign keys.
+ * V55's remaining (post-V58) tenant/FK schema proof, plus TimetableSessionCopyWorker's real-DB
+ * behavior, against a real, PROD-shaped PostgreSQL database with Flyway enabled — H2 cannot
+ * validate PostgreSQL's composite tenant foreign keys. The one-row-per-slot partial unique
+ * indexes V55 originally added are dropped by V58: the timetable is now a permissive schedule
+ * record, and any number of rows may occupy the same school/session/class/section/day/period —
+ * this class proves that directly rather than proving a rejection that no longer happens.
  *
  * <p>Fixtures are committed (via {@link TestTransaction#flagForCommit()}/{@code end()}) rather
  * than left in the default rolled-back test transaction: {@link TimetableSessionCopyWorker#attempt}
@@ -39,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "spring.jpa.hibernate.ddl-auto=validate"
 })
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import({TimetableValidationService.class, TimetableSessionCopyWorker.class})
+@Import({TimetableSessionCopyWorker.class})
 @EnabledIfEnvironmentVariable(named = "DB_URL", matches = ".+")
 class TimetableSessionAuthorityPostgresIT {
 
@@ -93,22 +96,29 @@ class TimetableSessionAuthorityPostgresIT {
         jdbc.update("DELETE FROM school WHERE id IN (?, ?)", SCHOOL, OTHER_SCHOOL);
     }
 
-    // ── V55 constraint proofs ────────────────────────────────────────────────────────────────
+    // ── V58: the timetable is a permissive schedule — any number of rows may share a slot ──────
 
     @Test
-    void ungroupedSectionlessDuplicateSlotInSameSession_rejected() {
+    void sectionlessSlot_anyNumberOfRowsMayCoexist() {
+        insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 1, null);
+        insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 1, null);
         insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 1, null);
 
-        assertThatThrownBy(() -> insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 1, null))
-                .isInstanceOf(DataAccessException.class);
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM timetable_entry WHERE school_id=? AND academic_session_id=? AND class_id=? AND section_id IS NULL AND day='MONDAY' AND period_number=1",
+                Integer.class, SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION);
+        assertThat(count).isEqualTo(3);
     }
 
     @Test
-    void ungroupedSectionSpecificDuplicateSlotInSameSession_rejected() {
+    void sectionSpecificSlot_anyNumberOfRowsMayCoexist() {
+        insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_WITH_SECTION, SECTION, "MONDAY", 1, null);
         insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_WITH_SECTION, SECTION, "MONDAY", 1, null);
 
-        assertThatThrownBy(() -> insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_WITH_SECTION, SECTION, "MONDAY", 1, null))
-                .isInstanceOf(DataAccessException.class);
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM timetable_entry WHERE school_id=? AND academic_session_id=? AND class_id=? AND section_id=? AND day='MONDAY' AND period_number=1",
+                Integer.class, SCHOOL, SESSION_SOURCE, CLASS_WITH_SECTION, SECTION);
+        assertThat(count).isEqualTo(2);
     }
 
     @Test
@@ -125,29 +135,15 @@ class TimetableSessionAuthorityPostgresIT {
     }
 
     @Test
-    void groupedSimultaneousOccupants_allowedToShareTheSameSlot() {
-        insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 2, "TT_GROUP");
-        insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 2, "TT_GROUP");
+    void multipleUngroupedOccupants_sameSubjectDifferentTeachers_allPersist() {
+        // No pairing/group tag is required or written any more — rows simply coexist
+        // independently in the same slot, including the same subject.
+        insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 2, null);
+        insertTimetableEntry(SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION, null, "MONDAY", 2, null);
 
         Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM timetable_entry WHERE school_id=? AND academic_session_id=? AND class_id=? AND day='MONDAY' AND period_number=2",
                 Integer.class, SCHOOL, SESSION_SOURCE, CLASS_NO_SECTION);
-        assertThat(count).isEqualTo(2);
-    }
-
-    @Test
-    void legacyNullSessionRows_neverCollideWithTheUniqueIndexes() {
-        // Exactly PROD's 640-row shape: no session, no canonical class_id.
-        jdbc.update("INSERT INTO timetable_entry (school_id, class_name, day, period_number, start_time, end_time, subject_name) " +
-                "VALUES (?, 'Legacy', 'MONDAY', 1, '09:00', '09:40', 'Legacy Subject')", SCHOOL);
-        jdbc.update("INSERT INTO timetable_entry (school_id, class_name, day, period_number, start_time, end_time, subject_name) " +
-                "VALUES (?, 'Legacy', 'MONDAY', 1, '09:00', '09:40', 'Legacy Subject 2')", SCHOOL);
-        // Two legacy rows, identical class_name/day/period, both NULL session and NULL class_id
-        // — the partial indexes require academic_session_id IS NOT NULL, so neither is covered.
-
-        Integer count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM timetable_entry WHERE school_id=? AND class_name='Legacy' AND academic_session_id IS NULL",
-                Integer.class, SCHOOL);
         assertThat(count).isEqualTo(2);
     }
 
@@ -213,18 +209,19 @@ class TimetableSessionAuthorityPostgresIT {
     }
 
     @Test
-    void copyWorker_conflictingExistingTargetRow_reportedNotOverwritten() {
+    void copyWorker_existingTargetRowDoesNotBlockCopy_bothRowsPersist() {
         TimetableEntry source = savedSource(CLASS_NO_SECTION, null, "MONDAY", 1, TEACHER_ACTIVE, null);
-        // A DIFFERENT, pre-existing occupant already sits in that exact target slot.
+        // A DIFFERENT, pre-existing occupant already sits in that exact target slot — the copy
+        // must not be rejected for this: the timetable allows any number of rows per slot.
         insertTimetableEntry(SCHOOL, SESSION_TARGET, CLASS_NO_SECTION, null, "MONDAY", 1, null);
 
         var evaluation = worker.attempt(SCHOOL, source, SESSION_TARGET);
 
-        assertThat(evaluation.outcome()).isEqualTo(Outcome.CONFLICT);
+        assertThat(evaluation.outcome()).isEqualTo(Outcome.COPIED);
         Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM timetable_entry WHERE school_id=? AND academic_session_id=? AND class_id=? AND day='MONDAY' AND period_number=1",
                 Integer.class, SCHOOL, SESSION_TARGET, CLASS_NO_SECTION);
-        assertThat(count).isEqualTo(1); // still just the pre-existing row — never overwritten
+        assertThat(count).isEqualTo(2); // the pre-existing row plus the newly copied one
     }
 
     @Test
