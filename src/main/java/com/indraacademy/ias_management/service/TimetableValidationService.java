@@ -58,6 +58,19 @@ public class TimetableValidationService {
         validateTeacherConflict(candidate, schoolId, academicSessionId, excludeId);
     }
 
+    /** Teacher self-service must never turn a mistaken ownership assignment into a duplicate. */
+    public void validateSubjectOwnership(TimetableEntry candidate, Long schoolId, Long sessionId, Long excludeId) {
+        for (TimetableEntry existing : fetchSlot(candidate, schoolId, sessionId)) {
+            if (!Objects.equals(existing.getId(), excludeId)
+                    && existing.getTeacherId() != null && !existing.getTeacherId().isBlank()
+                    && !Objects.equals(existing.getTeacherId(), candidate.getTeacherId())
+                    && existing.getSubjectName() != null
+                    && existing.getSubjectName().equalsIgnoreCase(candidate.getSubjectName())) {
+                throw new TimetableOwnershipConflict(existing.getId(), candidate.getSubjectName());
+            }
+        }
+    }
+
     private void validateSlot(TimetableEntry candidate, Long schoolId, Long academicSessionId, Long excludeId) {
         List<TimetableEntry> existingInSlot = new java.util.ArrayList<>(fetchSlot(candidate, schoolId, academicSessionId));
         existingInSlot.removeIf(e -> excludeId != null && excludeId.equals(e.getId()));

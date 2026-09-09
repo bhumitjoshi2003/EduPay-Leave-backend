@@ -133,6 +133,8 @@ public class TimetableController {
         try {
             TimetableEntry saved = timetableService.create(req, authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.status(HttpStatus.CREATED).body(saved);
+        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             // Surfaces the specific reason (slot conflict, group mismatch, teacher double-booking,
             // session mismatch, etc.) rather than letting GlobalExceptionHandler's generic 409
@@ -153,15 +155,19 @@ public class TimetableController {
      * session — an update can never move a row across sessions, and never silently targets
      * whichever session happens to be current.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @Valid @RequestBody TimetableDtos.TimetableEntryRequest req, HttpServletRequest request) {
         log.info("PUT timetable/{}", id);
         try {
-            TimetableEntry saved = timetableService.update(id, req, request);
+            TimetableEntry saved = timetableService.update(id, req, authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.ok(saved);
+        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
         } catch (java.util.NoSuchElementException | IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         } catch (IllegalStateException e) {
@@ -189,6 +195,8 @@ public class TimetableController {
             TimetableEntry saved = timetableService.addSimultaneous(id, body.academicSessionId(), body.subjectName(),
                     body.teacherId(), authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.status(HttpStatus.CREATED).body(saved);
+        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         } catch (SecurityException e) {
@@ -205,16 +213,20 @@ public class TimetableController {
      * ADMIN / SUPER_ADMIN only. {@code academicSessionId} must match the entry's actual session
      * — fail closed otherwise, exactly like update.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id,
             @RequestParam Long academicSessionId, HttpServletRequest request) {
         log.warn("DELETE timetable/{}, academicSessionId={}", id, academicSessionId);
         try {
-            timetableService.delete(id, academicSessionId, request);
+            timetableService.delete(id, academicSessionId, authService.getRole(), authService.getUserId(), request);
             return ResponseEntity.noContent().build();
+        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        } catch (SecurityException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
         } catch (java.util.NoSuchElementException | IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         } catch (IllegalStateException e) {
@@ -243,6 +255,8 @@ public class TimetableController {
             return ResponseEntity.ok(result);
         } catch (java.util.NoSuchElementException | IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (com.indraacademy.ias_management.service.TimetableOwnershipConflict e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.body());
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         }

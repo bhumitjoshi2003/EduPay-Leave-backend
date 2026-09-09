@@ -10,6 +10,11 @@ import java.util.List;
 @Repository
 public interface TimetableRepository extends JpaRepository<TimetableEntry, Long> {
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select e from TimetableEntry e where e.id = :id and e.schoolId = :schoolId")
+    java.util.Optional<TimetableEntry> lockById(Long id, Long schoolId);
+    java.util.Optional<TimetableEntry> findByIdAndSchoolId(Long id, Long schoolId);
+
     // ── Fetch by class (all sections) ──────────────────────────────────────
     List<TimetableEntry> findByClassNameAndSchoolIdOrderByDayAscPeriodNumberAsc(String className, Long schoolId);
 

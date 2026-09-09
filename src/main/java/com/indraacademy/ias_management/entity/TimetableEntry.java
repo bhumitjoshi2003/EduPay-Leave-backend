@@ -10,6 +10,13 @@ import jakarta.persistence.*;
 @Table(name = "timetable_entry")
 public class TimetableEntry {
 
+    @Version
+    @Column(nullable = false)
+    private long revision;
+
+    public long getRevision() { return revision; }
+    public void setRevision(long revision) { this.revision = revision; }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

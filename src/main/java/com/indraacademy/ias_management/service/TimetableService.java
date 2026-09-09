@@ -122,6 +122,7 @@ public class TimetableService {
                 ? sessionAccess.requireCurrentSessionForTeacherWrite(schoolId)
                 : sessionAccess.requireWritableOwnedSession(schoolId, req.academicSessionId());
 
+        sessionAccess.lockOwnedSession(schoolId, targetSession.getId());
         SchoolClass schoolClass = requireOwnedClass(schoolId, req.classId());
         Section section = resolveAndRequireSection(schoolId, schoolClass, req.sectionId());
 
@@ -145,6 +146,8 @@ public class TimetableService {
                     schoolClass.getId(), schoolClass.getName(), entry.getSectionId());
         }
 
+        if (Role.TEACHER.equals(role))
+            timetableValidationService.validateSubjectOwnership(entry, schoolId, targetSession.getId(), null);
         timetableValidationService.validate(entry, schoolId, targetSession.getId(), null);
         resolveTeacherName(entry);
 
@@ -159,13 +162,20 @@ public class TimetableService {
         return saved;
     }
 
-    /** ADMIN/SUPER_ADMIN only (enforced at the controller) — no TEACHER path for update. */
+    /** Admin configuration and current-session teacher-owned updates. */
     @Transactional
     public TimetableEntry update(Long id, TimetableEntryRequest req, HttpServletRequest request) {
+        return update(id, req, securityUtil.getRole(), securityUtil.getUsername(), request);
+    }
+
+    @Transactional
+    public TimetableEntry update(Long id, TimetableEntryRequest req, String role, String teacherId, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         TimetableEntry existing = timetableRepository.findById(id)
                 .filter(e -> schoolId.equals(e.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Timetable entry not found: " + id));
+
+        if (Role.TEACHER.equals(role)) authorizeOwnedMutation(existing, teacherId, schoolId);
 
         // Fail closed: the requested target session must match the row's actual session — an
         // update can never move a row from one session to another, and never silently targets
@@ -176,10 +186,15 @@ public class TimetableService {
                             + "This entry belongs to session " + existing.getAcademicSessionId() + ".");
         }
         sessionAccess.requireWritableOwnedSession(schoolId, existing.getAcademicSessionId());
+        sessionAccess.lockOwnedSession(schoolId, existing.getAcademicSessionId());
 
         SchoolClass schoolClass = requireOwnedClass(schoolId, req.classId());
         Section section = resolveAndRequireSection(schoolId, schoolClass, req.sectionId());
 
+        // Authorize the target before mutating the managed entity: otherwise a query flush
+        // could let the moved row itself manufacture a new teaching relationship.
+        if (Role.TEACHER.equals(role)) authorizeTeacherWrite(teacherId, schoolId, existing.getAcademicSessionId(),
+                schoolClass.getId(), schoolClass.getName(), section == null ? null : section.getId());
         String oldValue = toJson(existing);
 
         existing.setClassId(schoolClass.getId());
@@ -191,7 +206,12 @@ public class TimetableService {
         existing.setStartTime(req.startTime());
         existing.setEndTime(req.endTime());
         existing.setSubjectName(req.subjectName());
-        existing.setTeacherId(req.teacherId());
+        existing.setTeacherId(Role.TEACHER.equals(role) ? teacherId : req.teacherId());
+        if (Role.TEACHER.equals(role)) {
+            authorizeTeacherWrite(teacherId, schoolId, existing.getAcademicSessionId(),
+                    existing.getClassId(), existing.getClassName(), existing.getSectionId());
+            timetableValidationService.validateSubjectOwnership(existing, schoolId, existing.getAcademicSessionId(), id);
+        }
         // simultaneousGroup is intentionally not editable here — it is fully automatic
         // (see addSimultaneous) and is never client-supplied on an ordinary update.
 
@@ -251,6 +271,7 @@ public class TimetableService {
             targetSessionId = session.getId();
         }
 
+        sessionAccess.lockOwnedSession(schoolId, targetSessionId);
         String teacherId = Role.TEACHER.equals(role) ? currentTeacherId : requestedTeacherId;
         if (Role.TEACHER.equals(role)) {
             authorizeTeacherWrite(currentTeacherId, schoolId, targetSessionId,
@@ -283,6 +304,8 @@ public class TimetableService {
         candidate.setTeacherId(teacherId);
         candidate.setSimultaneousGroup(group);
 
+        if (Role.TEACHER.equals(role))
+            timetableValidationService.validateSubjectOwnership(candidate, schoolId, targetSessionId, null);
         timetableValidationService.validate(candidate, schoolId, targetSessionId, null);
         resolveTeacherName(candidate);
 
@@ -297,13 +320,20 @@ public class TimetableService {
         return saved;
     }
 
-    /** ADMIN/SUPER_ADMIN only (enforced at the controller). */
+    /** Admin configuration and current-session teacher-owned deletion. */
     @Transactional
     public void delete(Long id, Long requestedAcademicSessionId, HttpServletRequest request) {
+        delete(id, requestedAcademicSessionId, securityUtil.getRole(), securityUtil.getUsername(), request);
+    }
+
+    @Transactional
+    public void delete(Long id, Long requestedAcademicSessionId, String role, String teacherId, HttpServletRequest request) {
         Long schoolId = securityUtil.getSchoolId();
         TimetableEntry existing = timetableRepository.findById(id)
                 .filter(e -> schoolId.equals(e.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("Timetable entry not found: " + id));
+
+        if (Role.TEACHER.equals(role)) authorizeOwnedMutation(existing, teacherId, schoolId);
 
         if (!Objects.equals(existing.getAcademicSessionId(), requestedAcademicSessionId)) {
             throw new DataIntegrityViolationException(
@@ -311,6 +341,7 @@ public class TimetableService {
                             + "This entry belongs to session " + existing.getAcademicSessionId() + ".");
         }
         sessionAccess.requireWritableOwnedSession(schoolId, existing.getAcademicSessionId());
+        sessionAccess.lockOwnedSession(schoolId, existing.getAcademicSessionId());
 
         String oldValue = toJson(existing);
         timetableRepository.deleteById(id);
@@ -358,7 +389,7 @@ public class TimetableService {
     // ── TEACHER self-service authorization (live grant/relationship semantics — unchanged) ───
 
     /**
-     * TEACHER-only guard for manual timetable writes (create / addSimultaneous): a teacher may
+     * TEACHER-only guard for timetable mutations and correction eligibility: a teacher may
      * only add a period into a class+section they already have a real relationship with — they
      * already teach there THIS SESSION (an existing timetable entry in the current session names
      * them), they're its class-teacher (live {@code Teacher.classTeacher}/
@@ -366,8 +397,9 @@ public class TimetableService {
      * admin has explicitly granted them access (see TeacherClassGrantService — current, not
      * session-scoped, unchanged by this phase). ADMIN/SUPER_ADMIN never call this.
      */
-    private void authorizeTeacherWrite(String teacherId, Long schoolId, Long academicSessionId,
+    void authorizeTeacherWrite(String teacherId, Long schoolId, Long academicSessionId,
             Long classId, String className, Long sectionId) {
+        requireActiveTeacher(teacherId, schoolId);
         boolean alreadyTeachesHereThisSession = timetableRepository
                 .findByAcademicSessionIdAndTeacherIdAndSchoolId(academicSessionId, teacherId, schoolId).stream()
                 .anyMatch(e -> Objects.equals(e.getClassId(), classId) && Objects.equals(e.getSectionId(), sectionId));
@@ -387,6 +419,27 @@ public class TimetableService {
         throw new SecurityException(
                 "You can only add periods for a class or section you already teach, are the class-teacher of, "
                         + "or have been granted access to. Ask an admin to grant you access to this class.");
+    }
+
+    Teacher requireActiveTeacher(String teacherId, Long schoolId) {
+        return teacherRepository.findByTeacherIdAndSchoolId(teacherId, schoolId)
+                .filter(t -> t.getStatus() == com.indraacademy.ias_management.entity.TeacherStatus.ACTIVE)
+                .orElseThrow(() -> new SecurityException("Only an active teacher may change the timetable."));
+    }
+
+    void requireCurrentEntry(TimetableEntry entry, Long schoolId) {
+        AcademicSession current = sessionAccess.requireCurrentSessionForTeacherWrite(schoolId);
+        if (!Objects.equals(current.getId(), entry.getAcademicSessionId()))
+            throw new SecurityException("Teachers may only change the current session's timetable.");
+    }
+
+    private void authorizeOwnedMutation(TimetableEntry entry, String teacherId, Long schoolId) {
+        requireActiveTeacher(teacherId, schoolId);
+        if (!Objects.equals(entry.getTeacherId(), teacherId))
+            throw new SecurityException("You may only change your own timetable entries.");
+        requireCurrentEntry(entry, schoolId);
+        authorizeTeacherWrite(teacherId, schoolId, entry.getAcademicSessionId(),
+                entry.getClassId(), entry.getClassName(), entry.getSectionId());
     }
 
     private void resolveTeacherName(TimetableEntry entry) {
