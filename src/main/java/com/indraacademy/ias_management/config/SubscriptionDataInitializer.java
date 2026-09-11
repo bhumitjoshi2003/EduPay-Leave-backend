@@ -158,7 +158,7 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
                     "COMMUNICATION", false),
             new FeatureCatalog("WISDOM",
                     "Wisdom",
-                    "Daily Thought of the Day and weekly Gita for Life teachings on the dashboard.",
+                    "Daily Thought of the Day on the dashboard.",
                     "COMMUNICATION", false)
     );
 
