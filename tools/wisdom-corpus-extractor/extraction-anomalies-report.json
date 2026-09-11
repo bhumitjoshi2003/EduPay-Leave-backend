@@ -1,0 +1,16 @@
+[
+ {
+  "chapter": 17,
+  "page": 243,
+  "reason": "Sanskrit-embedded verse number (19) disagrees with the English marker (20) -- using the Sanskrit-embedded number as authoritative",
+  "sanskrit_number": 19,
+  "english_marker": "20"
+ },
+ {
+  "chapter": 18,
+  "page": 252,
+  "reason": "Sanskrit-embedded verse number (14) disagrees with the English marker (15) -- using the Sanskrit-embedded number as authoritative",
+  "sanskrit_number": 14,
+  "english_marker": "15"
+ }
+]
