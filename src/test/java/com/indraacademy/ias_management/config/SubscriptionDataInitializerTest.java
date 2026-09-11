@@ -144,17 +144,18 @@ class SubscriptionDataInitializerTest {
     // ─── Fresh DB (nothing seeded yet) ───
 
     @Test
-    void freshDatabase_endsWithExactly19CatalogKeys_8CoreAnd11Tiered() {
+    void freshDatabase_endsWithExactly20CatalogKeys_8CoreAnd12Tiered() {
         initializer.run(null);
 
-        // 8 Core entries (including EVENT_CALENDAR/STUDENT_PROMOTION, now first-class Core keys
-        // owned by this initializer) + 11 TIERED_FEATURES = 19 total.
+        // 8 Core entries (including EVENT_CALENDAR/STUDENT_PROMOTION, first-class Core keys
+        // owned by this initializer) + 12 TIERED_FEATURES (including WISDOM, a new paid,
+        // plan-controlled feature not bundled into any tier by default) = 20 total.
         assertThat(catalog.keySet()).containsExactlyInAnyOrder(
                 "ATTENDANCE", "LEAVE_MANAGEMENT", "TIMETABLE", "SCHOOL_ADMINISTRATION",
                 "NOTICE_BOARD", "HOLIDAY_CALENDAR", "EVENT_CALENDAR", "STUDENT_PROMOTION",
                 "FEE_MANAGEMENT", "PAYMENT_COLLECTION", "EXAM_MARKS", "FEE_REMINDERS",
                 "REPORT_CARD", "BULK_COMMUNICATIONS", "BULK_IMPORT", "ANALYTICS",
-                "AI_COPILOT", "AUDIT_LOGS", "PARENT_PORTAL"
+                "AI_COPILOT", "AUDIT_LOGS", "PARENT_PORTAL", "WISDOM"
         );
     }
 
@@ -173,7 +174,8 @@ class SubscriptionDataInitializerTest {
         Plan campus = plans.values().stream().filter(p -> p.getTier().equals("CAMPUS")).findFirst().orElseThrow();
         long grants = planFeatures.stream().filter(pf -> pf.getPlanId().equals(campus.getId())).count();
 
-        // 4 tiered (fees, payments, exams, parent portal) + 8 core = 12
+        // 4 tiered (fees, payments, exams, parent portal) + 8 core = 12. WISDOM is not among
+        // Campus's tiered grants — it is not bundled into any tier by default.
         assertThat(grants).isEqualTo(12);
     }
 
@@ -194,7 +196,15 @@ class SubscriptionDataInitializerTest {
         Plan institute = plans.values().stream().filter(p -> p.getTier().equals("INSTITUTE")).findFirst().orElseThrow();
         long grants = planFeatures.stream().filter(pf -> pf.getPlanId().equals(institute.getId())).count();
 
-        assertThat(grants).isEqualTo(19); // 11 tiered (all of them) + 8 core
+        // 11 of the 12 tiered features (all except WISDOM, which is bundled into no tier) + 8 core.
+        assertThat(grants).isEqualTo(19);
+    }
+
+    @Test
+    void freshDatabase_wisdomIsGrantedToNoPlanByDefault() {
+        initializer.run(null);
+
+        assertThat(grantedTiersFor("WISDOM")).isEmpty();
     }
 
     @Test

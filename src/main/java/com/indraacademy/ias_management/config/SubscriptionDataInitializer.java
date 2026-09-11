@@ -155,10 +155,20 @@ public class SubscriptionDataInitializer implements ApplicationRunner {
             new FeatureCatalog("PARENT_PORTAL",
                     "Parent Portal",
                     "Secure guardian accounts with multi-child access to attendance, fees, results, leave and school communication.",
+                    "COMMUNICATION", false),
+            new FeatureCatalog("WISDOM",
+                    "Wisdom",
+                    "Daily Thought of the Day and weekly Gita for Life teachings on the dashboard.",
                     "COMMUNICATION", false)
     );
 
-    /** Which tiered keys each plan grants, by tier name. Core keys are handled separately and apply to all three. */
+    /**
+     * Which tiered keys each plan grants, by tier name. Core keys are handled separately and
+     * apply to all three. WISDOM is deliberately absent from every tier here — it is a new
+     * paid, plan-controlled feature and must not be silently granted to any existing plan; a
+     * plan only gets it via an explicit future addition to one of these lists (or a per-school
+     * SchoolFeatureOverride), never automatically.
+     */
     private static final Map<String, List<String>> TIERED_PLAN_FEATURES = Map.of(
             "CAMPUS", List.of("FEE_MANAGEMENT", "PAYMENT_COLLECTION", "EXAM_MARKS", "PARENT_PORTAL"),
             "ACADEMY", List.of(
