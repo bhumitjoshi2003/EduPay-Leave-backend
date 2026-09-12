@@ -4,12 +4,14 @@ import com.indraacademy.ias_management.dto.ErrorResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.core.MethodParameter;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.method.MethodValidationResult;
 import org.springframework.validation.method.ParameterValidationResult;
 import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -104,6 +106,36 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().getStatus()).isEqualTo(404);
+    }
+
+    @Test
+    void missingPublicMedia_mapsTo404_notTheGeneric500() {
+        NoResourceFoundException logo = new NoResourceFoundException(
+                HttpMethod.GET, "/api/uploads/school-logos/missing.png");
+        NoResourceFoundException eventImage = new NoResourceFoundException(
+                HttpMethod.GET, "/api/uploads/events/images/missing.png");
+
+        ResponseEntity<ErrorResponse> logoResponse = handler.handleNoResourceFound(logo);
+        ResponseEntity<ErrorResponse> eventImageResponse = handler.handleNoResourceFound(eventImage);
+        ResponseEntity<ErrorResponse> generic = handler.handleGeneric(logo);
+
+        assertThat(logoResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(logoResponse.getBody().getStatus()).isEqualTo(404);
+        assertThat(eventImageResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(eventImageResponse.getBody().getStatus()).isEqualTo(404);
+        assertThat(generic.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    @Test
+    void unsupportedRootSchoolLookup_mapsTo404_notTheGeneric500() {
+        NoResourceFoundException ex = new NoResourceFoundException(
+                HttpMethod.GET, "/api/public/school");
+
+        ResponseEntity<ErrorResponse> specific = handler.handleNoResourceFound(ex);
+
+        assertThat(specific.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(specific.getBody().getStatus()).isEqualTo(404);
+        assertThat(specific.getBody().getMessage()).isEqualTo("Resource not found.");
     }
 
     /**
