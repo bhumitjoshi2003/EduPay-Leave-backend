@@ -2,6 +2,8 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.dto.FeeHeadDto;
 import com.indraacademy.ias_management.service.FeeHeadService;
+import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.ParentPortalService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,10 +19,20 @@ public class FeeHeadController {
 
     @Autowired
     private FeeHeadService feeHeadService;
+    @Autowired private AuthService authService;
+    @Autowired private ParentPortalService parentPortalService;
 
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'STUDENT', 'SUB_ADMIN', 'PARENT')")
-    public ResponseEntity<List<FeeHeadDto>> getActiveFeeHeads() {
+    public ResponseEntity<List<FeeHeadDto>> getActiveFeeHeads(
+            @RequestParam(required = false) String studentId) {
+        if ("PARENT".equals(authService.getRole())) {
+            if (studentId == null || studentId.isBlank()) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.FORBIDDEN, "A linked student is required");
+            }
+            parentPortalService.assertChildAccess(studentId, ParentPortalService.ChildPermission.FEES);
+        }
         return ResponseEntity.ok(feeHeadService.getActiveFeeHeads());
     }
 

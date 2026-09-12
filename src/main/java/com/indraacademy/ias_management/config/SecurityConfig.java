@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.config;
 
 import com.indraacademy.ias_management.filter.JwtAuthFilter;
 import com.indraacademy.ias_management.filter.SubscriptionEnforcementFilter;
+import com.indraacademy.ias_management.filter.BrowserRequestOriginFilter;
 import com.indraacademy.ias_management.filter.TenantValidationFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -39,6 +40,9 @@ public class SecurityConfig {
 
     @Autowired
     private SubscriptionEnforcementFilter subscriptionEnforcementFilter;
+
+    @Autowired
+    private BrowserRequestOriginFilter browserRequestOriginFilter;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -97,9 +101,6 @@ public class SecurityConfig {
                                 "/api/webhooks/**",
                                 "/actuator/health").permitAll()
                         .requestMatchers("/api/uploads/events/images/**").permitAll()
-                        .requestMatchers("/api/uploads/student-photos/**").permitAll()
-                        .requestMatchers("/api/uploads/teacher-photos/**").permitAll()
-                        .requestMatchers("/api/uploads/admin-photos/**").permitAll()
                         .requestMatchers("/api/uploads/school-logos/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/demo-requests").permitAll()
@@ -108,6 +109,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(unauthorizedEntryPoint()))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(browserRequestOriginFilter, JwtAuthFilter.class)
                 .addFilterAfter(tenantValidationFilter, JwtAuthFilter.class)
                 .addFilterAfter(subscriptionEnforcementFilter, TenantValidationFilter.class);
 

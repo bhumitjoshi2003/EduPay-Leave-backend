@@ -6,6 +6,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 /**
  * Runs once on every startup, after Hibernate's own ddl-auto=update has already
@@ -25,6 +26,7 @@ import org.springframework.stereotype.Component;
  * Both statements are idempotent (IF NOT EXISTS) — safe to run on every startup.
  */
 @Component
+@ConditionalOnProperty(name = "knowledge.pgvector.enabled", havingValue = "true", matchIfMissing = true)
 public class KnowledgeBaseSchemaInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeBaseSchemaInitializer.class);
