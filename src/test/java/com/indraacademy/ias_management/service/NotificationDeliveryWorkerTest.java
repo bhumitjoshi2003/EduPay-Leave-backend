@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.notification.*;
+import com.indraacademy.ias_management.observability.NotificationWorkerHeartbeat;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,9 +12,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -26,12 +30,39 @@ class NotificationDeliveryWorkerTest {
     @Mock EmailService email;
     @Mock UserRepository users;
     @Mock SchoolRepository schools;
+    @Mock NotificationWorkerHeartbeat heartbeat;
     NotificationDeliveryWorker worker;
 
     @BeforeEach
     void setUp() {
         worker = new NotificationDeliveryWorker(claims, states, new NotificationRetryPolicy(5),
-                classifier, fcm, email, users, schools);
+                classifier, fcm, email, users, schools, heartbeat);
+    }
+
+    @Test
+    void successfulCycleSendsHeartbeat() {
+        when(claims.claim(any(), anyInt(), any(), anyString())).thenReturn(List.of());
+
+        worker.poll();
+
+        verify(heartbeat).reportSuccess();
+    }
+
+    @Test
+    void failedCycleDoesNotSendHeartbeat() {
+        when(claims.claim(any(), anyInt(), any(), anyString())).thenThrow(new RuntimeException("claim failed"));
+
+        worker.poll();
+
+        verifyNoInteractions(heartbeat);
+    }
+
+    @Test
+    void heartbeatFailureNeverBreaksTheWorker() {
+        when(claims.claim(any(), anyInt(), any(), anyString())).thenReturn(List.of());
+        doThrow(new RuntimeException("betterstack unreachable")).when(heartbeat).reportSuccess();
+
+        assertThatCode(() -> worker.poll()).doesNotThrowAnyException();
     }
 
     @Test

@@ -137,6 +137,7 @@ jobs:
                 -e SENTRY_DSN='${{ secrets.SENTRY_DSN }}' \
                 -e SENTRY_ENVIRONMENT=production \
                 -e RELEASE_SHA='${{ github.sha }}' \
+                -e BETTERSTACK_NOTIFICATION_WORKER_HEARTBEAT_URL='${{ secrets.BETTERSTACK_NOTIFICATION_WORKER_HEARTBEAT_URL }}' \
                 "$1"
             }
 

@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.notification.ClaimedNotificationDelivery;
 import com.indraacademy.ias_management.notification.ExternalDeliveryOutcome;
 import com.indraacademy.ias_management.notification.ExternalDeliveryResult;
+import com.indraacademy.ias_management.observability.NotificationWorkerHeartbeat;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
 import org.slf4j.Logger;
@@ -31,6 +32,7 @@ public class NotificationDeliveryWorker {
     private final EmailService emailService;
     private final UserRepository userRepository;
     private final SchoolRepository schoolRepository;
+    private final NotificationWorkerHeartbeat heartbeat;
     private final AtomicBoolean running = new AtomicBoolean();
     private final String workerInstance = UUID.randomUUID().toString();
 
@@ -46,7 +48,8 @@ public class NotificationDeliveryWorker {
                                       NotificationRetryPolicy retryPolicy,
                                       NotificationDeliveryFailureClassifier failureClassifier,
                                       FcmService fcmService, EmailService emailService,
-                                      UserRepository userRepository, SchoolRepository schoolRepository) {
+                                      UserRepository userRepository, SchoolRepository schoolRepository,
+                                      NotificationWorkerHeartbeat heartbeat) {
         this.claimService = claimService;
         this.stateService = stateService;
         this.retryPolicy = retryPolicy;
@@ -55,6 +58,7 @@ public class NotificationDeliveryWorker {
         this.emailService = emailService;
         this.userRepository = userRepository;
         this.schoolRepository = schoolRepository;
+        this.heartbeat = heartbeat;
     }
 
     @Scheduled(fixedDelayString = "${notification.delivery.poll-interval-ms:30000}",
@@ -70,10 +74,20 @@ public class NotificationDeliveryWorker {
                     LocalDateTime.now(), batchSize, Duration.ofSeconds(leaseSeconds), leaseOwner);
             if (!batch.isEmpty()) log.info("Claimed {} notification delivery row(s)", batch.size());
             batch.forEach(this::processDelivery);
+            reportHeartbeat();
         } catch (Exception failure) {
             log.error("Notification delivery poll failed before batch completion", failure);
         } finally {
             running.set(false);
+        }
+    }
+
+    /** Never allowed to affect the worker — heartbeat delivery is best-effort only. */
+    private void reportHeartbeat() {
+        try {
+            heartbeat.reportSuccess();
+        } catch (Exception e) {
+            log.warn("Notification worker heartbeat reporting failed: {}", e.getClass().getSimpleName());
         }
     }
 
