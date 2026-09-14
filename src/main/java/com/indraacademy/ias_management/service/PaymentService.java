@@ -1,27 +1,21 @@
 package com.indraacademy.ias_management.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.FeeLineItemDto;
 import com.indraacademy.ias_management.dto.PaymentLineItemBreakdownDto;
 import com.indraacademy.ias_management.dto.PaymentResponseDTO;
 import com.indraacademy.ias_management.dto.RefundRequest;
-import com.indraacademy.ias_management.entity.AllocationRefund;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.PaymentStudentFeesAllocation;
 import com.indraacademy.ias_management.entity.Refund;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
-import com.indraacademy.ias_management.repository.AllocationRefundRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
-import com.indraacademy.ias_management.repository.RefundRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
-import com.indraacademy.ias_management.notification.*;
 import org.modelmapper.ModelMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.ClassPathResource;
@@ -60,14 +54,10 @@ public class PaymentService {
     @Autowired private ModelMapper modelMapper; // Retained, though not used in DTO mapping below
     @Autowired private SecurityUtil securityUtil;
     @Autowired private StudentFeesRepository studentFeesRepository;
-    @Autowired private RefundRepository refundRepository;
     @Autowired private RazorpayService razorpayService;
-    @Autowired private AuditService auditService;
-    @Autowired private ObjectMapper objectMapper;
     @Autowired private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
-    @Autowired private AllocationRefundRepository allocationRefundRepository;
     @Autowired private StudentFeesLineItemRepository studentFeesLineItemRepository;
-    @Autowired private BusinessNotificationService businessNotifications;
+    @Autowired private RefundSettlementService refundSettlementService;
 
     @Transactional(readOnly = true)
     public PaymentResponseDTO getPaymentHistoryDetails(String paymentId) {
@@ -277,312 +267,168 @@ public class PaymentService {
         }
     }
 
-    /** Same rounding-only tolerance as StudentFeesService uses for "fully paid" — kept as its
-     * own constant here rather than shared, matching this codebase's existing per-service
-     * tolerance-constant convention (e.g. PaymentController.AMOUNT_MISMATCH_TOLERANCE_PAISE). */
-    private static final long ROW_FULLY_PAID_TOLERANCE_PAISE = 100L; // ₹1
-
     /**
-     * Processes a refund against a payment: calls the payment gateway (or skips it for a
-     * manual payment, which has no gateway leg), then reverses exactly the persisted payment
-     * allocations that payment's money put in place, and records the refund event. Everything
-     * after the (irreversible, external) gateway call happens in one transaction, with the
-     * Payment row pessimistic-locked for its duration so two concurrent refund attempts
-     * against the same payment serialize rather than both reading the same "already refunded"
-     * total.
+     * Processes a refund against a payment. Refund-Integrity Hardening Phase B: this is now a
+     * thin orchestrator over {@link RefundSettlementService}, which owns the actual atomic
+     * reservation and finalization transactions — see its class javadoc for why that had to be
+     * a separate {@code @Service} bean rather than private methods here (Spring's transactional
+     * proxy cannot intercept a same-class method call).
      * <p>
-     * Reversal is allocation-ledger-based (payment_student_fees_allocation /
-     * allocation_refund) whenever the payment has allocation rows — the normal case for any
-     * payment recorded after this ledger was introduced. Exactly which allocations were
-     * reversed, and by how much, is persisted; a StudentFees row's paid/amountPaid is then
-     * recomputed from its TOTAL net allocation across every payment that ever touched it
-     * (not just this one), which is what lets this correctly handle a row that received money
-     * from more than one payment. Only payments that predate the ledger (no allocation rows
-     * at all) fall back to the old approximate oldest-month-first reversal against
-     * Payment.month — those refunds are flagged legacyApproximation=true so they're
-     * queryable/reviewable separately. The original fee snapshot (baseAmountDue, busFeeDue,
-     * discountAmount, amountRuleSnapshot) is never touched by either path — a refund reverses
-     * payment state, it never recalculates what was originally charged.
+     * Three phases, matching {@link RefundSettlementService}'s own Reserve/Call/Finalize shape:
+     * <ol>
+     *   <li>{@link RefundSettlementService#reserve} — locks the Payment, validates remaining
+     *       refundable capacity against {@code payment.refundedAmountPaise}, and atomically
+     *       creates a PENDING Refund + reserves capacity, all in one short transaction that
+     *       commits (releasing the lock) before any network call.</li>
+     *   <li>The Razorpay call happens here, in this method, with NO transaction/lock held. An
+     *       ambiguous outcome (this codebase's RazorpayException carries no way to distinguish
+     *       a definitive provider rejection from a network failure the provider may have
+     *       already processed — see {@link RefundSettlementService#markFailedAndRelease}'s
+     *       javadoc) leaves the refund PENDING and its capacity reserved; this method returns a
+     *       pending-status response rather than throwing, since nothing has actually failed.</li>
+     *   <li>{@link RefundSettlementService#finalizeSuccessfulRefund} — a fresh transaction that
+     *       performs the exact allocation-ledger (or legacy bitmask) reversal this application
+     *       has always used, unchanged in content, just re-homed so it can run in its own
+     *       transaction after the provider call instead of holding the original lock through it.</li>
+     * </ol>
      */
-    @Transactional
     public Map<String, Object> processRefund(Long paymentId, RefundRequest request,
                                               String actorUsername, String actorRole, String ipAddress) {
         Long schoolId = securityUtil.getSchoolId();
 
-        // Pessimistic write lock for the rest of this transaction — a second, concurrent
-        // refund attempt against the same payment blocks here until this one commits or
-        // rolls back, instead of both computing "already refunded" from the same stale read.
-        Payment payment = paymentRepository.findByIdForUpdate(paymentId).orElse(null);
-        if (payment == null || !schoolId.equals(payment.getSchoolId())) {
-            log.warn("Refund rejected: payment not found or does not belong to school. paymentId={} schoolId={}", paymentId, schoolId);
-            throw new NoSuchElementException("Payment not found.");
-        }
+        RefundSettlementService.ReservationResult reservation = refundSettlementService.reserve(paymentId, request, schoolId);
 
-        // Unlike the equivalent checks in RazorpayService.verifyPayment and
-        // recordManualPayment, this one doesn't need a separate catch-and-convert for a
-        // races-past-the-check duplicate: the pessimistic write lock on `payment` acquired
-        // above (findByIdForUpdate) already serializes every refund attempt against this
-        // exact paymentId, so a second concurrent request with the same idempotency key
-        // blocks here until the first commits, then correctly sees it via this check — the
-        // race window this pattern exists to close elsewhere is already closed by the lock.
-        // refund(payment_id, idempotency_key)'s partial unique index (V31) remains as a
-        // backstop in case that invariant is ever weakened by a future change.
-        if (request.getIdempotencyKey() != null && !request.getIdempotencyKey().isBlank()
-                && refundRepository.existsByPaymentIdAndIdempotencyKey(paymentId, request.getIdempotencyKey())) {
-            log.warn("Refund rejected: duplicate idempotency key '{}' for paymentId={}", request.getIdempotencyKey(), paymentId);
-            throw new IllegalStateException("A refund with this idempotency key has already been processed for this payment.");
-        }
+        return switch (reservation.outcome()) {
+            case REJECTED -> throw rejectionException(reservation.message());
+            case ALREADY_RESERVED -> handleAlreadyReserved(reservation.refund());
+            case RESERVED -> callProviderAndFinalize(paymentId, reservation, actorUsername, actorRole, ipAddress);
+        };
+    }
 
-        long alreadyRefundedPaise = refundRepository.sumAmountPaiseByPaymentId(paymentId);
-        long remainingRefundablePaise = payment.getAmountPaid() - alreadyRefundedPaise;
-        if (remainingRefundablePaise <= 0) {
-            log.warn("Refund rejected: payment {} is already fully refunded (refunded so far={} paise, paid={} paise).",
-                    paymentId, alreadyRefundedPaise, payment.getAmountPaid());
-            throw new IllegalStateException("This payment has already been fully refunded.");
+    /** Maps a Reserve-time rejection message to the exact exception type the pre-Phase-B code
+     * threw for the equivalent situation, so PaymentController's existing catch blocks (and
+     * every existing caller/test asserting on exception type) see no behavior change. */
+    private RuntimeException rejectionException(String message) {
+        if ("Payment not found.".equals(message)) {
+            return new NoSuchElementException(message);
         }
-        if (request.getAmount() > remainingRefundablePaise) {
-            log.warn("Refund rejected: requested {} paise exceeds remaining refundable {} paise for paymentId={}",
-                    request.getAmount(), remainingRefundablePaise, paymentId);
-            throw new IllegalArgumentException(
-                    "Refund amount exceeds the remaining refundable balance (" + remainingRefundablePaise + " paise).");
+        if (message.startsWith("Refund amount exceeds") || "Refund amount must be positive.".equals(message)) {
+            return new IllegalArgumentException(message);
         }
+        return new IllegalStateException(message);
+    }
 
-        // 1. Gateway call first (or skip for a manual payment) — an exception here leaves no
-        //    row mutated, so there is nothing to roll back.
+    /** A client-supplied idempotency key matched an existing Refund row. What that means
+     * depends on the row's current status — reuse a still-PENDING reservation (never a second
+     * provider call for it, since we cannot safely retry without provider-side idempotency —
+     * see the Phase B report), report a prior definitive failure so the caller knows to retry
+     * with a fresh request, or reject a genuine duplicate of an already-completed refund
+     * exactly as the pre-Phase-B code did. */
+    private Map<String, Object> handleAlreadyReserved(Refund existing) {
+        if (RefundSettlementService.STATUS_PENDING.equals(existing.getStatus())) {
+            log.info("Refund retry for paymentId={} matched an existing PENDING reservation (refundId={}) — " +
+                    "not re-attempting the provider call; its outcome is still unconfirmed.",
+                    existing.getPaymentId(), existing.getId());
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("refundId", existing.getId());
+            response.put("providerRefundId", existing.getProviderRefundId());
+            response.put("amount", existing.getAmountPaise());
+            response.put("status", "pending");
+            response.put("message", "This refund is already in progress and could not yet be confirmed with the " +
+                    "payment provider. Do not retry — it will be reconciled automatically.");
+            return response;
+        }
+        if (RefundSettlementService.STATUS_FAILED.equals(existing.getStatus())) {
+            throw new IllegalStateException("A previous refund attempt with this idempotency key failed (refundId="
+                    + existing.getId() + "). Submit a new refund request with a different idempotency key to retry.");
+        }
+        throw new IllegalStateException("A refund with this idempotency key has already been processed for this payment.");
+    }
+
+    /**
+     * Phase 2 (network call, no lock held) + Phase 3 (finalize) of the Reserve/Call/Finalize
+     * flow — see {@link #processRefund}'s javadoc. Phase C: the provider's real returned status
+     * now drives the branch, never assumed from "the call didn't throw":
+     * <ul>
+     *   <li>{@code processed} — provider refund id persisted immediately (before attempting
+     *       finalize, so it survives even if finalize itself throws — see Task 11/{@link
+     *       RefundSettlementService#recordProviderRefundId}), then finalize.</li>
+     *   <li>{@code failed} — a definitive, synchronous provider rejection (not a network
+     *       exception): release the reservation now, via the same primitive reconciliation uses.</li>
+     *   <li>{@code pending} or any unrecognized status — persist the provider id if present
+     *       (critical for later reconciliation), stay PENDING, return a pending response.</li>
+     *   <li>a thrown exception (no response ever received) — ambiguous per the SDK limitation
+     *       documented on {@link RefundSettlementService#markFailedAndRelease}; no provider id to
+     *       persist, stay PENDING.</li>
+     * </ul>
+     */
+    private Map<String, Object> callProviderAndFinalize(Long paymentId, RefundSettlementService.ReservationResult reservation,
+                                                          String actorUsername, String actorRole, String ipAddress) {
+        Refund refund = reservation.refund();
+        Payment payment = reservation.payment();
         boolean isManualPayment = payment.getManualPaymentMode() != null;
-        String providerRefundId = null;
+
         if (isManualPayment) {
             log.info("Refunding manual payment {} locally — no gateway call (mode={}).", paymentId, payment.getManualPaymentMode());
-        } else {
-            String razorpayPaymentId = payment.getPaymentId();
-            if (razorpayPaymentId == null || razorpayPaymentId.isBlank()) {
-                throw new IllegalStateException("Cannot refund: no Razorpay payment ID associated with this record.");
-            }
-            Map<String, Object> refundResult = razorpayService.createRefund(razorpayPaymentId, request.getAmount(), request.getReason());
-            providerRefundId = String.valueOf(refundResult.get("refundId"));
+            return refundSettlementService.finalizeSuccessfulRefund(
+                    paymentId, refund.getId(), null, actorUsername, actorRole, ipAddress);
         }
 
-        // 2. Reverse via the allocation ledger when this payment has one; fall back to the
-        //    approximate bitmask-based reversal only for a pre-ledger legacy payment.
-        List<PaymentStudentFeesAllocation> allocations = paymentAllocationRepository.findByPaymentIdOrderByMonthAsc(paymentId);
-        boolean legacyApproximation = allocations.isEmpty();
-        String monthsReversedMask;
-        List<Integer> monthsActuallyTouched;
-        Refund refund = new Refund();
-        refund.setPaymentId(paymentId);
-        refund.setSchoolId(schoolId);
-        refund.setStudentId(payment.getStudentId());
-        refund.setSession(payment.getSession());
-        refund.setAmountPaise(request.getAmount());
-        refund.setReason(request.getReason());
-        refund.setProviderRefundId(providerRefundId);
-        refund.setStatus("success");
-        refund.setIdempotencyKey(request.getIdempotencyKey());
-        refund.setInitiatedBy(actorUsername);
-        refund.setLegacyApproximation(legacyApproximation);
-
-        if (!legacyApproximation) {
-            // Pass 1: compute the reversal plan (which allocations, how much of each) without
-            // persisting anything yet — mirrors markFeesAsPaid's own compute-then-apply shape.
-            record AllocationReversalPlan(PaymentStudentFeesAllocation allocation, long portionPaise) {}
-            List<AllocationReversalPlan> plan = new ArrayList<>();
-            long remainingToRefund = request.getAmount();
-            for (PaymentStudentFeesAllocation allocation : allocations) {
-                if (remainingToRefund <= 0) break;
-                long alreadyReversed = allocationRefundRepository.sumAmountPaiseByAllocationId(allocation.getId());
-                long remainingInAllocation = allocation.getAmountPaise() - alreadyReversed;
-                if (remainingInAllocation <= 0) continue; // already fully reversed by a prior refund
-                long portion = Math.min(remainingToRefund, remainingInAllocation);
-                plan.add(new AllocationReversalPlan(allocation, portion));
-                remainingToRefund -= portion;
-            }
-            if (plan.isEmpty()) {
-                // remainingRefundablePaise (payment-level) said there was room, but the
-                // allocation-level ledger disagrees — a real inconsistency, not something to
-                // silently paper over with a refund that reverses nothing.
-                log.error("Refund inconsistency for paymentId={}: payment-level ledger allows {} paise but no allocation has any remaining balance to reverse.",
-                        paymentId, request.getAmount());
-                throw new IllegalStateException("Cannot reconcile refund amount against this payment's allocation ledger.");
-            }
-
-            StringBuilder mask = new StringBuilder("000000000000");
-            monthsActuallyTouched = new ArrayList<>();
-            for (AllocationReversalPlan p : plan) {
-                mask.setCharAt(p.allocation().getMonth() - 1, '1');
-                monthsActuallyTouched.add(p.allocation().getMonth());
-            }
-            monthsReversedMask = mask.toString();
-            refund.setMonthsRefunded(monthsReversedMask);
-            refundRepository.save(refund); // need refund.getId() before writing AllocationRefund rows
-
-            for (AllocationReversalPlan p : plan) {
-                AllocationRefund allocationRefund = new AllocationRefund();
-                allocationRefund.setAllocationId(p.allocation().getId());
-                allocationRefund.setRefundId(refund.getId());
-                allocationRefund.setStudentFeesId(p.allocation().getStudentFeesId());
-                allocationRefund.setAmountPaise(p.portionPaise());
-                allocationRefundRepository.save(allocationRefund);
-            }
-
-            // Recompute each touched StudentFees row from its TOTAL net allocation across
-            // every payment that ever contributed to it — not just this one — which is what
-            // correctly handles a row funded by more than one payment.
-            for (Long studentFeesId : plan.stream().map(p -> p.allocation().getStudentFeesId()).distinct().toList()) {
-                StudentFees fee = studentFeesRepository.findByIdForUpdate(studentFeesId);
-                if (fee != null) {
-                    recomputeStudentFeesNetState(fee, schoolId);
-                }
-            }
-        } else {
-            log.warn("Payment {} predates the allocation ledger — falling back to approximate oldest-month-first reversal against Payment.month.", paymentId);
-            LegacyReversalResult legacyResult = reverseLegacyByMonthBitmask(payment, schoolId, request.getAmount());
-            monthsReversedMask = legacyResult.monthsReversedMask();
-            monthsActuallyTouched = legacyResult.monthsTouched();
-            refund.setMonthsRefunded(monthsReversedMask);
-            refundRepository.save(refund);
-        }
-
-        // 3. Update Payment status, audit log — same transaction as everything above.
-        long totalRefundedNowPaise = alreadyRefundedPaise + request.getAmount();
-        payment.setStatus(totalRefundedNowPaise >= payment.getAmountPaid() ? "refunded" : "partially_refunded");
-        paymentRepository.save(payment);
-
-        businessNotifications.studentAndParents(schoolId, payment.getStudentId(),
-                NotificationAudienceType.STUDENT_WITH_FEE_PARENTS,
-                NotificationEventCode.PAYMENT_REFUNDED, NotificationCategory.FEES_PAYMENTS,
-                "Payment Refund Processed", "A refund for your fee payment has been processed.",
-                "Refund", String.valueOf(refund.getId()), "/dashboard/payment-history", actorUsername,
-                "payment-refund:" + refund.getId(), java.util.Set.of(ExternalDeliveryChannel.PUSH));
-
+        RazorpayService.ProviderRefundResult providerResult;
         try {
-            Map<String, Object> details = new LinkedHashMap<>();
-            details.put("paymentId", paymentId);
-            details.put("refundId", refund.getId());
-            details.put("providerRefundId", providerRefundId);
-            details.put("studentId", payment.getStudentId());
-            details.put("session", payment.getSession());
-            details.put("monthsRefunded", monthsReversedMask);
-            details.put("amountPaise", request.getAmount());
-            details.put("legacyApproximation", legacyApproximation);
-            details.put("actor", actorUsername);
-            details.put("timestamp", LocalDateTime.now().toString());
-            auditService.log(actorUsername, actorRole, "REFUND_PAYMENT", "Payment", paymentId.toString(),
-                    null, objectMapper.writeValueAsString(details), ipAddress != null ? ipAddress : "SYSTEM");
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
+            providerResult = razorpayService.createRefund(payment.getPaymentId(), refund.getAmountPaise(), refund.getReason());
+        } catch (RuntimeException e) {
+            log.warn("Ambiguous provider outcome for refundId={} paymentId={} — leaving PENDING, capacity " +
+                    "remains reserved. This is NOT treated as a failure.", refund.getId(), paymentId, e);
+            return pendingResponse(refund.getId(), null, refund.getAmountPaise(),
+                    "Refund could not be confirmed with the payment provider. It has not failed — do not retry. " +
+                            "It will be reconciled automatically.");
         }
 
-        log.info("Refund processed for paymentId={} refundId={} amount={} paise, months touched={}, legacyApproximation={}.",
-                paymentId, refund.getId(), request.getAmount(), monthsActuallyTouched, legacyApproximation);
+        String providerRefundId = providerResult.refundId();
+        String providerStatus = providerResult.status();
 
+        if (RazorpayService.PROVIDER_STATUS_PROCESSED.equals(providerStatus)) {
+            if (providerRefundId != null) {
+                refundSettlementService.recordProviderRefundId(paymentId, refund.getId(), providerRefundId);
+            }
+            try {
+                return refundSettlementService.finalizeSuccessfulRefund(
+                        paymentId, refund.getId(), providerRefundId, actorUsername, actorRole, ipAddress);
+            } catch (RuntimeException e) {
+                log.error("Provider refund succeeded (paymentId={} refundId={} providerRefundId={}, already " +
+                        "persisted) but local finalization failed — the refund remains PENDING and must be " +
+                        "reconciled (retrying finalize only), NOT retried as a new refund.",
+                        paymentId, refund.getId(), providerRefundId, e);
+                throw e;
+            }
+        }
+
+        if (RazorpayService.PROVIDER_STATUS_FAILED.equals(providerStatus)) {
+            log.warn("Provider definitively reported refundId={} (providerRefundId={}) as failed at creation " +
+                    "time — releasing reservation.", refund.getId(), providerRefundId);
+            refundSettlementService.markFailedAndRelease(paymentId, refund.getId());
+            throw new IllegalStateException("Refund was rejected by the payment provider.");
+        }
+
+        // pending, or any status this codebase doesn't recognize — conservative: persist
+        // whatever provider id we DO have (Task 4: as early as possible), stay PENDING.
+        if (providerRefundId != null) {
+            refundSettlementService.recordProviderRefundId(paymentId, refund.getId(), providerRefundId);
+        }
+        return pendingResponse(refund.getId(), providerRefundId, refund.getAmountPaise(),
+                "Refund was accepted by the payment provider and is still processing. It will be finalized " +
+                        "automatically once confirmed.");
+    }
+
+    private Map<String, Object> pendingResponse(Long refundId, String providerRefundId, long amountPaise, String message) {
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("refundId", refund.getId());
+        response.put("refundId", refundId);
         response.put("providerRefundId", providerRefundId);
-        response.put("amount", request.getAmount());
-        response.put("status", refund.getStatus());
-        response.put("monthsRefunded", monthsReversedMask);
-        response.put("legacyApproximation", legacyApproximation);
+        response.put("amount", amountPaise);
+        response.put("status", "pending");
+        response.put("message", message);
         return response;
-    }
-
-    /** Recomputes a StudentFees row's paid/amountPaid from its TOTAL net allocation (gross
-     * allocations minus gross reversals against them, across every payment that ever touched
-     * it) — the single place this happens for both a fresh allocation (StudentFeesService)
-     * and a reversal (here), so the two can never disagree on what "net" means. Never touches
-     * baseAmountDue/busFeeDue/discountAmount/amountRuleSnapshot.
-     * <p>
-     * manuallyPaid/manualPaymentReceived are likewise derived from the ledger here — the net
-     * amount specifically contributed by payments with a manualPaymentMode set — rather than
-     * carried over as a separate "last write wins" flag. For a row funded by exactly one
-     * payment (the overwhelming common case) this is unchanged from before; for a row funded
-     * by a mix of manual and gateway payments, manualPaymentReceived now honestly reflects
-     * only the manual portion instead of conflating it with the row's full total. */
-    private void recomputeStudentFeesNetState(StudentFees fee, Long schoolId) {
-        long grossAllocated = paymentAllocationRepository.sumAmountPaiseByStudentFeesId(fee.getId());
-        long grossReversed = allocationRefundRepository.sumAmountPaiseByStudentFeesId(fee.getId());
-        long netPaise = Math.max(0, grossAllocated - grossReversed);
-        BigDecimal netAmount = BigDecimal.valueOf(netPaise, 2);
-        fee.setAmountPaid(netAmount);
-
-        long grossManualAllocated = paymentAllocationRepository.sumManualAmountPaiseByStudentFeesId(fee.getId());
-        long grossManualReversed = allocationRefundRepository.sumManualReversedAmountPaiseByStudentFeesId(fee.getId());
-        long netManualPaise = Math.max(0, grossManualAllocated - grossManualReversed);
-        fee.setManuallyPaid(netManualPaise > 0);
-        fee.setManualPaymentReceived(netManualPaise > 0 ? BigDecimal.valueOf(netManualPaise, 2) : BigDecimal.ZERO);
-
-        Optional<BigDecimal> due = feeCalculationService.resolveSchoolFeeDue(fee, schoolId, fee.getYear());
-        boolean fullyPaid;
-        if (due.isPresent()) {
-            long duePaise = due.get().movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
-            fullyPaid = netPaise >= (duePaise - ROW_FULLY_PAID_TOLERANCE_PAISE);
-        } else {
-            // The original due can no longer be resolved (e.g. rule config changed since) —
-            // don't let that block a legitimate refund; fall back to "any net money = paid".
-            fullyPaid = netPaise > 0;
-        }
-        fee.setPaid(fullyPaid);
-        studentFeesRepository.save(fee);
-    }
-
-    private record LegacyReversalResult(String monthsReversedMask, List<Integer> monthsTouched) {}
-
-    /** The pre-ledger approximation kept ONLY for refunding a payment that has no allocation
-     * rows at all (recorded before this ledger existed): derives covered months from the
-     * persisted Payment.month bitmask, reverses oldest-month-first against each month's
-     * current StudentFees.amountPaid. Never used when an allocation ledger exists for the
-     * payment being refunded. */
-    private LegacyReversalResult reverseLegacyByMonthBitmask(Payment payment, Long schoolId, long refundAmountPaise) {
-        List<Integer> months = decodeMonthSelection(payment.getMonth());
-        long remainingToAllocate = refundAmountPaise;
-        StringBuilder monthsReversedMask = new StringBuilder("000000000000");
-        List<Integer> monthsActuallyTouched = new ArrayList<>();
-
-        for (Integer month : months) {
-            if (remainingToAllocate <= 0) break;
-            StudentFees fee = studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonthForUpdate(
-                    payment.getStudentId(), schoolId, payment.getSession(), month);
-            if (fee == null || !Boolean.TRUE.equals(fee.getPaid()) || fee.getAmountPaid() == null
-                    || fee.getAmountPaid().signum() <= 0) {
-                continue;
-            }
-
-            long rowAmountPaise = fee.getAmountPaid().movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
-            long portion = Math.min(remainingToAllocate, rowAmountPaise);
-            long newRowAmountPaise = rowAmountPaise - portion;
-
-            if (newRowAmountPaise <= 0) {
-                fee.setPaid(false);
-                fee.setAmountPaid(BigDecimal.ZERO);
-                if (Boolean.TRUE.equals(fee.getManuallyPaid())) {
-                    fee.setManualPaymentReceived(BigDecimal.ZERO);
-                }
-            } else {
-                BigDecimal newAmount = BigDecimal.valueOf(newRowAmountPaise, 2);
-                fee.setAmountPaid(newAmount);
-                if (Boolean.TRUE.equals(fee.getManuallyPaid())) {
-                    fee.setManualPaymentReceived(newAmount);
-                }
-            }
-            studentFeesRepository.save(fee);
-
-            remainingToAllocate -= portion;
-            monthsActuallyTouched.add(month);
-            monthsReversedMask.setCharAt(month - 1, '1');
-        }
-        return new LegacyReversalResult(monthsReversedMask.toString(), monthsActuallyTouched);
-    }
-
-    /** Decodes a 12-char "010000000000"-style bitmask (bit i = academic month i+1), matching
-     * the convention StudentFees.month/Payment.month/PaymentController already use. */
-    private List<Integer> decodeMonthSelection(String monthSelectionString) {
-        List<Integer> months = new ArrayList<>();
-        if (monthSelectionString == null) return months;
-        for (int i = 0; i < monthSelectionString.length() && i < 12; i++) {
-            if (monthSelectionString.charAt(i) == '1') {
-                months.add(i + 1);
-            }
-        }
-        return months;
     }
 
     public byte[] generatePaymentReceiptPdf(String paymentId) {

@@ -42,6 +42,8 @@ class RazorpayServiceWebhookTest {
     @Mock private StudentRepository studentRepository;
     @Mock private SchoolRepository schoolRepository;
     @Mock private EmailService emailService;
+    @Mock private com.indraacademy.ias_management.repository.RefundRepository refundRepository;
+    @Mock private RefundSettlementService refundSettlementService;
 
     private RazorpayService service;
 
@@ -60,6 +62,29 @@ class RazorpayServiceWebhookTest {
         ReflectionTestUtils.setField(service, "studentRepository", studentRepository);
         ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
         ReflectionTestUtils.setField(service, "emailService", emailService);
+        ReflectionTestUtils.setField(service, "refundRepository", refundRepository);
+        ReflectionTestUtils.setField(service, "refundSettlementService", refundSettlementService);
+    }
+
+    private static final String PROVIDER_REFUND_ID = "rfnd_WH1";
+
+    private String refundWebhookPayload(String eventType, String providerRefundId, String providerPaymentId,
+                                         Long amountPaise, String currency, String status) {
+        JSONObject refundEntity = new JSONObject();
+        if (providerRefundId != null) refundEntity.put("id", providerRefundId);
+        if (providerPaymentId != null) refundEntity.put("payment_id", providerPaymentId);
+        if (amountPaise != null) refundEntity.put("amount", amountPaise);
+        if (currency != null) refundEntity.put("currency", currency);
+        if (status != null) refundEntity.put("status", status);
+
+        JSONObject refundWrapper = new JSONObject().put("entity", refundEntity);
+        JSONObject payloadObj = new JSONObject().put("refund", refundWrapper);
+        // Razorpay documents both entities appearing together; include a minimal payment
+        // entity too so a test can exercise that shape without it affecting refund handling
+        // (the refund branch never reads payload.payment).
+        JSONObject paymentEntity = new JSONObject().put("id", providerPaymentId != null ? providerPaymentId : PAYMENT_ID);
+        payloadObj.put("payment", new JSONObject().put("entity", paymentEntity));
+        return new JSONObject().put("event", eventType).put("payload", payloadObj).toString();
     }
 
     private PaymentOrder freshOrder() {
@@ -342,6 +367,143 @@ class RazorpayServiceWebhookTest {
                 webhookPayload("payment.captured", PAYMENT_ID, ORDER_ID, AMOUNT_PAISE, "INR"));
 
         assertThat(result.retryDisposition()).isEqualTo(RETRY);
+    }
+
+    // ═══════════════════════════ Refund-Integrity Hardening, Phase C — refund webhooks ═══════
+
+    @Test
+    void refundCreated_isObservationalOnly_neverReconciles() {
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(
+                refundWebhookPayload("refund.created", PROVIDER_REFUND_ID, PAYMENT_ID, 250000L, "INR", "pending"));
+
+        assertThat(result.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        assertThat(result.detail()).isEqualTo("refund created (observational)");
+        verifyNoInteractions(refundSettlementService);
+    }
+
+    @Test
+    void validProcessedWebhook_reconciles() {
+        when(refundSettlementService.resolveFromProviderState(PROVIDER_REFUND_ID, "processed", PAYMENT_ID, 250000L, "INR",
+                "RAZORPAY_WEBHOOK", "SYSTEM", null))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.FINALIZED, "finalized"));
+
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(
+                refundWebhookPayload("refund.processed", PROVIDER_REFUND_ID, PAYMENT_ID, 250000L, "INR", "processed"));
+
+        assertThat(result.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        assertThat(result.detail()).isEqualTo("finalized");
+        verify(refundSettlementService).resolveFromProviderState(PROVIDER_REFUND_ID, "processed", PAYMENT_ID, 250000L, "INR",
+                "RAZORPAY_WEBHOOK", "SYSTEM", null);
+    }
+
+    @Test
+    void validFailedWebhook_releasesReservation() {
+        when(refundSettlementService.resolveFromProviderState(PROVIDER_REFUND_ID, "failed", PAYMENT_ID, 250000L, "INR",
+                "RAZORPAY_WEBHOOK", "SYSTEM", null))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.RELEASED, "released"));
+
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(
+                refundWebhookPayload("refund.failed", PROVIDER_REFUND_ID, PAYMENT_ID, 250000L, "INR", "failed"));
+
+        assertThat(result.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        assertThat(result.detail()).isEqualTo("released");
+    }
+
+    @Test
+    void duplicateProcessedWebhook_secondDeliveryIsNoOp() {
+        when(refundSettlementService.resolveFromProviderState(eq(PROVIDER_REFUND_ID), eq("processed"), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.FINALIZED, "finalized"))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.NO_OP, "already success"));
+
+        String payload = refundWebhookPayload("refund.processed", PROVIDER_REFUND_ID, PAYMENT_ID, 250000L, "INR", "processed");
+        RazorpayService.WebhookProcessingResult first = service.processWebhookEvent(payload);
+        RazorpayService.WebhookProcessingResult second = service.processWebhookEvent(payload);
+
+        assertThat(first.detail()).isEqualTo("finalized");
+        assertThat(second.detail()).isEqualTo("already success");
+        // Both acknowledged, whatever the underlying state — a duplicate delivery is never RETRY.
+        assertThat(first.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        assertThat(second.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        verify(refundSettlementService, times(2)).resolveFromProviderState(eq(PROVIDER_REFUND_ID), eq("processed"), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void duplicateFailedWebhook_secondDeliveryIsNoOp() {
+        when(refundSettlementService.resolveFromProviderState(eq(PROVIDER_REFUND_ID), eq("failed"), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.RELEASED, "released"))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.NO_OP, "already FAILED"));
+
+        String payload = refundWebhookPayload("refund.failed", PROVIDER_REFUND_ID, PAYMENT_ID, 250000L, "INR", "failed");
+        service.processWebhookEvent(payload);
+        RazorpayService.WebhookProcessingResult second = service.processWebhookEvent(payload);
+
+        assertThat(second.detail()).isEqualTo("already FAILED");
+        assertThat(second.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+    }
+
+    @Test
+    void unknownProviderRefundId_noOpAcknowledged() {
+        when(refundSettlementService.resolveFromProviderState(eq(PROVIDER_REFUND_ID), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.NO_OP, "unknown provider refund id"));
+
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(
+                refundWebhookPayload("refund.processed", PROVIDER_REFUND_ID, PAYMENT_ID, 250000L, "INR", "processed"));
+
+        assertThat(result.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        assertThat(result.detail()).isEqualTo("unknown provider refund id");
+    }
+
+    @Test
+    void providerIdentityMismatch_rejectedWithoutMutation() {
+        when(refundSettlementService.resolveFromProviderState(eq(PROVIDER_REFUND_ID), eq("processed"), eq("pay_WRONG"), any(), any(), any(), any(), any()))
+                .thenReturn(new RefundSettlementService.ReconciliationResult(RefundSettlementService.ReconciliationOutcome.REJECTED_MISMATCH, "payment identity mismatch"));
+
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(
+                refundWebhookPayload("refund.processed", PROVIDER_REFUND_ID, "pay_WRONG", 250000L, "INR", "processed"));
+
+        assertThat(result.retryDisposition()).isEqualTo(ACKNOWLEDGE); // permanently inapplicable, never RETRY
+        assertThat(result.detail()).isEqualTo("payment identity mismatch");
+    }
+
+    @Test
+    void missingRefundEntity_acknowledgedSafely() {
+        JSONObject payloadObj = new JSONObject(); // no "refund" key at all
+        String payload = new JSONObject().put("event", "refund.processed").put("payload", payloadObj).toString();
+
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(payload);
+
+        assertThat(result.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        assertThat(result.detail()).isEqualTo("no refund entity");
+        verifyNoInteractions(refundSettlementService);
+    }
+
+    @Test
+    void unexpectedExceptionDuringRefundReconciliation_requestsRetry() {
+        when(refundSettlementService.resolveFromProviderState(any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("DB blip"));
+
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(
+                refundWebhookPayload("refund.processed", PROVIDER_REFUND_ID, PAYMENT_ID, 250000L, "INR", "processed"));
+
+        assertThat(result.retryDisposition()).isEqualTo(RETRY);
+    }
+
+    @Test
+    void existingPaymentWebhookBehavior_unaffectedByRefundBranch() {
+        // Regression guard: adding the refund.* branch must not alter payment.* handling at all.
+        when(paymentRepository.existsByPaymentId(PAYMENT_ID)).thenReturn(false);
+        when(paymentOrderRepository.findByOrderId(ORDER_ID)).thenReturn(Optional.of(freshOrder()));
+        when(paymentSettlementService.settle(ORDER_ID, PAYMENT_ID, null, SCHOOL_ID,
+                PaymentSettlementService.SettlementSource.RAZORPAY_WEBHOOK))
+                .thenReturn(new PaymentSettlementService.SettlementResult(
+                        PaymentSettlementService.Outcome.SETTLED, "Payment Verified Successfully", settledPayment()));
+        when(studentRepository.findByStudentIdAndSchoolId(any(), any())).thenReturn(Optional.empty());
+
+        RazorpayService.WebhookProcessingResult result = service.processWebhookEvent(
+                webhookPayload("payment.captured", PAYMENT_ID, ORDER_ID, AMOUNT_PAISE, "INR"));
+
+        assertThat(result.retryDisposition()).isEqualTo(ACKNOWLEDGE);
+        verifyNoInteractions(refundSettlementService, refundRepository);
     }
 
     private com.indraacademy.ias_management.util.SecurityUtil securityUtilReturning(Long schoolId) {

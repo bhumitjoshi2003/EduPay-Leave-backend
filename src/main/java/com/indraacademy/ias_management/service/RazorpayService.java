@@ -47,6 +47,8 @@ public class RazorpayService {
     @Autowired private BusinessNotificationService businessNotifications;
     @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private com.indraacademy.ias_management.repository.RefundRepository refundRepository;
+    @Autowired private RefundSettlementService refundSettlementService;
 
     /** Global fallback keys from application.properties — used when a school has no own keys configured. */
     @Value("${razorpay.key.id:}")
@@ -506,6 +508,10 @@ public class RazorpayService {
             return WebhookProcessingResult.acknowledge("no payload");
         }
 
+        if (eventType.startsWith("refund.")) {
+            return handleRefundWebhookEvent(eventType, paymentEntity);
+        }
+
         JSONObject paymentObj = paymentEntity.optJSONObject("payment");
         if (paymentObj == null) {
             log.info("Webhook event type '{}' has no payment object. Skipping.", eventType);
@@ -617,15 +623,56 @@ public class RazorpayService {
         return WebhookProcessingResult.acknowledge(result.message());
     }
 
+    // ═══════════════════════════ Refund-Integrity Hardening, Phase C ═══════════════════════════
+
+    /** The real Razorpay refund status vocabulary — verified directly against official Razorpay
+     * documentation during the Phase B/C design validation, never invented. "pending" is a
+     * legitimate value in the SYNCHRONOUS create-refund response itself (normal refunds can take
+     * 5-7 business days; Razorpay may not resolve them instantly), not only a later webhook
+     * state. "reversed" (a processed refund later reversed, e.g. a bank-side failure after
+     * initial success) exists but has no clearly-documented dedicated webhook event name, so it
+     * is handled defensively by inspecting the status field itself rather than assuming an event
+     * name — see {@link #handleRefundWebhookEvent}. */
+    public static final String PROVIDER_STATUS_PENDING = "pending";
+    public static final String PROVIDER_STATUS_PROCESSED = "processed";
+    public static final String PROVIDER_STATUS_FAILED = "failed";
+    public static final String PROVIDER_STATUS_REVERSED = "reversed";
+
+    /** Normalized, SDK-independent view of a Razorpay refund — the only refund shape exposed
+     * outside this class, matching this codebase's existing convention of never leaking
+     * {@code com.razorpay.*} SDK objects past RazorpayService's own boundary. {@code amountPaise}
+     * and {@code currency} are nullable: not every response path is guaranteed to carry them,
+     * and callers must not assume they're present. */
+    public record ProviderRefundResult(String refundId, String status, String paymentId,
+                                        Long amountPaise, String currency) {}
+
+    private ProviderRefundResult toProviderRefundResult(com.razorpay.Refund refund) {
+        Object id = refund.get("id");
+        Object status = refund.get("status");
+        Object paymentId = refund.get("payment_id");
+        Object amount = refund.get("amount");
+        Object currency = refund.get("currency");
+        return new ProviderRefundResult(
+                id != null ? String.valueOf(id) : null,
+                status != null ? String.valueOf(status) : null,
+                paymentId != null ? String.valueOf(paymentId) : null,
+                amount instanceof Number ? ((Number) amount).longValue() : null,
+                currency != null ? String.valueOf(currency) : null);
+    }
+
     /**
-     * Creates a refund via the Razorpay API.
+     * Creates a refund via the Razorpay API. The returned status is whatever Razorpay actually
+     * reported synchronously — {@code pending}, {@code processed}, or (less commonly at create
+     * time) {@code failed} — never assumed or overwritten by the caller. Preserving the real
+     * status is exactly what Phase C's reconciliation is built to react to; a caller must not
+     * treat a non-throwing return as automatic success (see {@link PaymentService#processRefund}).
      *
      * @param razorpayPaymentId the Razorpay payment ID to refund
      * @param amountInPaise     refund amount in paise
      * @param reason            reason for the refund
-     * @return a map with refund details (id, amount, status)
+     * @return the provider's refund id and real status
      */
-    public Map<String, Object> createRefund(String razorpayPaymentId, long amountInPaise, String reason) {
+    public ProviderRefundResult createRefund(String razorpayPaymentId, long amountInPaise, String reason) {
         try {
             RazorpayClient client = getRazorpayClient();
             JSONObject refundRequest = new JSONObject();
@@ -635,18 +682,150 @@ public class RazorpayService {
             refundRequest.put("notes", notes);
 
             com.razorpay.Refund refund = client.Payments.refund(razorpayPaymentId, refundRequest);
-
-            Map<String, Object> result = new HashMap<>();
-            result.put("refundId", refund.get("id"));
-            result.put("amount", refund.get("amount"));
-            result.put("status", refund.get("status"));
-            log.info("Refund created successfully. RefundId={} for PaymentId={} amount={}",
-                    refund.get("id"), razorpayPaymentId, amountInPaise);
+            ProviderRefundResult result = toProviderRefundResult(refund);
+            log.info("Refund created. providerRefundId={} status={} for paymentId={} amount={}",
+                    result.refundId(), result.status(), razorpayPaymentId, amountInPaise);
             return result;
         } catch (RazorpayException e) {
             log.error("Failed to create refund for paymentId={} amount={}", razorpayPaymentId, amountInPaise, e);
             throw new RuntimeException("Refund failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Fetches the current state of a previously-created refund directly from Razorpay — the
+     * SDK's existing, unmodified {@code Payments.fetchRefund(String)} (GET
+     * {@code /v1/refunds/{id}}), already present in the pinned 1.3.9 SDK; no new dependency, no
+     * SDK upgrade, no undocumented API. This is the pull side of reconciliation
+     * ({@link #reconcileRefund}); the webhook path never needs this call, since the webhook
+     * payload already carries the same fields.
+     */
+    public ProviderRefundResult fetchRefund(String providerRefundId) {
+        try {
+            RazorpayClient client = getRazorpayClient();
+            com.razorpay.Refund refund = client.Payments.fetchRefund(providerRefundId);
+            return toProviderRefundResult(refund);
+        } catch (RazorpayException e) {
+            log.error("Failed to fetch refund state for providerRefundId={}", providerRefundId, e);
+            throw new RuntimeException("Refund lookup failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Pull-based reconciliation for one PENDING refund — the counterpart to webhook-driven
+     * recovery, for a refund whose webhook was never delivered, failed delivery, or arrives
+     * late. Phase D calls this from {@link RefundReconciliationJob}'s scheduled batch; no
+     * authenticated HTTP endpoint exposes it directly (see the Phase D report for why one was
+     * deliberately not added).
+     * <p>
+     * Never calls {@link #createRefund} again — if no {@code providerRefundId} is known yet
+     * (the create call itself was ambiguous — an exception, no response ever received), there is
+     * nothing safe to look up, and retrying create() could double-refund if the original request
+     * actually reached Razorpay. That case is left PENDING and reported as a remaining
+     * operational case requiring manual verification against the Razorpay dashboard.
+     */
+    public void reconcileRefund(Long refundId) {
+        com.indraacademy.ias_management.entity.Refund refund = refundRepository.findById(refundId).orElse(null);
+        if (refund == null) {
+            log.warn("reconcileRefund: refund {} not found.", refundId);
+            return;
+        }
+        if (!RefundSettlementService.STATUS_PENDING.equals(refund.getStatus())) {
+            log.info("reconcileRefund: refund {} is already '{}' — nothing to reconcile.", refundId, refund.getStatus());
+            return;
+        }
+        String providerRefundId = refund.getProviderRefundId();
+        if (providerRefundId == null || providerRefundId.isBlank()) {
+            log.warn("reconcileRefund: refund {} is PENDING with no providerRefundId — cannot safely reconcile " +
+                    "without a known provider operation to look up; leaving PENDING. Requires manual verification " +
+                    "against the Razorpay dashboard.", refundId);
+            return;
+        }
+
+        ProviderRefundResult providerResult;
+        try {
+            providerResult = fetchRefund(providerRefundId);
+        } catch (RuntimeException e) {
+            // Deliberately treats every lookup failure identically — a network timeout, a 5xx,
+            // and a 404-style "not found" all surface as the same RazorpayException from this
+            // SDK (no structured status code to branch on; see the Phase B/C reports). A 404 for
+            // an id this application itself received from a successful create call is an
+            // operational anomaly, not proof the refund never existed — Task 9 explicitly
+            // forbids treating it as equivalent to "never created." Conservative in every case:
+            // stays PENDING, capacity remains reserved, logged for operator visibility, retried
+            // on the next scheduled pass.
+            log.warn("reconcileRefund: provider lookup failed for refund {} (providerRefundId={}) — leaving " +
+                    "PENDING, capacity remains reserved. (Includes a not-found response, which is treated as an " +
+                    "anomaly to investigate, never as proof the refund doesn't exist.)", refundId, providerRefundId, e);
+            return;
+        }
+
+        try {
+            refundSettlementService.resolveFromProviderState(providerResult.refundId(), providerResult.status(),
+                    providerResult.paymentId(), providerResult.amountPaise(), providerResult.currency(),
+                    "SYSTEM_RECONCILIATION", "SYSTEM", null);
+        } catch (RuntimeException e) {
+            // Mirrors the webhook path's own handling of the same call: a thrown finalize (e.g.
+            // the allocation-ledger-inconsistency guard) rolls its own transaction back, so the
+            // refund is already correctly still PENDING with providerRefundId intact — this
+            // catch exists only so a caller of reconcileRefund (ops tooling, a future job) never
+            // crashes on it; the next reconciliation attempt will retry finalize.
+            log.error("reconcileRefund: resolving refund {} from provider state failed — remains PENDING for a " +
+                    "later retry.", refundId, e);
+        }
+    }
+
+    /**
+     * Handles refund.* webhook events. Razorpay's refund webhook payload shape is
+     * {@code payload.refund.entity} (never {@code payload.payment.entity}, which is what the
+     * payment.* branch above reads) — both entities are documented to appear together, but the
+     * refund-specific fields (id/status/payment_id/amount/currency) all live under
+     * {@code refund.entity}. Reuses the exact same {@link RefundSettlementService#resolveFromProviderState}
+     * state machine {@link #reconcileRefund} uses, so a webhook and a pull-reconciliation can
+     * never disagree about what a given provider state means.
+     */
+    private WebhookProcessingResult handleRefundWebhookEvent(String eventType, JSONObject payloadObj) {
+        JSONObject refundContainer = payloadObj.optJSONObject("refund");
+        JSONObject refundEntity = refundContainer != null ? refundContainer.optJSONObject("entity") : null;
+        if (refundEntity == null) {
+            log.warn("Refund webhook event '{}' has no refund entity. Skipping.", eventType);
+            return WebhookProcessingResult.acknowledge("no refund entity");
+        }
+
+        String providerRefundId = refundEntity.optString("id", null);
+        if (providerRefundId == null || providerRefundId.isBlank()) {
+            log.warn("Refund webhook event '{}' missing refund id. Skipping.", eventType);
+            return WebhookProcessingResult.acknowledge("missing refund id");
+        }
+        String providerStatus = refundEntity.optString("status", null);
+        String providerPaymentId = refundEntity.optString("payment_id", null);
+        long amountRaw = refundEntity.optLong("amount", -1);
+        Long providerAmountPaise = amountRaw >= 0 ? amountRaw : null;
+        String providerCurrency = refundEntity.optString("currency", null);
+
+        return switch (eventType) {
+            case "refund.created" -> {
+                log.info("Webhook: refund.created for providerRefundId={} — observational only, awaiting " +
+                        "refund.processed/refund.failed before reconciling.", providerRefundId);
+                yield WebhookProcessingResult.acknowledge("refund created (observational)");
+            }
+            case "refund.processed", "refund.failed" -> {
+                try {
+                    RefundSettlementService.ReconciliationResult result = refundSettlementService.resolveFromProviderState(
+                            providerRefundId, providerStatus, providerPaymentId, providerAmountPaise, providerCurrency,
+                            "RAZORPAY_WEBHOOK", "SYSTEM", null);
+                    yield WebhookProcessingResult.acknowledge(result.message());
+                } catch (Exception e) {
+                    log.error("Unexpected error reconciling refund webhook for providerRefundId={} — requesting retry.",
+                            providerRefundId, e);
+                    yield WebhookProcessingResult.retry("internal error");
+                }
+            }
+            default -> {
+                log.info("Webhook: Unhandled refund event type '{}'. Ignoring.", eventType);
+                yield WebhookProcessingResult.acknowledge("unhandled refund event type");
+            }
+        };
     }
 
     private String buildPaymentConfirmationHtml(String studentName, String paymentId,

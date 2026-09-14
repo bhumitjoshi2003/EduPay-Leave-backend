@@ -54,6 +54,16 @@ public class Refund {
     @Column(name = "idempotency_key")
     private String idempotencyKey;
 
+    /** Server-generated (never client-supplied) key persisted BEFORE the Razorpay refund-create
+     * call and sent as the X-Refund-Idempotency header — distinct from {@link #idempotencyKey},
+     * which is an optional client-facing double-click guard checked only against already-
+     * committed rows. NULL for every refund row until a future phase starts populating it and
+     * actually sending it to Razorpay; the partial unique index on this column (V63) only
+     * constrains non-null values, so existing/legacy rows are unaffected. Not yet read or
+     * written by {@code PaymentService.processRefund} or {@code RazorpayService.createRefund}. */
+    @Column(name = "provider_idempotency_key")
+    private String providerIdempotencyKey;
+
     @Column(name = "initiated_by")
     private String initiatedBy;
 

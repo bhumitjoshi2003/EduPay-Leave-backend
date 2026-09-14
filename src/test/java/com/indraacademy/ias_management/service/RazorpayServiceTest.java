@@ -46,6 +46,8 @@ class RazorpayServiceTest {
     @Mock private StudentRepository studentRepository;
     @Mock private SchoolRepository schoolRepository;
     @Mock private EmailService emailService;
+    @Mock private com.indraacademy.ias_management.repository.RefundRepository refundRepository;
+    @Mock private RefundSettlementService refundSettlementService;
 
     private RazorpayService service;
 
@@ -66,7 +68,68 @@ class RazorpayServiceTest {
         ReflectionTestUtils.setField(service, "studentRepository", studentRepository);
         ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
         ReflectionTestUtils.setField(service, "emailService", emailService);
+        ReflectionTestUtils.setField(service, "refundRepository", refundRepository);
+        ReflectionTestUtils.setField(service, "refundSettlementService", refundSettlementService);
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+    }
+
+    // ── reconcileRefund: pull-based reconciliation (Phase C) ────────────────────────────────
+
+    private com.indraacademy.ias_management.entity.Refund pendingRefund(Long id, String providerRefundId) {
+        com.indraacademy.ias_management.entity.Refund refund = new com.indraacademy.ias_management.entity.Refund();
+        refund.setId(id);
+        refund.setPaymentId(999L);
+        refund.setStatus(RefundSettlementService.STATUS_PENDING);
+        refund.setProviderRefundId(providerRefundId);
+        refund.setAmountPaise(100000L);
+        return refund;
+    }
+
+    @Test
+    void reconcileRefund_notFound_doesNothing() {
+        when(refundRepository.findById(1L)).thenReturn(Optional.empty());
+
+        service.reconcileRefund(1L);
+
+        verifyNoInteractions(refundSettlementService);
+    }
+
+    @Test
+    void reconcileRefund_alreadyTerminal_doesNothing() {
+        var refund = pendingRefund(2L, "rfnd_x");
+        refund.setStatus(RefundSettlementService.STATUS_SUCCESS);
+        when(refundRepository.findById(2L)).thenReturn(Optional.of(refund));
+
+        service.reconcileRefund(2L);
+
+        verifyNoInteractions(refundSettlementService);
+    }
+
+    /** Task 12/17: PENDING with no known provider refund id must NEVER trigger a provider
+     * refund creation, and has nothing safe to look up either — confirmed by verifying
+     * refundSettlementService (the only path to any local mutation) is never touched. */
+    @Test
+    void reconcileRefund_pendingWithNoProviderRefundId_neverCallsProviderOrMutatesState() {
+        var refund = pendingRefund(3L, null);
+        when(refundRepository.findById(3L)).thenReturn(Optional.of(refund));
+
+        service.reconcileRefund(3L);
+
+        verifyNoInteractions(refundSettlementService);
+    }
+
+    /** Provider lookup exception (here: Razorpay keys not configured, surfacing the same way a
+     * real network failure would — both are RuntimeExceptions from fetchRefund) — local state
+     * must stay completely untouched, never guessed into any resolution. */
+    @Test
+    void reconcileRefund_providerLookupFails_leavesStateUnchanged() {
+        var refund = pendingRefund(4L, "rfnd_lookup_fails");
+        when(refundRepository.findById(4L)).thenReturn(Optional.of(refund));
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.empty()); // falls through to blank global keys
+
+        service.reconcileRefund(4L);
+
+        verifyNoInteractions(refundSettlementService);
     }
 
     private Map<String, String> paymentData() {

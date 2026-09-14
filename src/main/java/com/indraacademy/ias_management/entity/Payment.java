@@ -122,6 +122,15 @@ public class Payment {
     @Column(name = "manual_reference_number")
     private String manualReferenceNumber;
 
+    /** DB-level aggregate guard (V63): total refunded so far against this payment, enforced by
+     * two CHECK constraints (never negative, never exceeding amountPaid) — NOT a replacement
+     * for the allocation_refund ledger, which remains the sole authority for which allocations
+     * were reversed and by how much. Defaults to 0 (matching the DB column's DEFAULT 0) for
+     * every existing and newly-created row alike; not yet read or written by
+     * {@code PaymentService.processRefund} — wiring it in is explicit future work. */
+    @Column(name = "refunded_amount_paise", nullable = false)
+    private long refundedAmountPaise = 0L;
+
 
     // Constructors, getters, setters
     public Payment() {
@@ -339,4 +348,7 @@ public class Payment {
 
     public String getManualReferenceNumber() { return manualReferenceNumber; }
     public void setManualReferenceNumber(String manualReferenceNumber) { this.manualReferenceNumber = manualReferenceNumber; }
+
+    public long getRefundedAmountPaise() { return refundedAmountPaise; }
+    public void setRefundedAmountPaise(long refundedAmountPaise) { this.refundedAmountPaise = refundedAmountPaise; }
 }
