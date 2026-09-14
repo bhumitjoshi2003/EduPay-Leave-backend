@@ -138,6 +138,7 @@ jobs:
                 -e SENTRY_ENVIRONMENT=production \
                 -e RELEASE_SHA='${{ github.sha }}' \
                 -e BETTERSTACK_NOTIFICATION_WORKER_HEARTBEAT_URL='${{ secrets.BETTERSTACK_NOTIFICATION_WORKER_HEARTBEAT_URL }}' \
+                -e BETTERSTACK_ENTITLEMENT_REFRESH_HEARTBEAT_URL='${{ secrets.BETTERSTACK_ENTITLEMENT_REFRESH_HEARTBEAT_URL }}' \
                 "$1"
             }
 

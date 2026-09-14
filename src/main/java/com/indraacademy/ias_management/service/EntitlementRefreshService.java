@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.*;
+import com.indraacademy.ias_management.observability.EntitlementRefreshHeartbeat;
 import com.indraacademy.ias_management.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,7 @@ public class EntitlementRefreshService {
     @Autowired private AdminRepository adminRepo;
     @Autowired private EmailService emailService;
     @Autowired private SchoolSubscriptionHistoryRepository historyRepo;
+    @Autowired private EntitlementRefreshHeartbeat heartbeat;
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("dd MMMM yyyy");
 
@@ -102,6 +104,16 @@ public class EntitlementRefreshService {
             } catch (Exception e) {
                 log.error("Failed nightly refresh for schoolId={}: {}", sub.getSchoolId(), e.getMessage());
             }
+        }
+        reportHeartbeat();
+    }
+
+    /** Never allowed to affect the refresh — heartbeat delivery is best-effort only. */
+    private void reportHeartbeat() {
+        try {
+            heartbeat.reportSuccess();
+        } catch (Exception e) {
+            log.warn("Entitlement refresh heartbeat reporting failed: {}", e.getClass().getSimpleName());
         }
     }
 
