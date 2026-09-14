@@ -105,7 +105,7 @@ public class SecurityConfig {
                                 "/api/auth/refresh-token",
                                 "/api/public/**",
                                 "/api/webhooks/**",
-                                "/actuator/health").permitAll()
+                                "/api/actuator/health").permitAll()
                         .requestMatchers("/api/uploads/events/images/**").permitAll()
                         .requestMatchers("/api/uploads/school-logos/**").permitAll()
                         .requestMatchers("/api/files/uploadEventImage").permitAll()
