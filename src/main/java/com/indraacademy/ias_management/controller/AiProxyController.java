@@ -5,6 +5,8 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.repository.AdminRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
+import com.indraacademy.ias_management.observability.UnexpectedErrorReporter;
+import com.indraacademy.ias_management.filter.RequestIdFilter;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.TeacherClassScopeService;
 import com.indraacademy.ias_management.service.TeacherClassScopeService.TeacherScope;
@@ -78,6 +80,7 @@ public class AiProxyController {
     @Autowired private AdminRepository adminRepository;
     @Autowired private TeacherClassScopeService teacherClassScopeService;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private UnexpectedErrorReporter errorReporter;
 
     // RestTemplate is fine here — calls are infrequent and latency-bound by LLM anyway.
     private final RestTemplate restTemplate = new RestTemplate();
@@ -160,6 +163,8 @@ public class AiProxyController {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Internal-Secret", aiInternalSecret);
+        String requestId = org.slf4j.MDC.get(RequestIdFilter.MDC_KEY);
+        if (requestId != null) headers.set(RequestIdFilter.HEADER, requestId);
 
         HttpEntity<Map<String, Object>> httpEntity = new HttpEntity<>(aiPayload, headers);
 
@@ -169,11 +174,12 @@ public class AiProxyController {
                     httpEntity,
                     Map.class
             );
-            log.info("AI copilot request fulfilled for userId={}, role={}", userId, role);
+            log.info("AI copilot request fulfilled");
             return ResponseEntity.ok(aiResponse.getBody());
 
         } catch (Exception e) {
-            log.error("AI service call failed for userId={}: {}", userId, e.getMessage());
+            log.error("AI service call failed", e);
+            errorReporter.report("ai.chat", e);
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                     .body(Map.of("error", "AI Copilot is temporarily unavailable. Please try again later."));
         }
@@ -242,36 +248,48 @@ public class AiProxyController {
                     "Failed to prepare AI request".getBytes(StandardCharsets.UTF_8)));
         }
 
-        StreamingResponseBody stream = outputStream -> {
-            HttpRequest pythonRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(aiServiceUrl + "/chat/stream"))
-                    .header("Content-Type", "application/json")
-                    .header("X-Internal-Secret", aiInternalSecret)
-                    .timeout(Duration.ofSeconds(90))
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
-                    .build();
+        String correlationId = java.util.Objects.requireNonNullElseGet(
+                org.slf4j.MDC.get(RequestIdFilter.MDC_KEY), () -> java.util.UUID.randomUUID().toString());
 
+        StreamingResponseBody stream = outputStream -> {
+            // Spring MVC runs StreamingResponseBody on a separate async thread, so the
+            // RequestIdFilter's MDC entry (thread-local, set on the request thread) isn't
+            // visible here. Re-establish it from the already-resolved correlationId so
+            // errorReporter.report() below can still tag the failure with the request ID.
+            org.slf4j.MDC.put(RequestIdFilter.MDC_KEY, correlationId);
             try {
+                HttpRequest pythonRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(aiServiceUrl + "/chat/stream"))
+                        .header("Content-Type", "application/json")
+                        .header("X-Internal-Secret", aiInternalSecret)
+                        .header(RequestIdFilter.HEADER, correlationId)
+                        .timeout(Duration.ofSeconds(90))
+                        .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
+                        .build();
+
                 HttpResponse<InputStream> pythonResponse = streamingHttpClient.send(
                         pythonRequest, HttpResponse.BodyHandlers.ofInputStream());
 
                 try (InputStream pythonBody = pythonResponse.body()) {
                     if (pythonResponse.statusCode() != 200) {
-                        String errorBody = new String(pythonBody.readAllBytes(), StandardCharsets.UTF_8);
-                        log.error("AI stream call returned {} for userId={}: {}", pythonResponse.statusCode(), userId, errorBody);
+                        pythonBody.readAllBytes();
+                        log.error("AI stream call returned status={}", pythonResponse.statusCode());
                         writeAndFlush(outputStream, "AI Copilot is temporarily unavailable. Please try again later.");
                         return;
                     }
 
                     copyStream(pythonBody, outputStream);
-                    log.info("AI copilot stream completed for userId={}, role={}", userId, role);
+                    log.info("AI copilot stream completed");
                 }
 
             } catch (Exception e) {
                 // Full stack trace, not just getMessage() — some IOExceptions (e.g. a
                 // client/proxy hangup mid-write) carry little in the message alone.
-                log.error("AI stream failed for userId={}", userId, e);
+                log.error("AI stream failed", e);
+                errorReporter.report("ai.stream", e);
                 writeAndFlush(outputStream, "\n\n⚠️ AI Copilot is temporarily unavailable. Please try again later.");
+            } finally {
+                org.slf4j.MDC.remove(RequestIdFilter.MDC_KEY);
             }
         };
 
@@ -314,7 +332,7 @@ public class AiProxyController {
                         : adminRepository.findById(userId).map(a -> a.getName()).orElse(null);
             };
         } catch (Exception e) {
-            log.warn("Could not resolve name for userId={}: {}", userId, e.getMessage());
+            log.warn("Could not resolve AI caller display name: type={}", e.getClass().getSimpleName());
             return null;
         }
     }
@@ -374,15 +392,14 @@ public class AiProxyController {
                 if (scope.sectionRequiredButMissing()) {
                     // Never advertise the class: this teacher's authority over it is ambiguous,
                     // and every class endpoint will refuse them until an admin resolves it.
-                    log.warn("Teacher {} has an unresolved section for class {} — AI chat context "
-                            + "reports no class scope.", userId, scope.className());
+                    log.warn("AI chat context reports no class scope because the caller's section is unresolved");
                     return ClassContext.BLOCKED;
                 }
                 return new ClassContext(scope.className(), scope.sectionId(), false);
             }
             return ClassContext.NONE;
         } catch (Exception e) {
-            log.warn("Could not resolve class context for userId={}: {}", userId, e.getMessage());
+            log.warn("Could not resolve AI caller class context: type={}", e.getClass().getSimpleName());
             return ClassContext.NONE;
         }
     }

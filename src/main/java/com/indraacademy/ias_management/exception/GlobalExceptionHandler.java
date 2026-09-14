@@ -1,9 +1,11 @@
 package com.indraacademy.ias_management.exception;
 
 import com.indraacademy.ias_management.dto.ErrorResponse;
+import com.indraacademy.ias_management.observability.UnexpectedErrorReporter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.MessageSourceResolvable;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -22,6 +24,17 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private final UnexpectedErrorReporter errorReporter;
+
+    public GlobalExceptionHandler() {
+        this((operation, failure) -> { });
+    }
+
+    @Autowired
+    public GlobalExceptionHandler(UnexpectedErrorReporter errorReporter) {
+        this.errorReporter = errorReporter;
+    }
 
     /**
      * 403 — authenticated, but not allowed to do this.
@@ -153,6 +166,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DataAccessException.class)
     public ResponseEntity<ErrorResponse> handleDataAccess(DataAccessException ex) {
         log.error("Database error: {}", ex.getMessage(), ex);
+        errorReporter.report("database", ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponse(500, "Internal Server Error", "A database error occurred."));
@@ -184,6 +198,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleGeneric(Exception ex) {
         log.error("Unexpected error: {}", ex.getMessage(), ex);
+        errorReporter.report("request", ex);
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponse(500, "Internal Server Error", "An unexpected error occurred."));

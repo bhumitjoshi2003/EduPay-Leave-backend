@@ -18,6 +18,9 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * HandlerMethodValidationException (raised for e.g. {@code @Valid} on a {@code List<>}
@@ -223,5 +226,20 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().getStatus()).isEqualTo(404);
         assertThat(response.getBody().getMessage()).isEqualTo("Template not found: 1");
+    }
+
+    @Test
+    void expectedErrorsAreNotReportedButUnexpectedErrorsAre() {
+        com.indraacademy.ias_management.observability.UnexpectedErrorReporter reporter =
+                mock(com.indraacademy.ias_management.observability.UnexpectedErrorReporter.class);
+        GlobalExceptionHandler reportingHandler = new GlobalExceptionHandler(reporter);
+        IllegalArgumentException expected = new IllegalArgumentException("invalid");
+        RuntimeException unexpected = new RuntimeException("boom");
+
+        reportingHandler.handleIllegalArgument(expected);
+        verify(reporter, never()).report("request", expected);
+
+        reportingHandler.handleGeneric(unexpected);
+        verify(reporter).report("request", unexpected);
     }
 }

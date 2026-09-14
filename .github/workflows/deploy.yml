@@ -134,6 +134,9 @@ jobs:
                 -e DEMO_NOTIFY_EMAIL='${{ secrets.DEMO_NOTIFY_EMAIL }}' \
                 -e AI_SERVICE_URL='${{ secrets.AI_SERVICE_URL }}' \
                 -e AI_INTERNAL_SECRET='${{ secrets.AI_INTERNAL_SECRET }}' \
+                -e SENTRY_DSN='${{ secrets.SENTRY_DSN }}' \
+                -e SENTRY_ENVIRONMENT=production \
+                -e RELEASE_SHA='${{ github.sha }}' \
                 "$1"
             }
 

@@ -1,6 +1,7 @@
 package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.service.RazorpayService;
+import com.indraacademy.ias_management.observability.UnexpectedErrorReporter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +22,9 @@ public class WebhookController {
 
     @Autowired
     private RazorpayService razorpayService;
+
+    @Autowired
+    private UnexpectedErrorReporter errorReporter;
 
     /**
      * Receives Razorpay webhook events (payment.authorized, payment.captured, payment.failed, etc.).
@@ -50,6 +54,7 @@ public class WebhookController {
             razorpayService.processWebhookEvent(payload);
         } catch (Exception e) {
             log.error("Error processing Razorpay webhook event.", e);
+            errorReporter.report("razorpay.webhook", e);
         }
 
         // 3. Always return 200 OK to Razorpay

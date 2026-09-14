@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.filter.JwtAuthFilter;
 import com.indraacademy.ias_management.filter.SubscriptionEnforcementFilter;
 import com.indraacademy.ias_management.filter.BrowserRequestOriginFilter;
 import com.indraacademy.ias_management.filter.TenantValidationFilter;
+import com.indraacademy.ias_management.filter.RequestIdFilter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -22,6 +23,7 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.header.writers.XXssProtectionHeaderWriter;
+import org.springframework.web.filter.CorsFilter;
 import org.springframework.web.cors.CorsConfiguration;
 
 import java.util.Arrays;
@@ -43,6 +45,9 @@ public class SecurityConfig {
 
     @Autowired
     private BrowserRequestOriginFilter browserRequestOriginFilter;
+
+    @Autowired
+    private RequestIdFilter requestIdFilter;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -76,6 +81,7 @@ public class SecurityConfig {
 
                     config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
                     config.setAllowedHeaders(List.of("*"));
+                    config.setExposedHeaders(List.of(RequestIdFilter.HEADER));
                     config.setAllowCredentials(true);
                     config.setMaxAge(3600L);
                     return config;
@@ -109,6 +115,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(unauthorizedEntryPoint()))
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(requestIdFilter, CorsFilter.class)
                 .addFilterBefore(browserRequestOriginFilter, JwtAuthFilter.class)
                 .addFilterAfter(tenantValidationFilter, JwtAuthFilter.class)
                 .addFilterAfter(subscriptionEnforcementFilter, TenantValidationFilter.class);

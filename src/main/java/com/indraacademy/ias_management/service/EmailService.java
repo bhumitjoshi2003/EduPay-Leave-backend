@@ -42,10 +42,10 @@ public class EmailService {
     @Async
     public void sendHtmlEmail(String to, String subject, String htmlBody) {
         if (to == null || to.trim().isEmpty() || subject == null || htmlBody == null) {
-            log.warn("Attempted to send HTML email with missing required field (To: {}, Subject: {}). Aborting.", to, subject);
+            log.warn("Attempted to send HTML email with a missing required field. Aborting.");
             return;
         }
-        log.info("Attempting to send async HTML email to: {} with subject: {}", to, subject);
+        log.info("Attempting to send async HTML email.");
         try {
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
@@ -54,13 +54,13 @@ public class EmailService {
             helper.setSubject(subject);
             helper.setText(htmlBody, true);
             javaMailSender.send(message);
-            log.info("Successfully sent async HTML email to: {}", to);
+            log.info("Successfully sent async HTML email.");
         } catch (MessagingException e) {
-            log.error("MessagingException while sending HTML email to: {}", to, e);
+            log.error("MessagingException while sending HTML email", e);
         } catch (MailException e) {
-            log.error("MailException while sending HTML email to: {}", to, e);
+            log.error("MailException while sending HTML email", e);
         } catch (Exception e) {
-            log.error("Unexpected error while sending HTML email to: {}", to, e);
+            log.error("Unexpected error while sending HTML email", e);
         }
     }
 
@@ -76,7 +76,7 @@ public class EmailService {
      */
     public boolean sendHtmlEmailSync(String to, String subject, String htmlBody) {
         if (to == null || to.trim().isEmpty() || subject == null || htmlBody == null) {
-            log.warn("Attempted to send HTML email (sync) with missing required field (To: {}, Subject: {}). Aborting.", to, subject);
+            log.warn("Attempted to send HTML email (sync) with a missing required field. Aborting.");
             return false;
         }
         try {
@@ -87,16 +87,16 @@ public class EmailService {
             helper.setSubject(subject);
             helper.setText(htmlBody, true);
             javaMailSender.send(message);
-            log.info("Successfully sent HTML email (sync) to: {}", to);
+            log.info("Successfully sent HTML email (sync).");
             return true;
         } catch (MessagingException e) {
-            log.error("MessagingException while sending HTML email (sync) to: {}: {}", to, e.getMessage());
+            log.error("MessagingException while sending HTML email (sync): {}", e.getMessage());
             return false;
         } catch (MailException e) {
-            log.error("MailException while sending HTML email (sync) to: {}: {}", to, e.getMessage());
+            log.error("MailException while sending HTML email (sync): {}", e.getMessage());
             return false;
         } catch (Exception e) {
-            log.error("Unexpected error while sending HTML email (sync) to: {}: {}", to, e.getMessage());
+            log.error("Unexpected error while sending HTML email (sync): {}", e.getMessage());
             return false;
         }
     }

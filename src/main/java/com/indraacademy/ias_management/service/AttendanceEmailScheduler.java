@@ -88,10 +88,10 @@ public class AttendanceEmailScheduler {
                         emailService.sendHtmlEmail(parentEmail, subject, htmlBody);
                         log.info("Successfully sent absence email to parent of student ID: {} ({})", studentId, parentEmail);
                     } catch (Exception e) {
-                        log.error("Failed to send email to parent of student ID: {} ({})", studentId, parentEmail, e);
+                        log.error("Failed to send attendance email for student ID: {}", studentId, e);
                     }
                 } else {
-                    log.warn("Parent/Guardian email not found or empty for student ID: {} (Name: {})", studentId, student.getName());
+                    log.warn("Parent/Guardian email not found or empty for student ID: {}", studentId);
                 }
             } else {
                 log.warn("Student not found with ID: {}. Unable to send absence email.", studentId);

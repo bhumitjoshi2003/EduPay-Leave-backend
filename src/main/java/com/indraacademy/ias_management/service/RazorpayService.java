@@ -467,7 +467,7 @@ public class RazorpayService {
             return response;
 
         } catch (RazorpayException e) {
-            log.error("Razorpay signature verification failed for Order ID: {}. Payload: {}", orderId, payload, e);
+            log.error("Razorpay signature verification failed for Order ID: {}", orderId, e);
             response.put("success", false);
             response.put("message", "Payment Verification Failed due to signature error.");
             return response;
