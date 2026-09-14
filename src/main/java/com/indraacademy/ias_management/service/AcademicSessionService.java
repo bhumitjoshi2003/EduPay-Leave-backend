@@ -5,7 +5,6 @@ import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.FeeStructureRuleRepository;
-import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeeConfigRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -32,9 +31,6 @@ public class AcademicSessionService {
 
     @Autowired
     private StudentFeeConfigRepository studentFeeConfigRepository;
-
-    @Autowired
-    private InvoiceRepository invoiceRepository;
 
     @Autowired
     private SecurityUtil securityUtil;
@@ -207,10 +203,6 @@ public class AcademicSessionService {
 
         if (session.isCurrent()) {
             throw new IllegalStateException("Cannot delete the current academic session. Set another session as current first.");
-        }
-
-        if (invoiceRepository.existsBySchoolIdAndAcademicSessionId(schoolId, sessionId)) {
-            throw new IllegalStateException("Cannot delete this session because invoices exist for it. Archive the session instead.");
         }
 
         // Cascade delete fee structure rules and student fee configs

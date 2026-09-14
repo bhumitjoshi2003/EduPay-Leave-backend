@@ -11,7 +11,6 @@ import com.indraacademy.ias_management.entity.StudentFeesLineItem;
 import com.indraacademy.ias_management.entity.StudentOneTimeFeeCharged;
 import com.indraacademy.ias_management.repository.AllocationRefundRepository;
 import com.indraacademy.ias_management.repository.AcademicSessionRepository;
-import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
@@ -76,7 +75,6 @@ public class StudentFeesRecalculationService {
     @Autowired private AllocationRefundRepository allocationRefundRepository;
     @Autowired private AcademicSessionRepository academicSessionRepository;
     @Autowired private AcademicSessionService academicSessionService;
-    @Autowired private InvoiceRepository invoiceRepository;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
@@ -373,14 +371,6 @@ public class StudentFeesRecalculationService {
      * when eligible, otherwise a human-readable rejection reason.
      */
     private String ineligibilityReason(StudentFees fee) {
-        boolean finalizedInvoiceExists = academicSessionRepository
-                .findBySchoolIdAndLabel(fee.getSchoolId(), fee.getYear())
-                .map(session -> invoiceRepository.existsFinalizedForStudentMonth(
-                        fee.getSchoolId(), fee.getStudentId(), session.getId(), fee.getMonth()))
-                .orElse(false);
-        if (finalizedInvoiceExists) {
-            return "A finalized invoice already exists for this month.";
-        }
         if (fee.getPaid() == null) {
             return "Row's paid status is unknown — refusing to guess; not eligible for recalculation.";
         }

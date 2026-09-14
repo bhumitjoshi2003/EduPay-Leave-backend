@@ -9,7 +9,6 @@ import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.entity.StudentFeesLineItem;
 import com.indraacademy.ias_management.repository.AllocationRefundRepository;
 import com.indraacademy.ias_management.repository.AcademicSessionRepository;
-import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.PaymentStudentFeesAllocationRepository;
 import com.indraacademy.ias_management.repository.StudentFeesLineItemRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
@@ -51,7 +50,6 @@ class StudentFeesRecalculationServiceTest {
     @Mock private PaymentStudentFeesAllocationRepository paymentAllocationRepository;
     @Mock private AllocationRefundRepository allocationRefundRepository;
     @Mock private AcademicSessionRepository academicSessionRepository;
-    @Mock private InvoiceRepository invoiceRepository;
     @Mock private AuditService auditService;
     @Mock private SecurityUtil securityUtil;
 
@@ -74,7 +72,6 @@ class StudentFeesRecalculationServiceTest {
         // Real instance, not a mock: academicMonthToDate is a pure plusMonths computation with
         // no dependency on this service's own @Autowired fields.
         ReflectionTestUtils.setField(service, "academicSessionService", new AcademicSessionService());
-        ReflectionTestUtils.setField(service, "invoiceRepository", invoiceRepository);
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
@@ -214,27 +211,6 @@ class StudentFeesRecalculationServiceTest {
         verify(feeCalculationService, never()).computeMonthSnapshot(any(), any(), any(), any(),
                 anyInt(), anyBoolean(), any(), any(), any(), any());
         verify(studentFeesRepository, never()).save(fee);
-    }
-
-    @Test
-    void recalculateOneWithTransport_finalizedInvoice_doesNotChangeTransportOrRecalculate() {
-        StudentFees fee = unpaidRow(3, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
-        fee.setTakesBus(false);
-        fee.setDistance(0.0);
-        com.indraacademy.ias_management.entity.AcademicSession academicSession =
-                new com.indraacademy.ias_management.entity.AcademicSession();
-        academicSession.setId(10L);
-        when(academicSessionRepository.findBySchoolIdAndLabel(SCHOOL_ID, SESSION)).thenReturn(java.util.Optional.of(academicSession));
-        when(invoiceRepository.existsFinalizedForStudentMonth(SCHOOL_ID, STUDENT_ID, 10L, 3)).thenReturn(true);
-
-        RecalculationEntryDto result = service.recalculateOneWithTransport(
-                STUDENT_ID, SESSION, 3, true, 12.5, "Started transport", "127.0.0.1");
-
-        assertThat(result.isOk()).isFalse();
-        assertThat(result.getMessage()).contains("finalized invoice");
-        assertThat(fee.getTakesBus()).isFalse();
-        verify(feeCalculationService, never()).computeMonthSnapshot(any(), any(), any(), any(),
-                anyInt(), anyBoolean(), any(), any(), any(), any());
     }
 
     @Test

@@ -4,7 +4,6 @@ import com.indraacademy.ias_management.dto.AcademicSessionDto;
 import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.repository.FeeStructureRuleRepository;
-import com.indraacademy.ias_management.repository.InvoiceRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeeConfigRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -44,7 +43,6 @@ class AcademicSessionServiceTest {
     @Mock SchoolRepository schoolRepository;
     @Mock FeeStructureRuleRepository feeStructureRuleRepository;
     @Mock StudentFeeConfigRepository studentFeeConfigRepository;
-    @Mock InvoiceRepository invoiceRepository;
     @Mock SecurityUtil securityUtil;
 
     private AcademicSessionService service;
@@ -59,7 +57,6 @@ class AcademicSessionServiceTest {
         ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
         ReflectionTestUtils.setField(service, "feeStructureRuleRepository", feeStructureRuleRepository);
         ReflectionTestUtils.setField(service, "studentFeeConfigRepository", studentFeeConfigRepository);
-        ReflectionTestUtils.setField(service, "invoiceRepository", invoiceRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
     }
@@ -327,11 +324,10 @@ class AcademicSessionServiceTest {
     // ── deleteSession ─────────────────────────────────────────────────────────────────────
 
     @Test
-    void deleteSessionRemovesANonCurrentSessionWithNoInvoices() {
+    void deleteSessionRemovesANonCurrentSession() {
         AcademicSession target = session(4L, SCHOOL_ID, "2022-2023",
                 LocalDate.of(2022, 4, 1), LocalDate.of(2023, 3, 31), false);
         when(sessionRepository.findByIdAndSchoolId(4L, SCHOOL_ID)).thenReturn(Optional.of(target));
-        when(invoiceRepository.existsBySchoolIdAndAcademicSessionId(SCHOOL_ID, 4L)).thenReturn(false);
 
         service.deleteSession(4L);
 
@@ -347,17 +343,6 @@ class AcademicSessionServiceTest {
         when(sessionRepository.findByIdAndSchoolId(1L, SCHOOL_ID)).thenReturn(Optional.of(current));
 
         assertThatThrownBy(() -> service.deleteSession(1L)).isInstanceOf(IllegalStateException.class);
-        verify(sessionRepository, never()).delete(any());
-    }
-
-    @Test
-    void deleteSessionRejectsASessionWithExistingInvoices() {
-        AcademicSession target = session(4L, SCHOOL_ID, "2022-2023",
-                LocalDate.of(2022, 4, 1), LocalDate.of(2023, 3, 31), false);
-        when(sessionRepository.findByIdAndSchoolId(4L, SCHOOL_ID)).thenReturn(Optional.of(target));
-        when(invoiceRepository.existsBySchoolIdAndAcademicSessionId(SCHOOL_ID, 4L)).thenReturn(true);
-
-        assertThatThrownBy(() -> service.deleteSession(4L)).isInstanceOf(IllegalStateException.class);
         verify(sessionRepository, never()).delete(any());
     }
 
