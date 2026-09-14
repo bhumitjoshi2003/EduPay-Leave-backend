@@ -41,10 +41,9 @@ public class RazorpayService {
     @Autowired private PaymentOrderRepository paymentOrderRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
-    @Autowired private AttendanceService attendanceService;
     @Autowired private EmailService emailService;
-    @Autowired private StudentFeesService studentFeesService;
     @Autowired private StudentFeesRepository studentFeesRepository;
+    @Autowired private PaymentSettlementService paymentSettlementService;
     @Autowired private BusinessNotificationService businessNotifications;
     @Autowired private FeeCalculationService feeCalculationService;
     @Autowired private SecurityUtil securityUtil;
@@ -313,13 +312,13 @@ public class RazorpayService {
             return response;
         }
 
-        String payload = null;
         try {
-            // 1. Signature Verification — proves a real payment was captured for this
-            //    orderId. It does NOT prove which student/amount/months that order was
-            //    for — that's what the lookup below establishes, from what WE persisted
-            //    when the order was created, never from client-supplied data.
-            payload = orderId + "|" + paymentId;
+            // 1. Signature Verification — local HMAC, no network call, no DB transaction.
+            //    Proves a real payment was captured for this orderId. It does NOT prove
+            //    which student/amount/months that order was for — that's what
+            //    PaymentSettlementService establishes below, from what WE persisted when
+            //    the order was created, never from client-supplied data.
+            String payload = orderId + "|" + paymentId;
             boolean isValid = Utils.verifySignature(payload, signature, resolveKeySecret());
 
             if (!isValid) {
@@ -330,140 +329,27 @@ public class RazorpayService {
             }
             log.info("Signature verified successfully for Payment ID: {}", paymentId);
 
-            // 2. Idempotency check — if this exact paymentId was already persisted, return
-            //    success without creating a duplicate record (handles client retries).
-            if (paymentRepository.existsByPaymentId(paymentId)) {
-                log.warn("Duplicate verify call for Payment ID: {} — already persisted, returning success.", paymentId);
-                response.put("success", true);
-                response.put("message", "Payment already verified.");
-                return response;
-            }
-
-            // 3. Look up the server-persisted order — the actual source of truth for
-            //    studentId/amount/months/class/session. A forged or unknown orderId
-            //    (one this school never created via /create) is rejected here.
-            PaymentOrder paymentOrder = paymentOrderRepository.findByOrderId(orderId).orElse(null);
-            if (paymentOrder == null) {
-                log.error("No server-side order record found for Order ID: {} — rejecting.", orderId);
-                response.put("success", false);
-                response.put("message", "Payment Verification Failed: Unknown order.");
-                return response;
-            }
+            // 2. Canonical, atomic settlement — one transaction owns Payment creation,
+            //    PaymentOrder consumption, attendance charge-paid, and StudentFees
+            //    allocation together. By the time settle() returns, that transaction has
+            //    already committed or rolled back — there is nothing left open here for a
+            //    later step (notifications) to affect.
             Long schoolId = securityUtil.getSchoolId();
-            if (!paymentOrder.getSchoolId().equals(schoolId)) {
-                log.error("Order {} belongs to schoolId={} but caller is schoolId={} — rejecting.",
-                        orderId, paymentOrder.getSchoolId(), schoolId);
-                response.put("success", false);
-                response.put("message", "Payment Verification Failed: Order does not belong to this school.");
-                return response;
-            }
-            if (paymentOrder.isConsumed()) {
-                // Already-consumed orders with a DIFFERENT paymentId than what consumed
-                // them (the identical-paymentId retry case was already handled by the
-                // existsByPaymentId check above) — a second, different payment being
-                // matched against an already-used order is exactly the replay this table
-                // exists to prevent.
-                log.error("Order {} was already consumed — rejecting reuse with Payment ID: {}.", orderId, paymentId);
-                response.put("success", false);
-                response.put("message", "Payment Verification Failed: Order already used.");
-                return response;
+            PaymentSettlementService.SettlementResult result =
+                    paymentSettlementService.settle(orderId, paymentId, signature, schoolId,
+                            PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+            response.put("success", result.outcome() != PaymentSettlementService.Outcome.REJECTED);
+            response.put("message", result.message());
+
+            // 3. Post-commit notification/email — best-effort only. Settlement has already
+            //    committed at this point; nothing here can turn a successful settlement into
+            //    a reported failure. Only sent for a genuinely fresh settlement, matching the
+            //    pre-existing behavior of never re-notifying on an idempotent retry.
+            if (result.outcome() == PaymentSettlementService.Outcome.SETTLED) {
+                sendSettlementNotifications(result.payment(), schoolId);
             }
 
-            String studentId = paymentOrder.getStudentId();
-            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
-            String studentName = studentOptional.map(Student::getName).orElse(studentId);
-
-            // 4. Data Persistence and Post-Payment Logic — every business field below
-            //    comes from paymentOrder (server-trusted), never from the orderDetails
-            //    map the client sends alongside the verify request.
-            Payment payment = new Payment();
-            payment.setStudentId(studentId);
-            payment.setStudentName(studentName);
-            payment.setClassName(paymentOrder.getClassName());
-            payment.setSession(paymentOrder.getSession());
-            payment.setMonth(paymentOrder.getMonth());
-            int amountInPaise = paymentOrder.getAmount();
-            payment.setAmount(amountInPaise); // Stored in paise
-            payment.setPaymentId(paymentId);
-            payment.setOrderId(orderId);
-            payment.setBusFee(paymentOrder.getBusFee());
-            payment.setTuitionFee(paymentOrder.getTuitionFee());
-            payment.setAnnualCharges(paymentOrder.getAnnualCharges());
-            payment.setLabCharges(paymentOrder.getLabCharges());
-            payment.setEcaProject(paymentOrder.getEcaProject());
-            payment.setExaminationFee(paymentOrder.getExaminationFee());
-            payment.setPaidManually(false);
-            payment.setAmountPaid(amountInPaise); // Stored in paise
-            payment.setRazorpaySignature(signature);
-            payment.setAdditionalCharges(paymentOrder.getAdditionalCharges());
-            payment.setLateFees(paymentOrder.getLateFees());
-            payment.setPlatformFee(paymentOrder.getPlatformFee());
-            payment.setSchoolId(schoolId);
-
-            Payment savedPayment;
-            try {
-                savedPayment = paymentRepository.save(payment);
-            } catch (org.springframework.dao.DataIntegrityViolationException e) {
-                // A concurrent request (e.g. a duplicate webhook firing alongside this
-                // client-triggered verify) already saved a Payment with this exact
-                // payment_id between the existsByPaymentId check above and this save — the
-                // DB unique constraint on payment.payment_id (added this phase) is the real
-                // backstop for that race. Treat it the same as the early existsByPaymentId
-                // short-circuit: already processed, not a failure.
-                log.warn("Duplicate payment save race detected for paymentId={} — already recorded by a concurrent request.", paymentId, e);
-                response.put("success", true);
-                response.put("message", "Payment already verified.");
-                return response;
-            }
-            log.info("Payment saved successfully to DB. Record ID: {}", savedPayment.getId());
-
-            paymentOrder.setConsumed(true);
-            paymentOrderRepository.save(paymentOrder);
-
-            // 3. Update related services
-            attendanceService.updateChargePaidAfterPayment(studentId, paymentOrder.getSession());
-            studentFeesService.markFeesAsPaid(payment);
-            log.debug("Attendance and StudentFees marked as paid.");
-
-            // 4. Notification — convert paise to rupees for display only
-            double displayAmountRupees = amountInPaise / 100.0;
-            String successNotificationMessage = String.format("Your fee payment of ₹%.2f has been successfully processed. Payment ID: %s", displayAmountRupees, paymentId);
-            // Assuming Long.valueOf(savedPayment.getId()) is the correct type based on previous services
-            String relatedEntityId = (savedPayment.getId() != null) ? String.valueOf(savedPayment.getId()) : null;
-
-            businessNotifications.studentAndParents(schoolId, studentId,
-                    NotificationAudienceType.STUDENT_WITH_FEE_PARENTS,
-                    NotificationEventCode.PAYMENT_SUCCESS, NotificationCategory.FEES_PAYMENTS,
-                    "Payment Successful", successNotificationMessage, "Payment", relatedEntityId,
-                    "/dashboard/payment-history", studentId, "payment-success:" + paymentId,
-                    java.util.Set.of(ExternalDeliveryChannel.PUSH));
-            log.info("Payment success notification initiated for student ID: {}", studentId);
-
-            // 5. Asynchronous Email Sending
-            if (studentOptional.isPresent()) {
-                Student student = studentOptional.get();
-                String studentEmail = student.getEmail();
-
-                if (studentEmail != null && !studentEmail.trim().isEmpty()) {
-                    String subject     = "Payment Confirmation – Fee Receipt";
-                    String session     = paymentOrder.getSession();
-                    String monthBitmask = paymentOrder.getMonth();
-                    String monthNames  = convertMonthBitmask(monthBitmask, schoolId);
-                    String schoolName = schoolRepository.findById(schoolId)
-                            .map(com.indraacademy.ias_management.entity.School::getName).orElse("School");
-                    String htmlBody = buildPaymentConfirmationHtml(studentName, paymentId, displayAmountRupees, session, monthNames, schoolName);
-
-                    log.info("Initiating asynchronous HTML email send to {} for payment verification.", studentEmail);
-                    emailService.sendHtmlEmail(studentEmail, subject, htmlBody);
-                } else {
-                    log.warn("Student email not found or is empty for student ID: {}. Skipping email notification.", studentId);
-                }
-            } else {
-                log.warn("Student not found for ID: {}. Skipping email notification.", studentId);
-            }
-
-            response.put("success", true);
-            response.put("message", "Payment Verified Successfully");
             return response;
 
         } catch (RazorpayException e) {
@@ -481,6 +367,60 @@ public class RazorpayService {
             response.put("success", false);
             response.put("message", "Error Verifying Payment: " + e.getMessage());
             return response;
+        }
+    }
+
+    /**
+     * Sends the payment-success notification and confirmation email for a just-settled
+     * payment. Called strictly after {@link PaymentSettlementService#settle} has returned
+     * (i.e. strictly after that transaction committed) — never before, and never in a way
+     * that can affect the settlement result already written into the caller's response map.
+     * Any failure here is logged and swallowed; it must never be reported as a payment
+     * failure, since the money and the fee-ledger state are already correctly recorded.
+     */
+    private void sendSettlementNotifications(Payment savedPayment, Long schoolId) {
+        try {
+            String studentId = savedPayment.getStudentId();
+            String paymentId = savedPayment.getPaymentId();
+            int amountInPaise = savedPayment.getAmount();
+            double displayAmountRupees = amountInPaise / 100.0;
+            String successNotificationMessage = String.format(
+                    "Your fee payment of ₹%.2f has been successfully processed. Payment ID: %s", displayAmountRupees, paymentId);
+            String relatedEntityId = (savedPayment.getId() != null) ? String.valueOf(savedPayment.getId()) : null;
+
+            businessNotifications.studentAndParents(schoolId, studentId,
+                    NotificationAudienceType.STUDENT_WITH_FEE_PARENTS,
+                    NotificationEventCode.PAYMENT_SUCCESS, NotificationCategory.FEES_PAYMENTS,
+                    "Payment Successful", successNotificationMessage, "Payment", relatedEntityId,
+                    "/dashboard/payment-history", studentId, "payment-success:" + paymentId,
+                    java.util.Set.of(ExternalDeliveryChannel.PUSH));
+            log.info("Payment success notification initiated for student ID: {}", studentId);
+
+            Optional<Student> studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId);
+            if (studentOptional.isPresent()) {
+                Student student = studentOptional.get();
+                String studentEmail = student.getEmail();
+
+                if (studentEmail != null && !studentEmail.trim().isEmpty()) {
+                    String subject = "Payment Confirmation – Fee Receipt";
+                    String session = savedPayment.getSession();
+                    String monthNames = convertMonthBitmask(savedPayment.getMonth(), schoolId);
+                    String schoolName = schoolRepository.findById(schoolId)
+                            .map(School::getName).orElse("School");
+                    String htmlBody = buildPaymentConfirmationHtml(
+                            student.getName(), paymentId, displayAmountRupees, session, monthNames, schoolName);
+
+                    log.info("Initiating asynchronous HTML email send to {} for payment verification.", studentEmail);
+                    emailService.sendHtmlEmail(studentEmail, subject, htmlBody);
+                } else {
+                    log.warn("Student email not found or is empty for student ID: {}. Skipping email notification.", studentId);
+                }
+            } else {
+                log.warn("Student not found for ID: {}. Skipping email notification.", studentId);
+            }
+        } catch (Exception e) {
+            log.error("Post-settlement notification/email failed for paymentId={} — settlement itself already " +
+                    "committed successfully and is unaffected.", savedPayment.getPaymentId(), e);
         }
     }
 
@@ -517,65 +457,164 @@ public class RazorpayService {
         }
     }
 
-    /**
-     * Processes a Razorpay webhook event. Called from the webhook controller.
-     * Returns true if the event was processed successfully or was already handled (idempotent).
-     */
-    public boolean processWebhookEvent(String payload) {
-        try {
-            JSONObject event = new JSONObject(payload);
-            String eventType = event.optString("event", "");
-            JSONObject paymentEntity = event.optJSONObject("payload");
+    /** Every order this application creates is charged in this currency — hardcoded in
+     * {@link #createOrder}'s Razorpay options, never per-school configurable — so a webhook
+     * reporting anything else for one of our own orders is either a Razorpay-side inconsistency
+     * or a mismatched/forged payload; either way, not something to settle against. */
+    private static final String EXPECTED_CURRENCY = "INR";
 
-            if (paymentEntity == null) {
-                log.warn("Webhook event has no payload. Event type: {}", eventType);
-                return false;
-            }
+    /** Tells {@code WebhookController} whether Razorpay should be told to retry this exact
+     * webhook delivery. ACKNOWLEDGE covers both "handled successfully" and "permanently
+     * inapplicable" (malformed payload, unknown order, amount mismatch, an order already
+     * consumed by a different payment) — retrying an identical payload can never turn any of
+     * those into a different outcome, so acknowledging (200) is what stops Razorpay's retry
+     * schedule from hammering us pointlessly. RETRY is reserved for genuinely transient
+     * failures (a DB blip, an unexpected exception) where trying again later might succeed. */
+    public record WebhookProcessingResult(RetryDisposition retryDisposition, String detail) {
+        public enum RetryDisposition { ACKNOWLEDGE, RETRY }
 
-            JSONObject paymentObj = paymentEntity.optJSONObject("payment");
-            if (paymentObj == null) {
-                log.info("Webhook event type '{}' has no payment object. Skipping.", eventType);
-                return true;
-            }
-
-            JSONObject entity = paymentObj.optJSONObject("entity");
-            if (entity == null) {
-                log.warn("Webhook payment object has no entity. Event type: {}", eventType);
-                return false;
-            }
-
-            String razorpayPaymentId = entity.optString("id", null);
-            String razorpayOrderId = entity.optString("order_id", null);
-            String status = entity.optString("status", "");
-
-            switch (eventType) {
-                case "payment.authorized":
-                case "payment.captured":
-                    log.info("Webhook: {} for paymentId={} orderId={}", eventType, razorpayPaymentId, razorpayOrderId);
-                    // Idempotency check — if already recorded, skip
-                    if (razorpayPaymentId != null && paymentRepository.existsByPaymentId(razorpayPaymentId)) {
-                        log.info("Webhook: Payment {} already recorded. Skipping.", razorpayPaymentId);
-                        return true;
-                    }
-                    // Log for manual follow-up if the payment wasn't recorded via the verify endpoint
-                    log.warn("Webhook: Payment {} (order {}) was {} but not yet recorded via verify endpoint. " +
-                            "Manual reconciliation may be needed.", razorpayPaymentId, razorpayOrderId, eventType);
-                    break;
-
-                case "payment.failed":
-                    log.warn("Webhook: Payment failed. paymentId={} orderId={} status={}",
-                            razorpayPaymentId, razorpayOrderId, status);
-                    break;
-
-                default:
-                    log.info("Webhook: Unhandled event type '{}'. Ignoring.", eventType);
-            }
-
-            return true;
-        } catch (Exception e) {
-            log.error("Error processing webhook event.", e);
-            return false;
+        static WebhookProcessingResult acknowledge(String detail) {
+            return new WebhookProcessingResult(RetryDisposition.ACKNOWLEDGE, detail);
         }
+
+        static WebhookProcessingResult retry(String detail) {
+            return new WebhookProcessingResult(RetryDisposition.RETRY, detail);
+        }
+    }
+
+    /**
+     * Processes a Razorpay webhook event. Called from the webhook controller, strictly after
+     * the webhook's own HMAC signature has already been verified there — this method trusts
+     * that the payload genuinely came from Razorpay, but still never trusts any business field
+     * inside it (schoolId/studentId/amount) over what the server-persisted PaymentOrder says;
+     * see {@link #recoverPaymentFromWebhook}.
+     */
+    public WebhookProcessingResult processWebhookEvent(String payload) {
+        JSONObject event;
+        try {
+            event = new JSONObject(payload);
+        } catch (Exception e) {
+            log.warn("Webhook payload is not valid JSON — cannot process. Acknowledging; retrying an " +
+                    "identical malformed body can never succeed.", e);
+            return WebhookProcessingResult.acknowledge("invalid JSON");
+        }
+
+        String eventType = event.optString("event", "");
+        JSONObject paymentEntity = event.optJSONObject("payload");
+        if (paymentEntity == null) {
+            log.warn("Webhook event has no payload. Event type: {}", eventType);
+            return WebhookProcessingResult.acknowledge("no payload");
+        }
+
+        JSONObject paymentObj = paymentEntity.optJSONObject("payment");
+        if (paymentObj == null) {
+            log.info("Webhook event type '{}' has no payment object. Skipping.", eventType);
+            return WebhookProcessingResult.acknowledge("no payment object");
+        }
+
+        JSONObject entity = paymentObj.optJSONObject("entity");
+        if (entity == null) {
+            log.warn("Webhook payment object has no entity. Event type: {}", eventType);
+            return WebhookProcessingResult.acknowledge("no entity");
+        }
+
+        String razorpayPaymentId = entity.optString("id", null);
+        String razorpayOrderId = entity.optString("order_id", null);
+        String status = entity.optString("status", "");
+
+        return switch (eventType) {
+            case "payment.captured" -> handleCaptured(entity, razorpayPaymentId, razorpayOrderId);
+
+            case "payment.authorized" -> {
+                // Deliberately observational only, even though this app configures automatic
+                // capture (payment_capture=1 in createOrder). Razorpay's own model treats
+                // "authorized" as funds reserved, not yet guaranteed to the merchant —
+                // "captured" is the only status Razorpay itself treats as final. The existing
+                // client-verify path never sees a payment_id until Checkout.js's success
+                // callback fires, which (for an auto-capture order) only happens post-capture
+                // — so restricting settlement to payment.captured keeps the webhook path
+                // consistent with what the client path has always implicitly assumed, rather
+                // than broadening financial-success semantics on this phase's own authority.
+                log.info("Webhook: payment.authorized for paymentId={} orderId={} — observational only, " +
+                        "awaiting payment.captured before settling.", razorpayPaymentId, razorpayOrderId);
+                yield WebhookProcessingResult.acknowledge("authorized (observational)");
+            }
+
+            case "payment.failed" -> {
+                log.warn("Webhook: Payment failed. paymentId={} orderId={} status={}",
+                        razorpayPaymentId, razorpayOrderId, status);
+                yield WebhookProcessingResult.acknowledge("payment failed");
+            }
+
+            default -> {
+                log.info("Webhook: Unhandled event type '{}'. Ignoring.", eventType);
+                yield WebhookProcessingResult.acknowledge("unhandled event type");
+            }
+        };
+    }
+
+    private WebhookProcessingResult handleCaptured(JSONObject entity, String paymentId, String orderId) {
+        if (paymentId == null || orderId == null) {
+            log.warn("Webhook payment.captured missing id/order_id — cannot process.");
+            return WebhookProcessingResult.acknowledge("missing id/order_id");
+        }
+        try {
+            long amountPaise = entity.optLong("amount", -1);
+            String currency = entity.optString("currency", null);
+            return recoverPaymentFromWebhook(orderId, paymentId, amountPaise, currency);
+        } catch (Exception e) {
+            log.error("Unexpected error recovering payment from webhook for orderId={} — requesting retry.",
+                    orderId, e);
+            return WebhookProcessingResult.retry("internal error");
+        }
+    }
+
+    /**
+     * Webhook-triggered recovery of a client-verification callback that was lost — settles a
+     * captured payment through the exact same {@link PaymentSettlementService} the client-verify
+     * path uses, so a successful recovery produces identical canonical DB state either way.
+     * <p>
+     * schoolId/studentId always come from the server-persisted PaymentOrder (never from the
+     * webhook payload, which has no concept of either) — a webhook only ever supplies the
+     * Razorpay-side identifiers and amount, cross-checked against PaymentOrder below before
+     * anything is settled.
+     */
+    private WebhookProcessingResult recoverPaymentFromWebhook(String orderId, String paymentId,
+                                                               long amountPaise, String currency) {
+        if (paymentRepository.existsByPaymentId(paymentId)) {
+            log.info("Webhook: Payment {} already recorded. Skipping.", paymentId);
+            return WebhookProcessingResult.acknowledge("already settled");
+        }
+
+        PaymentOrder paymentOrder = paymentOrderRepository.findByOrderId(orderId).orElse(null);
+        if (paymentOrder == null) {
+            log.error("Webhook payment.captured for unknown orderId — no matching PaymentOrder exists. " +
+                    "Acknowledging without settling; this can never succeed on retry.");
+            return WebhookProcessingResult.acknowledge("unknown order");
+        }
+
+        if (amountPaise != paymentOrder.getAmount()) {
+            log.error("Webhook amount mismatch for orderId={}: webhook reports {} paise, PaymentOrder expects " +
+                    "{} paise — refusing to settle.", orderId, amountPaise, paymentOrder.getAmount());
+            return WebhookProcessingResult.acknowledge("amount mismatch");
+        }
+        if (currency != null && !EXPECTED_CURRENCY.equalsIgnoreCase(currency)) {
+            log.error("Webhook currency mismatch for orderId={}: webhook reports {}, expected {} — refusing to settle.",
+                    orderId, currency, EXPECTED_CURRENCY);
+            return WebhookProcessingResult.acknowledge("currency mismatch");
+        }
+
+        PaymentSettlementService.SettlementResult result = paymentSettlementService.settle(
+                orderId, paymentId, null, paymentOrder.getSchoolId(),
+                PaymentSettlementService.SettlementSource.RAZORPAY_WEBHOOK);
+
+        if (result.outcome() == PaymentSettlementService.Outcome.SETTLED) {
+            log.info("Webhook recovered a lost client-verification callback for orderId={} paymentId={}.",
+                    orderId, paymentId);
+            sendSettlementNotifications(result.payment(), paymentOrder.getSchoolId());
+        }
+
+        return WebhookProcessingResult.acknowledge(result.message());
     }
 
     /**

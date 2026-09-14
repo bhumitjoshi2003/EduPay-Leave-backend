@@ -1,0 +1,46 @@
+-- Razorpay Payment-Integrity Hardening — Phase A: database/locking foundation only.
+-- No settlement behavior changes in this phase; see RazorpayService.verifyPayment's own
+-- comments for the audit finding this migration lays the groundwork for closing (Issue A /
+-- the PaymentOrder consumption race — one canonical PaymentOrder must map to at most one
+-- Payment).
+--
+-- IMPORTANT DISCOVERY that changes this from the originally-assumed shape: payment.order_id
+-- is NOT NULL at the DB level (see V1 baseline schema) and is never actually null — but it is
+-- NOT unique in its current, real usage. Two distinct kinds of rows share this column today:
+--
+--   1. Razorpay-path payments (RazorpayService.verifyPayment) — order_id is the real,
+--      globally-unique Razorpay order id (payment_order.order_id already carries a UNIQUE
+--      constraint, V2). Exactly one Payment should ever exist per real Razorpay order — that
+--      invariant has no DB-level backstop today, only the app-level isConsumed() check.
+--
+--   2. Manual payments (StudentFeesService.recordManualPayment) — order_id is hardcoded to
+--      the literal sentinel string "Manual payment" for EVERY manual payment ever recorded
+--      (see the Payment(...) constructor call there — this is not a bug being fixed here,
+--      it is real, current, intentional behavior). A blind UNIQUE(order_id) would make it
+--      impossible to ever record a second manual payment in any environment, breaking that
+--      shipping behavior.
+--
+-- A partial unique index — scoped to only the Razorpay-path rows — enforces the actual
+-- invariant (one Payment per real Razorpay order) without touching manual payments at all.
+-- This mirrors the same technique V9's uq_payment_school_manual_reference already uses for
+-- an analogous "some rows intentionally share a value" situation.
+--
+-- manual_payment_mode IS NULL is the correct discriminator (not e.g. order_id <> 'Manual
+-- payment'): every Razorpay-path Payment leaves manual_payment_mode NULL (never set by
+-- RazorpayService.verifyPayment), and every manual payment sets it to one of
+-- StudentFeesService.VALID_MANUAL_PAYMENT_MODES — the same signal markFeesAsPaid already
+-- uses to derive "was this payment manual."
+--
+-- Production currently has zero payment rows (verified before this migration was written),
+-- but this pre-check protects any other environment before the migration is applied there:
+--
+--   SELECT order_id, COUNT(*) FROM payment
+--   WHERE manual_payment_mode IS NULL
+--   GROUP BY order_id HAVING COUNT(*) > 1;
+--
+-- If that returns rows, resolve them (same manual-review process V9 describes for
+-- uq_payment_payment_id) before deploying this migration against that database. This
+-- migration does not modify, merge, or delete any existing data.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_order_id_razorpay
+    ON payment (order_id)
+    WHERE manual_payment_mode IS NULL;

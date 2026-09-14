@@ -1,23 +1,32 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentFees;
+import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentFeesRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import com.razorpay.Utils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.MockedStatic;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.*;
 
 /**
  * Consumer-migration coverage: calculateOutstandingBalancePaise (the payment-amount ceiling
@@ -32,11 +41,19 @@ class RazorpayServiceTest {
     @Mock private StudentFeesRepository studentFeesRepository;
     @Mock private FeeCalculationService feeCalculationService;
     @Mock private SecurityUtil securityUtil;
+    @Mock private PaymentSettlementService paymentSettlementService;
+    @Mock private BusinessNotificationService businessNotifications;
+    @Mock private StudentRepository studentRepository;
+    @Mock private SchoolRepository schoolRepository;
+    @Mock private EmailService emailService;
 
     private RazorpayService service;
 
     private static final Long SCHOOL_ID = 1L;
     private static final String SESSION = "2025-2026";
+    private static final String ORDER_ID = "order_ABC";
+    private static final String PAYMENT_ID = "pay_XYZ";
+    private static final String SIGNATURE = "sig_123";
 
     @BeforeEach
     void setUp() {
@@ -44,7 +61,148 @@ class RazorpayServiceTest {
         ReflectionTestUtils.setField(service, "studentFeesRepository", studentFeesRepository);
         ReflectionTestUtils.setField(service, "feeCalculationService", feeCalculationService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
+        ReflectionTestUtils.setField(service, "paymentSettlementService", paymentSettlementService);
+        ReflectionTestUtils.setField(service, "businessNotifications", businessNotifications);
+        ReflectionTestUtils.setField(service, "studentRepository", studentRepository);
+        ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
+        ReflectionTestUtils.setField(service, "emailService", emailService);
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+    }
+
+    private Map<String, String> paymentData() {
+        Map<String, String> data = new HashMap<>();
+        data.put("razorpay_order_id", ORDER_ID);
+        data.put("razorpay_payment_id", PAYMENT_ID);
+        data.put("razorpay_signature", SIGNATURE);
+        return data;
+    }
+
+    private Payment settledPayment() {
+        Payment payment = new Payment();
+        payment.setId(500L);
+        payment.setStudentId("S1");
+        payment.setStudentName("Test Student");
+        payment.setSession(SESSION);
+        payment.setMonth("100000000000");
+        payment.setAmount(250000);
+        payment.setPaymentId(PAYMENT_ID);
+        payment.setOrderId(ORDER_ID);
+        return payment;
+    }
+
+    // ── verifyPayment: delegation to PaymentSettlementService ───────────────────────────────
+
+    @Test
+    void verifyPayment_missingFields_rejectsBeforeCallingSettlementService() {
+        Map<String, Object> result = service.verifyPayment(Map.of("razorpay_order_id", ORDER_ID), null);
+
+        assertThat(result.get("success")).isEqualTo(false);
+        verifyNoInteractions(paymentSettlementService);
+    }
+
+    @Test
+    void verifyPayment_invalidSignature_rejectsBeforeCallingSettlementService() {
+        try (MockedStatic<Utils> utils = mockStatic(Utils.class)) {
+            utils.when(() -> Utils.verifySignature(anyString(), anyString(), any())).thenReturn(false);
+
+            Map<String, Object> result = service.verifyPayment(paymentData(), null);
+
+            assertThat(result.get("success")).isEqualTo(false);
+            assertThat((String) result.get("message")).contains("Invalid Signature");
+            verifyNoInteractions(paymentSettlementService);
+        }
+    }
+
+    @Test
+    void verifyPayment_settledOutcome_sendsNotificationAndEmail_reportsSuccess() {
+        Payment payment = settledPayment();
+        when(studentRepository.findByStudentIdAndSchoolId("S1", SCHOOL_ID))
+                .thenReturn(Optional.of(student("S1", "Test Student", "parent@example.com")));
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school("Test School")));
+
+        try (MockedStatic<Utils> utils = mockStatic(Utils.class)) {
+            utils.when(() -> Utils.verifySignature(anyString(), anyString(), any())).thenReturn(true);
+            when(paymentSettlementService.settle(ORDER_ID, PAYMENT_ID, SIGNATURE, SCHOOL_ID, PaymentSettlementService.SettlementSource.CLIENT_VERIFY))
+                    .thenReturn(new PaymentSettlementService.SettlementResult(
+                            PaymentSettlementService.Outcome.SETTLED, "Payment Verified Successfully", payment));
+
+            Map<String, Object> result = service.verifyPayment(paymentData(), null);
+
+            assertThat(result.get("success")).isEqualTo(true);
+            assertThat(result.get("message")).isEqualTo("Payment Verified Successfully");
+            verify(businessNotifications).studentAndParents(eq(SCHOOL_ID), eq("S1"), any(), any(), any(),
+                    anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any());
+            verify(emailService).sendHtmlEmail(eq("parent@example.com"), anyString(), anyString());
+        }
+    }
+
+    @Test
+    void verifyPayment_notificationThrows_settlementStillReportedSuccessful() {
+        // The exact false-negative bug Phase B fixes: financial settlement already committed
+        // (settle() has already returned SETTLED by this point) — a failure sending the
+        // notification/email must never flip the response to failure.
+        Payment payment = settledPayment();
+        doThrow(new RuntimeException("push notification boom"))
+                .when(businessNotifications).studentAndParents(any(), any(), any(), any(), any(),
+                        any(), any(), any(), any(), any(), any(), any(), any());
+
+        try (MockedStatic<Utils> utils = mockStatic(Utils.class)) {
+            utils.when(() -> Utils.verifySignature(anyString(), anyString(), any())).thenReturn(true);
+            when(paymentSettlementService.settle(ORDER_ID, PAYMENT_ID, SIGNATURE, SCHOOL_ID, PaymentSettlementService.SettlementSource.CLIENT_VERIFY))
+                    .thenReturn(new PaymentSettlementService.SettlementResult(
+                            PaymentSettlementService.Outcome.SETTLED, "Payment Verified Successfully", payment));
+
+            Map<String, Object> result = service.verifyPayment(paymentData(), null);
+
+            assertThat(result.get("success")).isEqualTo(true);
+            assertThat(result.get("message")).isEqualTo("Payment Verified Successfully");
+        }
+    }
+
+    @Test
+    void verifyPayment_alreadySettled_doesNotResendNotification() {
+        try (MockedStatic<Utils> utils = mockStatic(Utils.class)) {
+            utils.when(() -> Utils.verifySignature(anyString(), anyString(), any())).thenReturn(true);
+            when(paymentSettlementService.settle(ORDER_ID, PAYMENT_ID, SIGNATURE, SCHOOL_ID, PaymentSettlementService.SettlementSource.CLIENT_VERIFY))
+                    .thenReturn(new PaymentSettlementService.SettlementResult(
+                            PaymentSettlementService.Outcome.ALREADY_SETTLED, "Payment already verified.", null));
+
+            Map<String, Object> result = service.verifyPayment(paymentData(), null);
+
+            assertThat(result.get("success")).isEqualTo(true);
+            assertThat(result.get("message")).isEqualTo("Payment already verified.");
+            verifyNoInteractions(businessNotifications, emailService);
+        }
+    }
+
+    @Test
+    void verifyPayment_rejected_reportsFailureWithMessage() {
+        try (MockedStatic<Utils> utils = mockStatic(Utils.class)) {
+            utils.when(() -> Utils.verifySignature(anyString(), anyString(), any())).thenReturn(true);
+            when(paymentSettlementService.settle(ORDER_ID, PAYMENT_ID, SIGNATURE, SCHOOL_ID, PaymentSettlementService.SettlementSource.CLIENT_VERIFY))
+                    .thenReturn(new PaymentSettlementService.SettlementResult(
+                            PaymentSettlementService.Outcome.REJECTED, "Payment Verification Failed: Order already used.", null));
+
+            Map<String, Object> result = service.verifyPayment(paymentData(), null);
+
+            assertThat(result.get("success")).isEqualTo(false);
+            assertThat(result.get("message")).isEqualTo("Payment Verification Failed: Order already used.");
+            verifyNoInteractions(businessNotifications, emailService);
+        }
+    }
+
+    private Student student(String studentId, String name, String email) {
+        Student s = new Student();
+        s.setStudentId(studentId);
+        s.setName(name);
+        s.setEmail(email);
+        return s;
+    }
+
+    private School school(String name) {
+        School s = new School();
+        s.setName(name);
+        return s;
     }
 
     private StudentFees unpaidRow(int month, String className) {

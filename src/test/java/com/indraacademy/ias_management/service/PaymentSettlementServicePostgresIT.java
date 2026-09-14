@@ -1,0 +1,319 @@
+package com.indraacademy.ias_management.service;
+
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.transaction.TestTransaction;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * Razorpay Payment-Integrity Hardening — real-PostgreSQL proof for the guarantees no Mockito
+ * test can honestly make: genuine transactional rollback across multiple tables, and genuine
+ * blocking of a concurrent settlement attempt by the PaymentOrder row lock (Phase B), plus —
+ * Phase C — that the same lock and idempotency guarantees hold when the racing attempt is
+ * webhook-sourced rather than client-sourced. Follows the same *PostgresIT convention as
+ * ClassTeacherActivationPostgresIT (DataJpaTest + real Postgres, gated by DB_URL, fixtures
+ * committed via TestTransaction so a second thread/connection can see them).
+ */
+@DataJpaTest(properties = {
+        "spring.flyway.enabled=true",
+        "spring.jpa.hibernate.ddl-auto=validate"
+})
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Import({PaymentSettlementService.class, AttendanceService.class, StudentFeesService.class,
+        AcademicSessionService.class, FeeCalculationService.class, AuditService.class,
+        com.indraacademy.ias_management.util.SecurityUtil.class,
+        StudentTemporalMembershipResolver.class,
+        org.springframework.boot.autoconfigure.jackson.JacksonAutoConfiguration.class})
+@EnabledIfEnvironmentVariable(named = "DB_URL", matches = ".+")
+class PaymentSettlementServicePostgresIT {
+
+    private static final long SCHOOL = -98001L;
+
+    // StudentFeesService depends on BusinessNotificationService, whose own dependency chain
+    // (NotificationPublisher -> NotificationPublicationTransaction -> NotificationRecipientResolver
+    // -> ParentPortalService -> ...) is entirely unrelated to what this test exercises —
+    // PaymentSettlementService.settle() never sends a notification itself (RazorpayService
+    // does, strictly after settle() returns, which is outside the scope of this test). A
+    // lenient mock avoids wiring that whole unrelated chain just to satisfy the field.
+    @MockBean private BusinessNotificationService businessNotifications;
+
+    @DynamicPropertySource
+    static void postgresProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", () -> System.getenv("DB_URL"));
+        registry.add("spring.datasource.username", () -> System.getenv("DB_USERNAME"));
+        registry.add("spring.datasource.password", () -> System.getenv("DB_PASSWORD"));
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+    }
+
+    @Autowired private JdbcTemplate jdbc;
+    @Autowired private PaymentSettlementService settlementService;
+
+    @BeforeEach
+    void seedSchool() {
+        jdbc.update("INSERT INTO school (id, active, created_at, name, plan, slug, " +
+                        "academic_year_start_month, periods_per_day) VALUES (?, true, CURRENT_TIMESTAMP, ?, " +
+                        "'TRIAL', ?, 4, 8)",
+                SCHOOL, "psi-it-school", "psi-it-school");
+        TestTransaction.flagForCommit();
+        TestTransaction.end();
+        com.indraacademy.ias_management.util.SchoolContext.set(SCHOOL);
+    }
+
+    @AfterEach
+    void cleanUp() {
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+        jdbc.update("DELETE FROM payment_student_fees_allocation WHERE school_id = ?", SCHOOL);
+        jdbc.update("DELETE FROM payment WHERE school_id = ?", SCHOOL);
+        jdbc.update("DELETE FROM payment_order WHERE school_id = ?", SCHOOL);
+        jdbc.update("DELETE FROM student_fees WHERE school_id = ?", SCHOOL);
+        jdbc.update("DELETE FROM school WHERE id = ?", SCHOOL);
+    }
+
+    // ── Genuine rollback: allocation failure must undo the Payment + PaymentOrder writes ────
+
+    @Test
+    void allocationFailure_rollsBackPaymentAndPaymentOrderTogether() {
+        // No matching student_fees row for the order's month — markFeesAsPaid's Pass 1 finds
+        // nothing to allocate and throws, deep inside the same transaction settle() opened.
+        String orderId = "psi-it-order-rollback";
+        String paymentId = "psi-it-pay-rollback";
+        insertPaymentOrder(orderId, "psi-it-student-1", "100000000000");
+
+        assertThatThrownBy(() -> settlementService.settle(orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY))
+                .isInstanceOf(IllegalStateException.class);
+
+        // Fresh reads via JdbcTemplate, after the transaction settle() owned has genuinely
+        // rolled back (TestTransaction.end() in @BeforeEach means this test method runs
+        // without an ambient wrapping transaction of its own).
+        Integer paymentCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment WHERE payment_id = ?", Integer.class, paymentId);
+        assertThat(paymentCount).isZero();
+
+        Boolean consumed = jdbc.queryForObject(
+                "SELECT consumed FROM payment_order WHERE order_id = ?", Boolean.class, orderId);
+        assertThat(consumed).isFalse();
+    }
+
+    // ── Idempotency against a real, already-committed Payment row ───────────────────────────
+
+    @Test
+    void samePaymentIdAgainstRealRow_isIdempotent_noDuplicateCreated() {
+        String orderId = "psi-it-order-idem";
+        String paymentId = "psi-it-pay-idem";
+        insertPaymentOrder(orderId, "psi-it-student-2", "010000000000");
+        markOrderConsumed(orderId);
+        insertPayment(paymentId, orderId, "psi-it-student-2", SCHOOL);
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.ALREADY_SETTLED);
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment WHERE payment_id = ?", Integer.class, paymentId);
+        assertThat(count).isEqualTo(1);
+    }
+
+    @Test
+    void consumedOrderWithDifferentPaymentId_realRow_isRejected() {
+        String orderId = "psi-it-order-conflict";
+        String existingPaymentId = "psi-it-pay-existing";
+        String newPaymentId = "psi-it-pay-new-attempt";
+        insertPaymentOrder(orderId, "psi-it-student-3", "010000000000");
+        markOrderConsumed(orderId);
+        insertPayment(existingPaymentId, orderId, "psi-it-student-3", SCHOOL);
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(orderId, newPaymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.REJECTED);
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment WHERE order_id = ?", Integer.class, orderId);
+        assertThat(count).isEqualTo(1); // still just the original — no second row created
+    }
+
+    // ── Genuine concurrency: the PaymentOrder lock actually blocks a racing settlement ──────
+
+    @Test
+    void concurrentSettlement_isSerializedByThePaymentOrderLock_neverCreatesTwoPayments() throws Exception {
+        String orderId = "psi-it-order-race";
+        insertPaymentOrder(orderId, "psi-it-student-4", "010000000000");
+
+        CountDownLatch holderHasLock = new CountDownLatch(1);
+        CountDownLatch releaseHolder = new CountDownLatch(1);
+
+        // Thread 1: raw JDBC, holds FOR UPDATE on the payment_order row, then simulates a
+        // winning settlement (inserts Payment, flips consumed) and commits — exactly what
+        // settle() itself would have done inside its own transaction.
+        CompletableFuture<Void> holder = CompletableFuture.runAsync(() -> {
+            try (Connection conn = DriverManager.getConnection(
+                    normalizeJdbcUrl(System.getenv("DB_URL")), System.getenv("DB_USERNAME"), System.getenv("DB_PASSWORD"))) {
+                conn.setAutoCommit(false);
+                try (Statement st = conn.createStatement()) {
+                    st.execute("SELECT * FROM payment_order WHERE order_id = '" + orderId + "' FOR UPDATE");
+                }
+                holderHasLock.countDown();
+                releaseHolder.await(5, TimeUnit.SECONDS);
+                try (Statement st = conn.createStatement()) {
+                    st.execute("INSERT INTO payment (school_id, student_id, student_name, class_name, session, " +
+                            "month, amount, payment_id, order_id, payment_date, status, razorpay_signature, amount_paid) " +
+                            "VALUES (" + SCHOOL + ", 'psi-it-student-4', 'IT Student', '6A', '2025-2026', " +
+                            "'010000000000', 250000, 'psi-it-pay-holder', '" + orderId + "', now(), 'success', 'sig', 250000)");
+                    st.execute("UPDATE payment_order SET consumed = true WHERE order_id = '" + orderId + "'");
+                }
+                conn.commit();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        assertThat(holderHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // Thread 2: the real settlement service, for a DIFFERENT paymentId against the same
+        // still-locked order — must block until the holder above releases and commits.
+        long waiterStart = System.currentTimeMillis();
+        CompletableFuture<PaymentSettlementService.SettlementResult> waiter = CompletableFuture.supplyAsync(() -> {
+            com.indraacademy.ias_management.util.SchoolContext.set(SCHOOL);
+            try {
+                return settlementService.settle(orderId, "psi-it-pay-waiter", "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+            } finally {
+                com.indraacademy.ias_management.util.SchoolContext.clear();
+            }
+        });
+
+        Thread.sleep(800);
+        releaseHolder.countDown();
+
+        PaymentSettlementService.SettlementResult result = waiter.get(10, TimeUnit.SECONDS);
+        holder.get(5, TimeUnit.SECONDS);
+        long waiterFinished = System.currentTimeMillis();
+
+        // Blocked for real, not just "ran after by coincidence."
+        assertThat(waiterFinished - waiterStart).isGreaterThanOrEqualTo(750);
+
+        // The holder's commit won the race; the waiter — a different paymentId against a now-
+        // consumed order — must be rejected, never silently treated as a second success.
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.REJECTED);
+
+        Integer paymentCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment WHERE order_id = ?", Integer.class, orderId);
+        assertThat(paymentCount).isEqualTo(1); // exactly one Payment row for this order, ever
+    }
+
+    /** Phase C: the same guarantee as above, but the racing settlement attempt is
+     * webhook-sourced rather than client-sourced — proving the PaymentOrder lock serializes
+     * BOTH paths identically (settle() doesn't branch its locking/idempotency logic on
+     * SettlementSource; it only affects which razorpaySignature sentinel gets written), and
+     * that "one Payment row per Razorpay order" holds regardless of which path wins. */
+    @Test
+    void concurrentWebhookAndClientVerify_isSerializedByTheSameLock_exactlyOnePaymentSurvives() throws Exception {
+        String orderId = "psi-it-order-race-webhook";
+        insertPaymentOrder(orderId, "psi-it-student-5", "010000000000");
+
+        CountDownLatch holderHasLock = new CountDownLatch(1);
+        CountDownLatch releaseHolder = new CountDownLatch(1);
+
+        // Thread 1: raw JDBC, holds FOR UPDATE, then simulates a winning CLIENT_VERIFY
+        // settlement and commits — the mechanism is identical regardless of which source
+        // actually wins, so simulating either side here proves the same guarantee for both.
+        CompletableFuture<Void> holder = CompletableFuture.runAsync(() -> {
+            try (Connection conn = DriverManager.getConnection(
+                    normalizeJdbcUrl(System.getenv("DB_URL")), System.getenv("DB_USERNAME"), System.getenv("DB_PASSWORD"))) {
+                conn.setAutoCommit(false);
+                try (Statement st = conn.createStatement()) {
+                    st.execute("SELECT * FROM payment_order WHERE order_id = '" + orderId + "' FOR UPDATE");
+                }
+                holderHasLock.countDown();
+                releaseHolder.await(5, TimeUnit.SECONDS);
+                try (Statement st = conn.createStatement()) {
+                    st.execute("INSERT INTO payment (school_id, student_id, student_name, class_name, session, " +
+                            "month, amount, payment_id, order_id, payment_date, status, razorpay_signature, amount_paid) " +
+                            "VALUES (" + SCHOOL + ", 'psi-it-student-5', 'IT Student', '6A', '2025-2026', " +
+                            "'010000000000', 250000, 'psi-it-pay-client-winner', '" + orderId + "', now(), 'success', 'sig', 250000)");
+                    st.execute("UPDATE payment_order SET consumed = true WHERE order_id = '" + orderId + "'");
+                }
+                conn.commit();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        assertThat(holderHasLock.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // Thread 2: the real settlement service, called exactly as the webhook-recovery path
+        // would call it (RAZORPAY_WEBHOOK source, null client signature) — must block on the
+        // same PaymentOrder lock, then correctly reject once it sees the order already
+        // consumed by a different paymentId.
+        long waiterStart = System.currentTimeMillis();
+        CompletableFuture<PaymentSettlementService.SettlementResult> waiter = CompletableFuture.supplyAsync(() -> {
+            com.indraacademy.ias_management.util.SchoolContext.set(SCHOOL);
+            try {
+                return settlementService.settle(orderId, "psi-it-pay-webhook-loser", null, SCHOOL,
+                        PaymentSettlementService.SettlementSource.RAZORPAY_WEBHOOK);
+            } finally {
+                com.indraacademy.ias_management.util.SchoolContext.clear();
+            }
+        });
+
+        Thread.sleep(800);
+        releaseHolder.countDown();
+
+        PaymentSettlementService.SettlementResult result = waiter.get(10, TimeUnit.SECONDS);
+        holder.get(5, TimeUnit.SECONDS);
+        long waiterFinished = System.currentTimeMillis();
+
+        assertThat(waiterFinished - waiterStart).isGreaterThanOrEqualTo(750);
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.REJECTED);
+
+        Integer paymentCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment WHERE order_id = ?", Integer.class, orderId);
+        assertThat(paymentCount).isEqualTo(1);
+    }
+
+    private static String normalizeJdbcUrl(String url) {
+        return url.startsWith("jdbc:") ? url : "jdbc:" + url;
+    }
+
+    // ── fixtures ─────────────────────────────────────────────────────────────────────────────
+
+    /** Called from within @Test bodies, after @BeforeEach has already ended the default
+     * test-managed transaction — this runs as a plain, immediately-committing JDBC statement,
+     * not inside another TestTransaction cycle (there is none left to end here). */
+    private void insertPaymentOrder(String orderId, String studentId, String month) {
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, month, " +
+                        "amount, bus_fee, tuition_fee, annual_charges, lab_charges, eca_project, examination_fee, " +
+                        "additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, 250000, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, ?)",
+                orderId, SCHOOL, studentId, month, LocalDateTime.now());
+    }
+
+    private void markOrderConsumed(String orderId) {
+        jdbc.update("UPDATE payment_order SET consumed = true WHERE order_id = ?", orderId);
+    }
+
+    private void insertPayment(String paymentId, String orderId, String studentId, long schoolId) {
+        jdbc.update("INSERT INTO payment " +
+                        "(school_id, student_id, student_name, class_name, session, month, amount, " +
+                        "payment_id, order_id, payment_date, status, razorpay_signature, amount_paid) " +
+                        "VALUES (?, ?, 'IT Student', '6A', '2025-2026', '010000000000', 250000, " +
+                        "?, ?, ?, 'success', 'sig', 250000)",
+                schoolId, studentId, paymentId, orderId, LocalDateTime.now());
+    }
+}

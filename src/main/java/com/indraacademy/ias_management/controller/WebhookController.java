@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.observability.UnexpectedErrorReporter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,6 +14,14 @@ import org.springframework.web.bind.annotation.*;
  * This endpoint is excluded from JWT authentication and tenant validation
  * (see SecurityConfig permitAll and filter skip lists).
  * Protected by Razorpay webhook signature verification instead.
+ * <p>
+ * Signature-related rejections always return 200 (deliberately — never let the response leak
+ * whether a signature was valid, which would give an attacker a signature-forging oracle).
+ * Beyond that, only a genuinely transient processing failure returns a non-2xx so Razorpay's
+ * own retry schedule gets a chance to help; a permanently-inapplicable event (malformed
+ * payload, unknown order, amount mismatch, already-consumed-by-a-different-payment) is
+ * acknowledged with 200 instead, since retrying an identical payload can never change any of
+ * those — see RazorpayService.processWebhookEvent's WebhookProcessingResult.
  */
 @RestController
 @RequestMapping("/api/webhooks")
@@ -27,8 +36,9 @@ public class WebhookController {
     private UnexpectedErrorReporter errorReporter;
 
     /**
-     * Receives Razorpay webhook events (payment.authorized, payment.captured, payment.failed, etc.).
-     * Always returns 200 OK to prevent Razorpay from retrying, even if processing fails internally.
+     * Receives Razorpay webhook events (payment.authorized, payment.captured, payment.failed,
+     * etc.). See the class javadoc for the response/retry semantics — no longer an
+     * unconditional 200 for every outcome.
      */
     @PostMapping("/razorpay")
     public ResponseEntity<String> handleRazorpayWebhook(
@@ -49,15 +59,21 @@ public class WebhookController {
             return ResponseEntity.ok("signature_invalid");
         }
 
-        // 2. Process the webhook event
+        // 2. Process the webhook event. Only a genuinely transient failure gets a non-2xx
+        //    response — Razorpay retries those on its own schedule. Everything else (handled,
+        //    already-settled, or permanently inapplicable: malformed payload, unknown order,
+        //    amount mismatch, an order already consumed by a different payment) is acknowledged
+        //    with 200, since retrying an identical payload can never change any of those.
         try {
-            razorpayService.processWebhookEvent(payload);
+            RazorpayService.WebhookProcessingResult result = razorpayService.processWebhookEvent(payload);
+            return switch (result.retryDisposition()) {
+                case ACKNOWLEDGE -> ResponseEntity.ok(result.detail());
+                case RETRY -> ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(result.detail());
+            };
         } catch (Exception e) {
             log.error("Error processing Razorpay webhook event.", e);
             errorReporter.report("razorpay.webhook", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("internal_error");
         }
-
-        // 3. Always return 200 OK to Razorpay
-        return ResponseEntity.ok("ok");
     }
 }
