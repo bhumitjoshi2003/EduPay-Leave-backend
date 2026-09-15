@@ -22,6 +22,9 @@ import com.indraacademy.ias_management.entity.FeeOperationalStatus;
 import com.indraacademy.ias_management.entity.StudentFeeAssignment;
 import com.indraacademy.ias_management.entity.StudentFeeAssignmentStatus;
 import com.indraacademy.ias_management.entity.Student;
+import com.indraacademy.ias_management.entity.StudentEnrollment;
+import com.indraacademy.ias_management.entity.StudentEnrollmentStatus;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -69,6 +72,8 @@ class FeeWorkflowServiceTest {
     @Mock private SecurityUtil securityUtil;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private TransactionStatus transactionStatus;
+    @Mock private StudentEnrollmentRepository enrollmentRepository;
+    @Mock private SchoolClassRepository classRepository;
 
     private FeeWorkflowService service;
 
@@ -191,11 +196,16 @@ class FeeWorkflowServiceTest {
         // rather than a parsed label + the school's global academicYearStartMonth, so tests must
         // resolve a real session with real dates instead of stubbing academicMonthStart directly.
         lenient().when(academicSessionRepository.findBySchoolIdAndLabel(1L, "2026-2027")).thenReturn(Optional.of(session()));
+        // Default every student to "legacy uncovered" (no enrollment row ever) so existing tests
+        // keep exercising the pre-enrollment Student.className path unchanged; tests that need
+        // enrollment-authority behavior override this stub explicitly per student.
+        lenient().when(enrollmentRepository.findBySchoolIdAndStudentIdOrderByAcademicSessionIdAscEffectiveFromAsc(anyLong(), anyString()))
+                .thenReturn(List.of());
         service = new FeeWorkflowService(settingsRepository, assignmentRepository, transportRepository,
                 studentRepository, studentFeesRepository, lineItemRepository, oneTimeRepository,
                 schoolRepository, academicSessionRepository, feeHeadRepository, feeConfigRepository,
                 generationBatchRepository, calculationService, recalculationService, academicSessionService,
-                auditService, securityUtil, transactionManager);
+                auditService, securityUtil, transactionManager, enrollmentRepository, classRepository);
     }
 
     @Test
@@ -444,6 +454,155 @@ class FeeWorkflowServiceTest {
                 && value.getBaseAmountDue().compareTo(new BigDecimal("516.13")) == 0));
         verify(generationBatchRepository, atLeastOnce()).save(argThat(value -> "COMPLETED".equals(value.getStatus())
                 && value.getGeneratedMonths() == 1 && value.getFailedStudents() == 0));
+    }
+
+    /** Task 11/12/13 (historical session / promotion / detention safety): the student's CURRENT
+     * mutable className ("Class 10", as if already promoted) must never leak into a generation
+     * call for a historical session — the session's own CLOSED enrollment segment ("Class 9")
+     * is authoritative instead. */
+    @Test
+    void generate_enrollmentCoveredStudent_usesSessionSpecificEnrollmentClass_notCurrentMutableClassName() {
+        Student student = student("S1");
+        student.setName("Student One");
+        student.setClassName("Class 10"); // current/mutable — reflects a LATER promotion
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+
+        AcademicSession historicalSession = new AcademicSession();
+        historicalSession.setId(11L); historicalSession.setSchoolId(1L); historicalSession.setLabel("2025-2026");
+        historicalSession.setStartDate(LocalDate.of(2025, 4, 1)); historicalSession.setEndDate(LocalDate.of(2026, 3, 31));
+        when(academicSessionRepository.findBySchoolIdAndLabel(1L, "2025-2026")).thenReturn(Optional.of(historicalSession));
+
+        StudentEnrollment closedEnrollment = new StudentEnrollment();
+        closedEnrollment.setId(200L); closedEnrollment.setSchoolId(1L); closedEnrollment.setStudentId("S1");
+        closedEnrollment.setAcademicSessionId(11L); closedEnrollment.setClassId(50L); closedEnrollment.setClassNameSnapshot("Class 9");
+        closedEnrollment.setStatus(StudentEnrollmentStatus.CLOSED);
+        closedEnrollment.setEffectiveFrom(LocalDate.of(2025, 4, 1)); closedEnrollment.setEffectiveUntil(LocalDate.of(2026, 3, 31));
+        when(enrollmentRepository.findBySchoolIdAndStudentIdOrderByAcademicSessionIdAscEffectiveFromAsc(1L, "S1"))
+                .thenReturn(List.of(closedEnrollment));
+        when(enrollmentRepository.findEffectiveEnrollment(1L, "S1", 11L, LocalDate.of(2025, 4, 1)))
+                .thenReturn(Optional.of(closedEnrollment));
+        SchoolClass liveClass = new SchoolClass(); liveClass.setId(50L); liveClass.setName("Class 9");
+        when(classRepository.findByIdAndSchoolId(50L, 1L)).thenReturn(Optional.of(liveClass));
+
+        SchoolFeeSettings settings = settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH);
+        settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2025-2026");
+        assignment.setStatus(StudentFeeAssignmentStatus.READY);
+        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2025-2026")).thenReturn(Optional.of(assignment));
+        when(calculationService.validateFeeConfiguration(1L, "2025-2026", "Class 9"))
+                .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
+        when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2025-2026")).thenReturn(List.of());
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", 1L, "2025-2026", 1)).thenReturn(null);
+        when(transportRepository.effectiveOn(eq(1L), eq("S1"), eq("2025-2026"), any())).thenReturn(Optional.empty());
+        when(calculationService.computeMonthSnapshot(eq(1L), eq("2025-2026"), eq("Class 9"), eq("S1"),
+                eq(1), eq(true), any(), eq(false), any(), any())).thenReturn(snapshot("1000.00"));
+
+        List<GenerationResult> results = service.generate(new AssignmentRequest(List.of("S1"), "2025-2026",
+                LocalDate.of(2025, 4, 1), List.of(1), null, null), "127.0.0.1");
+
+        assertThat(results.getFirst().successful()).isTrue();
+        verify(studentFeesRepository).save(argThat(value -> "Class 9".equals(value.getClassName()) && Long.valueOf(50L).equals(value.getClassId())));
+        verify(calculationService, never()).computeMonthSnapshot(anyLong(), anyString(), eq("Class 10"), anyString(),
+                anyInt(), anyBoolean(), any(), anyBoolean(), any(), any());
+    }
+
+    /** Task 9/10: an enrollment-covered student with no valid enrollment segment for the exact
+     * session being generated must be refused outright — never silently generated against the
+     * mutable Student.className, and never against an unrelated session's enrollment. */
+    @Test
+    void generate_enrollmentCoveredStudent_noEnrollmentForTargetSession_rejectsWithoutFallback() {
+        Student student = student("S1");
+        student.setName("Student One");
+        student.setClassName("Class 10");
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+
+        // The student HAS enrollment history (some other session) — so this is NOT the
+        // legacy-uncovered case; it must be held to enrollment authority for "2026-2027" too.
+        StudentEnrollment otherSessionEnrollment = new StudentEnrollment();
+        otherSessionEnrollment.setId(199L); otherSessionEnrollment.setSchoolId(1L); otherSessionEnrollment.setStudentId("S1");
+        otherSessionEnrollment.setAcademicSessionId(11L); otherSessionEnrollment.setClassId(50L);
+        otherSessionEnrollment.setStatus(StudentEnrollmentStatus.CLOSED);
+        when(enrollmentRepository.findBySchoolIdAndStudentIdOrderByAcademicSessionIdAscEffectiveFromAsc(1L, "S1"))
+                .thenReturn(List.of(otherSessionEnrollment));
+        when(enrollmentRepository.findEffectiveEnrollment(eq(1L), eq("S1"), eq(10L), any()))
+                .thenReturn(Optional.empty());
+
+        SchoolFeeSettings settings = settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH);
+        settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
+        assignment.setStatus(StudentFeeAssignmentStatus.READY);
+        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2026-2027")).thenReturn(Optional.of(assignment));
+
+        List<GenerationResult> results = service.generate(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 4, 1), List.of(1), null, null), "127.0.0.1");
+
+        assertThat(results.getFirst().successful()).isFalse();
+        assertThat(results.getFirst().message()).contains("No enrollment found");
+        verify(studentFeesRepository, never()).save(any());
+        verify(calculationService, never()).computeMonthSnapshot(any(), any(), any(), any(), anyInt(), anyBoolean(), any(), anyBoolean(), any(), any());
+    }
+
+    /** Same missing-enrollment scenario through the read-only preview path — must report the
+     * student as ineligible with an explicit reason, never guess via Student.className. */
+    @Test
+    void preview_enrollmentCoveredStudent_noEnrollmentForTargetSession_reportsIneligible() {
+        Student student = student("S1");
+        student.setName("Student One");
+        student.setClassName("Class 10");
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        StudentEnrollment otherSessionEnrollment = new StudentEnrollment();
+        otherSessionEnrollment.setId(199L); otherSessionEnrollment.setSchoolId(1L); otherSessionEnrollment.setStudentId("S1");
+        otherSessionEnrollment.setAcademicSessionId(11L); otherSessionEnrollment.setClassId(50L);
+        otherSessionEnrollment.setStatus(StudentEnrollmentStatus.CLOSED);
+        when(enrollmentRepository.findBySchoolIdAndStudentIdOrderByAcademicSessionIdAscEffectiveFromAsc(1L, "S1"))
+                .thenReturn(List.of(otherSessionEnrollment));
+        when(enrollmentRepository.findEffectiveEnrollment(eq(1L), eq("S1"), eq(10L), any()))
+                .thenReturn(Optional.empty());
+        SchoolFeeSettings settings = settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH);
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+
+        List<StudentPreview> results = service.preview(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 4, 1), List.of(1), null, null));
+
+        assertThat(results.getFirst().eligible()).isFalse();
+        assertThat(results.getFirst().message()).contains("No enrollment found");
+        verify(calculationService, never()).computeMonthSnapshot(any(), any(), any(), any(), anyInt(), anyBoolean(), any(), anyBoolean(), any(), any());
+    }
+
+    /** Task 24 (duplicate generation): a month that already has a StudentFees row must be
+     * skipped, never regenerated — unchanged pre-existing behavior, re-confirmed after the
+     * enrollment-authority change. */
+    @Test
+    void generate_monthAlreadyGenerated_isSkippedNotDuplicated() {
+        Student student = student("S1"); student.setName("Student One"); student.setClassName("6A");
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        SchoolFeeSettings settings = settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH);
+        settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
+        assignment.setStatus(StudentFeeAssignmentStatus.READY);
+        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2026-2027")).thenReturn(Optional.of(assignment));
+        when(calculationService.validateFeeConfiguration(1L, "2026-2027", "6A"))
+                .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
+        when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
+                .thenReturn(List.of(fee(5)));
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", 1L, "2026-2027", 5))
+                .thenReturn(fee(5));
+
+        List<GenerationResult> results = service.generate(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 4, 1), List.of(5), null, null), "127.0.0.1");
+
+        assertThat(results.getFirst().successful()).isTrue();
+        assertThat(results.getFirst().generated()).isZero();
+        assertThat(results.getFirst().skipped()).isEqualTo(1);
+        verify(studentFeesRepository, never()).save(any());
     }
 
     @Test

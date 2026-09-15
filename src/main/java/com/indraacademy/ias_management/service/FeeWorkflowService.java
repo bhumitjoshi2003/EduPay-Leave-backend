@@ -37,6 +37,8 @@ public class FeeWorkflowService {
     private final AuditService auditService;
     private final SecurityUtil securityUtil;
     private final TransactionTemplate transactionTemplate;
+    private final StudentEnrollmentRepository enrollmentRepository;
+    private final SchoolClassRepository classRepository;
 
     public FeeWorkflowService(SchoolFeeSettingsRepository settingsRepository,
                               StudentFeeAssignmentRepository assignmentRepository,
@@ -55,7 +57,9 @@ public class FeeWorkflowService {
                               AcademicSessionService academicSessionService,
                               AuditService auditService,
                               SecurityUtil securityUtil,
-                              PlatformTransactionManager transactionManager) {
+                              PlatformTransactionManager transactionManager,
+                              StudentEnrollmentRepository enrollmentRepository,
+                              SchoolClassRepository classRepository) {
         this.settingsRepository = settingsRepository;
         this.assignmentRepository = assignmentRepository;
         this.transportRepository = transportRepository;
@@ -74,6 +78,8 @@ public class FeeWorkflowService {
         this.auditService = auditService;
         this.securityUtil = securityUtil;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.enrollmentRepository = enrollmentRepository;
+        this.classRepository = classRepository;
     }
 
     @Transactional
@@ -670,17 +676,72 @@ public class FeeWorkflowService {
     private LocalDate monthStart(LocalDate value) { return value == null ? null : value.withDayOfMonth(1); }
     private LocalDate monthEnd(LocalDate value) { return value == null ? null : value.withDayOfMonth(value.lengthOfMonth()); }
 
+    /** Students PLANNED/ACTIVE/CLOSED enrollment segments are all eligible candidates for fee
+     * generation — the only status excluded is CANCELLED (a voided segment) — matching
+     * {@link com.indraacademy.ias_management.repository.StudentEnrollmentRepository#findEffectiveEnrollment}'s
+     * own definition of "effective," the same primitive {@code StudentService.updateStudent}
+     * already relies on to decide enrollment authority. */
+    private record AuthoritativeClass(boolean valid, String className, Long classId, String reason) {
+        static AuthoritativeClass ok(String className, Long classId) { return new AuthoritativeClass(true, className, classId, null); }
+        static AuthoritativeClass rejected(String reason) { return new AuthoritativeClass(false, null, null, reason); }
+    }
+
+    /**
+     * Resolves the class this student is authoritatively billed under for {@code session}, as
+     * of {@code asOf} — the enrollment-authority fix for this workflow. A student who has ever
+     * had a {@link StudentEnrollment} row is "enrollment-covered": for such a student, this
+     * workflow must find a real, effective enrollment segment for THIS session or refuse to
+     * generate — it must never fall back to the mutable {@code Student.className}, which after
+     * a promotion/detention/transfer reflects the student's CURRENT class, not necessarily the
+     * class they held during the session actually being billed (including a past/historical
+     * session). Only a "legacy uncovered" student — one with no enrollment row at all, ever —
+     * still uses {@code Student.className}, exactly the same distinction
+     * {@code StudentService.updateStudent} already draws for the same reason.
+     * <p>
+     * The live {@link SchoolClass} name (resolved from the enrollment's {@code classId}, not
+     * its stored {@code classNameSnapshot}) is used, matching
+     * {@link FeeGenerationTargetService}'s own resolution so both generation paths agree even
+     * if a class was renamed after the enrollment segment was recorded.
+     */
+    private AuthoritativeClass resolveAuthoritativeClass(Student student, Long schoolId, String session, LocalDate asOf) {
+        boolean everEnrolled = !enrollmentRepository
+                .findBySchoolIdAndStudentIdOrderByAcademicSessionIdAscEffectiveFromAsc(schoolId, student.getStudentId())
+                .isEmpty();
+        if (!everEnrolled) {
+            return AuthoritativeClass.ok(student.getClassName(), student.getClassId());
+        }
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
+        StudentEnrollment enrollment = enrollmentRepository
+                .findEffectiveEnrollment(schoolId, student.getStudentId(), academicSession.getId(), asOf)
+                .orElse(null);
+        if (enrollment == null) {
+            return AuthoritativeClass.rejected("No enrollment found for student " + student.getStudentId()
+                    + " in session " + session + " — cannot generate fees without authoritative enrollment.");
+        }
+        SchoolClass schoolClass = classRepository.findByIdAndSchoolId(enrollment.getClassId(), schoolId).orElse(null);
+        if (schoolClass == null) {
+            return AuthoritativeClass.rejected("Enrolled class no longer exists for student " + student.getStudentId() + ".");
+        }
+        return AuthoritativeClass.ok(schoolClass.getName(), enrollment.getClassId());
+    }
+
     private StudentPreview previewStudent(Student student, String session, LocalDate requestedEffectiveDate,
                                           List<Integer> months, MidSessionFeePolicy requestPolicy,
                                           SchoolFeeSettings settings) {
         Long schoolId = securityUtil.getSchoolId();
-        FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, student.getClassName());
+        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
+        AuthoritativeClass authoritative = resolveAuthoritativeClass(student, schoolId, session, policy.effectiveDate());
+        if (!authoritative.valid()) {
+            return new StudentPreview(student.getStudentId(), student.getName(), false, BigDecimal.ZERO, List.of(), authoritative.reason());
+        }
+        FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, authoritative.className());
         if (!config.valid()) return new StudentPreview(student.getStudentId(), student.getName(), false, BigDecimal.ZERO, List.of(), config.reason());
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         List<MonthPreview> rows = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
         boolean first = true;
-        PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
         for (int month : months) {
             MonthDecision decision = monthDecision(month, session, policy);
             if (!decision.eligible()) {
@@ -698,7 +759,7 @@ public class FeeWorkflowService {
             LocalDate asOf = academicMonthStart(session, schoolId, month);
             TransportState transport = transportState(student, session, asOf);
             FeeCalculationService.MonthSnapshot snapshot = calculationService.computeMonthSnapshot(schoolId, session,
-                    student.getClassName(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
+                    authoritative.className(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
             if (decision.prorated()) snapshot = calculationService.prorateRecurringSnapshot(snapshot, policy.effectiveDate());
             BigDecimal amount = safe(snapshot.baseAmountDue()).add(safe(snapshot.busFeeDue()));
             total = total.add(amount);
@@ -721,9 +782,11 @@ public class FeeWorkflowService {
             return new GenerationResult(student.getStudentId(), 0, months.size(), false, "Student is not assigned for fees.");
         }
         int generated = 0, skipped = 0;
-        FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, student.getClassName());
-        if (!config.valid()) throw new IllegalStateException(config.reason());
         PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
+        AuthoritativeClass authoritative = resolveAuthoritativeClass(student, schoolId, session, policy.effectiveDate());
+        if (!authoritative.valid()) throw new IllegalStateException(authoritative.reason());
+        FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, authoritative.className());
+        if (!config.valid()) throw new IllegalStateException(config.reason());
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         boolean first = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session).isEmpty();
         for (int month : months) {
@@ -733,10 +796,11 @@ public class FeeWorkflowService {
             LocalDate asOf = academicMonthStart(session, schoolId, month);
             TransportState transport = transportState(student, session, asOf);
             FeeCalculationService.MonthSnapshot snapshot = calculationService.computeMonthSnapshot(schoolId, session,
-                    student.getClassName(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
+                    authoritative.className(), student.getStudentId(), month, first, asOf, transport.enabled(), transport.distance(), charged);
             if (decision.prorated()) snapshot = calculationService.prorateRecurringSnapshot(snapshot, policy.effectiveDate());
             StudentFees fee = new StudentFees();
-            fee.setSchoolId(schoolId); fee.setStudentId(student.getStudentId()); fee.setClassName(student.getClassName());
+            fee.setSchoolId(schoolId); fee.setStudentId(student.getStudentId()); fee.setClassName(authoritative.className());
+            fee.setClassId(authoritative.classId());
             fee.setMonth(month); fee.setYear(session); fee.setPaid(false); fee.setTakesBus(transport.enabled());
             fee.setDistance(transport.distance() == null ? 0.0 : transport.distance()); fee.setManuallyPaid(false);
             fee.setBaseAmountDue(snapshot.baseAmountDue()); fee.setBusFeeDue(snapshot.busFeeDue());
