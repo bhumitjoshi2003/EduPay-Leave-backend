@@ -176,6 +176,75 @@ class FeeWorkflowServiceTest {
         assertThat(result.getFirst().getStatus()).isEqualTo(StudentFeeAssignmentStatus.PARTIALLY_GENERATED);
     }
 
+    /** Financial AcademicSession Authority, Phase D3 — the highest-priority validation fix:
+     * academicSessionRepository.findBySchoolIdAndLabel(1L, "2099-2100") is never stubbed —
+     * Mockito's default Optional.empty() is exactly what a real repository returns for a
+     * nonexistent session, so no extra stubbing is needed to prove the rejection. Resolution now
+     * happens before requireStudents, so student lookup must never even be attempted. */
+    @Test
+    void assign_invalidButWellFormattedSession_throwsBeforeAnyAssignmentPersistence() {
+        assertThatThrownBy(() -> service.assign(new AssignmentRequest(List.of("S1"), "2099-2100",
+                LocalDate.of(2026, 4, 1), List.of(1), null, null), false, "127.0.0.1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("AcademicSession not found");
+
+        verify(assignmentRepository, never()).save(any());
+        verify(studentRepository, never()).findByStudentIdInAndSchoolId(any(), any());
+    }
+
+    /** exclude() shares assign()'s upsert path, so the same rejection must apply automatically. */
+    @Test
+    void exclude_invalidButWellFormattedSession_throwsBeforeAnyAssignmentPersistence() {
+        assertThatThrownBy(() -> service.assign(new AssignmentRequest(List.of("S1"), "2099-2100",
+                LocalDate.of(2026, 4, 1), List.of(1), "reason", null), true, "127.0.0.1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("AcademicSession not found");
+
+        verify(assignmentRepository, never()).save(any());
+    }
+
+    /** The second D1 validation gap: generate() must reject before the FeeGenerationBatch row is
+     * even created, closing the old "RUNNING-then-FAILED batch for a session that was never
+     * real" behavior. */
+    @Test
+    void generate_invalidButWellFormattedSession_throwsBeforeBatchCreation() {
+        SchoolFeeSettings settings = settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH);
+        settings.setOperationalStatus(FeeOperationalStatus.ACTIVE);
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings));
+
+        assertThatThrownBy(() -> service.generate(new AssignmentRequest(List.of("S1"), "2099-2100",
+                LocalDate.of(2026, 4, 1), List.of(1), null, null), "127.0.0.1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("AcademicSession not found");
+
+        verify(generationBatchRepository, never()).save(any());
+        verify(studentRepository, never()).findByStudentIdInAndSchoolId(any(), any());
+    }
+
+    /** Fail-closed conflict: an assignment already carrying a DIFFERENT, non-null
+     * academicSessionId than the one the request's label resolves to must be refused rather than
+     * silently rewritten. */
+    @Test
+    void assign_conflictingExistingAcademicSessionId_failsClosed() {
+        Student student = student("S1");
+        StudentFeeAssignment assignment = new StudentFeeAssignment();
+        assignment.setStudentId("S1");
+        assignment.setAcademicSession("2026-2027");
+        assignment.setAcademicSessionId(999L); // a different session id than session()'s own 10L
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
+        when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH)));
+        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
+                .thenReturn(Optional.of(assignment));
+
+        assertThatThrownBy(() -> service.assign(new AssignmentRequest(List.of("S1"), "2026-2027",
+                LocalDate.of(2026, 4, 1), List.of(1), null, null), false, "127.0.0.1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("conflicts");
+
+        verify(assignmentRepository, never()).save(any());
+        assertThat(assignment.getAcademicSessionId()).isEqualTo(999L); // never silently rewritten
+    }
+
     @BeforeEach
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);

@@ -5,6 +5,8 @@ import com.indraacademy.ias_management.dto.RecalculationEntryDto;
 import com.indraacademy.ias_management.entity.*;
 import com.indraacademy.ias_management.repository.*;
 import com.indraacademy.ias_management.util.SecurityUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +21,7 @@ import java.util.stream.Collectors;
 
 @Service
 public class FeeWorkflowService {
+    private static final Logger log = LoggerFactory.getLogger(FeeWorkflowService.class);
     private final SchoolFeeSettingsRepository settingsRepository;
     private final StudentFeeAssignmentRepository assignmentRepository;
     private final StudentTransportFeeAssignmentRepository transportRepository;
@@ -158,6 +161,12 @@ public class FeeWorkflowService {
     public List<StudentFeeAssignment> assign(AssignmentRequest request, boolean excluded, String ip) {
         validateAssignmentRequest(request);
         Long schoolId = securityUtil.getSchoolId();
+        // Resolved once, before any StudentFeeAssignment lookup/persistence below — closes the
+        // gap where a well-formatted-but-nonexistent session label could be silently accepted
+        // and persisted (Phase D1 finding). Both the label and the id written onto every
+        // assignment below come from this ONE resolved AcademicSession, never independently
+        // re-derived.
+        AcademicSession academicSession = requireAcademicSession(schoolId, request.academicSession());
         List<Student> students = requireStudents(schoolId, request.studentIds());
         List<Integer> months = normalizeMonths(request.months());
         SchoolFeeSettings settings = getSettings();
@@ -168,9 +177,10 @@ public class FeeWorkflowService {
             StudentFeeAssignment assignment = assignmentRepository
                     .findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(), request.academicSession())
                     .orElseGet(StudentFeeAssignment::new);
+            applyAcademicSessionIdentity(assignment, academicSession);
             assignment.setSchoolId(schoolId);
             assignment.setStudentId(student.getStudentId());
-            assignment.setAcademicSession(request.academicSession());
+            assignment.setAcademicSession(academicSession.getLabel());
             assignment.setEffectiveDate(policy.effectiveDate());
             assignment.setSelectedMonths(joinMonths(months));
             assignment.setExcluded(excluded);
@@ -218,10 +228,18 @@ public class FeeWorkflowService {
             throw new IllegalArgumentException("Retroactive generation is disabled. Effective date cannot precede the fee activation date.");
         }
         Long schoolId = securityUtil.getSchoolId();
+        // Resolved once, before the FeeGenerationBatch row is even created — closes the gap
+        // where a well-formatted-but-nonexistent session label could persist a
+        // RUNNING-then-FAILED batch row for a session that was never real (Phase D1 finding).
+        // Every student's generation below reuses this SAME object — never a fresh per-student
+        // repository lookup — which is also why generateForStudent now takes the resolved
+        // AcademicSession directly rather than re-resolving it N times for N students.
+        AcademicSession academicSession = requireAcademicSession(schoolId, request.academicSession());
         List<Student> students = requireStudents(schoolId, request.studentIds());
         List<Integer> months = normalizeMonths(request.months());
         FeeGenerationBatch batch = new FeeGenerationBatch();
-        batch.setSchoolId(schoolId); batch.setAcademicSession(request.academicSession());
+        batch.setSchoolId(schoolId); batch.setAcademicSession(academicSession.getLabel());
+        batch.setAcademicSessionId(academicSession.getId());
         batch.setEffectiveDate(request.effectiveDate()); batch.setSelectedMonths(joinMonths(months));
         batch.setRequestedStudentIds(String.join(",", students.stream().map(Student::getStudentId).toList()));
         batch.setRequestedStudents(students.size()); batch.setStatus("RUNNING");
@@ -232,12 +250,12 @@ public class FeeWorkflowService {
         for (Student student : students) {
             try {
                 GenerationResult result = transactionTemplate.execute(status ->
-                        generateForStudent(student, request.academicSession(), request.effectiveDate(), months,
+                        generateForStudent(student, academicSession, request.effectiveDate(), months,
                                 request.midSessionPolicy(), settings));
                 results.add(Objects.requireNonNull(result));
             } catch (RuntimeException ex) {
                 transactionTemplate.executeWithoutResult(status ->
-                        markGenerationFailed(schoolId, student.getStudentId(), request.academicSession(), ex));
+                        markGenerationFailed(schoolId, student.getStudentId(), academicSession, ex));
                 results.add(new GenerationResult(student.getStudentId(), 0, 0, false, safeMessage(ex)));
             }
         }
@@ -772,27 +790,36 @@ public class FeeWorkflowService {
         return new StudentPreview(student.getStudentId(), student.getName(), true, total, rows, null);
     }
 
-    private GenerationResult generateForStudent(Student student, String session, LocalDate requestedEffectiveDate,
+    private GenerationResult generateForStudent(Student student, AcademicSession academicSession, LocalDate requestedEffectiveDate,
                                                 List<Integer> months, MidSessionFeePolicy requestPolicy,
                                                 SchoolFeeSettings settings) {
+        // Financial AcademicSession Authority, Phase D3 — academicSession is now resolved exactly
+        // ONCE by the caller (generate()), for the whole batch, not re-resolved per student here.
+        // session (the label) is still what every OTHER, still-label-based lookup below uses —
+        // findForGenerationUpdate's lock, resolvePolicyContext, resolveAuthoritativeClass, etc.
+        // are deliberately unchanged in this phase (Phase D4's query-migration scope, not D3's).
+        String session = academicSession.getLabel();
         Long schoolId = securityUtil.getSchoolId();
         StudentFeeAssignment assignment = assignmentRepository.findForGenerationUpdate(schoolId, student.getStudentId(), session)
                 .orElse(null);
         if (assignment == null || assignment.isExcluded() || assignment.getStatus() == StudentFeeAssignmentStatus.NOT_ASSIGNED) {
             return new GenerationResult(student.getStudentId(), 0, months.size(), false, "Student is not assigned for fees.");
         }
+        // Validated immediately after the assignment is locked/loaded, before any financial work
+        // (fee calculation, StudentFees/line-item creation) below — a conflicting non-null
+        // academic_session_id must never let this method proceed to generate financial data
+        // against the differently-resolved session. This assignment should already carry the
+        // correct id from assign() (a student must be assigned before being generated at all,
+        // per the early-return above), but a pre-D3 or lower-environment row that somehow reached
+        // generation without it goes through the identical fail-closed check rather than
+        // silently trusting it.
+        applyAcademicSessionIdentity(assignment, academicSession);
         int generated = 0, skipped = 0;
         PolicyContext policy = resolvePolicyContext(student, session, requestedEffectiveDate, requestPolicy, settings);
         AuthoritativeClass authoritative = resolveAuthoritativeClass(student, schoolId, session, policy.effectiveDate());
         if (!authoritative.valid()) throw new IllegalStateException(authoritative.reason());
         FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, authoritative.className());
         if (!config.valid()) throw new IllegalStateException(config.reason());
-        // Resolved once for the whole call — both StudentFees.year/StudentFeesLineItem.session
-        // (the label) and their new academic_session_id are derived from this SAME object below,
-        // never independently trusted.
-        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session)
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         boolean first = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session).isEmpty();
         for (int month : months) {
@@ -841,10 +868,27 @@ public class FeeWorkflowService {
         return new GenerationResult(student.getStudentId(), generated, skipped, true, "Generation completed.");
     }
 
-    private void markGenerationFailed(Long schoolId, String studentId, String session, RuntimeException ex) {
-        assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(schoolId, studentId, session).ifPresent(assignment -> {
+    private void markGenerationFailed(Long schoolId, String studentId, AcademicSession academicSession, RuntimeException ex) {
+        assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(schoolId, studentId, academicSession.getLabel()).ifPresent(assignment -> {
             assignment.setStatus(StudentFeeAssignmentStatus.GENERATION_FAILED);
             assignment.setFailureReason(safeMessage(ex));
+            // Best-effort identity bookkeeping only — deliberately does NOT reuse
+            // applyAcademicSessionIdentity's fail-closed throw here: this method runs inside the
+            // catch block for a DIFFERENT, already-in-flight failure (ex), and compounding it
+            // with a second thrown exception during error-handling would mask the original
+            // failure rather than surface it. Populate the id when it's safely absent; on a
+            // genuine conflict, log loudly and leave the existing id untouched rather than
+            // silently overwriting it. In practice this conflict branch should be unreachable —
+            // assign()'s own fail-closed check on this exact row already ran before generation
+            // was ever attempted.
+            if (assignment.getAcademicSessionId() == null) {
+                assignment.setAcademicSessionId(academicSession.getId());
+            } else if (!assignment.getAcademicSessionId().equals(academicSession.getId())) {
+                log.error("StudentFeeAssignment for student {} already carries academicSessionId={}, conflicting with " +
+                                "resolved session id={} for label '{}' while marking a generation failure — leaving the " +
+                                "existing id untouched rather than compounding this failure-handling path with a second exception.",
+                        studentId, assignment.getAcademicSessionId(), academicSession.getId(), academicSession.getLabel());
+            }
             assignmentRepository.save(assignment);
         });
     }
@@ -960,6 +1004,40 @@ public class FeeWorkflowService {
         validateSession(request.academicSession()); normalizeMonths(request.months());
     }
     private void validateSession(String session) { calculationService.parseSession(session); }
+    /** Financial AcademicSession Authority, Phase D3 — the single authoritative resolution point
+     * for the fee-assignment workflow: {@code validateSession}/{@code parseSession} above only
+     * checks the label's string SHAPE ("YYYY-YYYY"), never that a real AcademicSession row
+     * exists. This is what actually confirms existence, tenant-scoped, and is the ONE place
+     * every write path in this workflow resolves a session from — never independently re-derived
+     * — so the persisted label and id can never drift apart. Throws (never guesses, never
+     * normalizes, never creates a placeholder session) before any StudentFeeAssignment or
+     * FeeGenerationBatch row is touched by the caller. */
+    private AcademicSession requireAcademicSession(Long schoolId, String label) {
+        return academicSessionRepository.findBySchoolIdAndLabel(schoolId, label)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + label + "'"));
+    }
+    /** Financial AcademicSession Authority, Phase D3 — populates a StudentFeeAssignment's
+     * academic_session_id from the same resolved AcademicSession its label came from, the first
+     * time this row is touched under dual-write (production has zero rows in this table today,
+     * so this is the common case). Fail-closed on a genuine conflict — a row already carrying a
+     * DIFFERENT, non-null academic_session_id than the one this label resolves to today
+     * indicates real identity drift (a manually-repaired row, or a future test/lower-environment
+     * scenario) — refuse rather than silently rewriting which session the row's real identity
+     * points to. Shared by every write site that establishes or re-confirms this row's identity;
+     * markGenerationFailed's own best-effort failure-bookkeeping path deliberately does NOT use
+     * this (see its own comment) since it must never compound an in-flight failure with a second
+     * thrown exception. */
+    private void applyAcademicSessionIdentity(StudentFeeAssignment assignment, AcademicSession academicSession) {
+        if (assignment.getAcademicSessionId() == null) {
+            assignment.setAcademicSessionId(academicSession.getId());
+        } else if (!assignment.getAcademicSessionId().equals(academicSession.getId())) {
+            throw new IllegalStateException("StudentFeeAssignment for student " + assignment.getStudentId()
+                    + " already carries academicSessionId=" + assignment.getAcademicSessionId()
+                    + ", which conflicts with resolved session id=" + academicSession.getId()
+                    + " for label '" + academicSession.getLabel() + "'.");
+        }
+    }
     private List<Integer> normalizeMonths(List<Integer> months) {
         if (months == null || months.isEmpty()) throw new IllegalArgumentException("Select at least one academic month.");
         List<Integer> result = months.stream().filter(Objects::nonNull).distinct().sorted().toList();
