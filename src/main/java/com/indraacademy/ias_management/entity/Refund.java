@@ -33,6 +33,11 @@ public class Refund {
     @Column(name = "session", nullable = false)
     private String session;
 
+    /** Authoritative session reference (Phase B1, foundation only) — see StudentFees.
+     * academicSessionId for full rationale. Not yet populated or read anywhere. */
+    @Column(name = "academic_session_id")
+    private Long academicSessionId;
+
     /** 12-char '0'/'1' bitmask of the months this specific refund event actually reversed —
      * a subset of the original payment's month selection for a partial refund. */
     @Column(name = "months_refunded", nullable = false)

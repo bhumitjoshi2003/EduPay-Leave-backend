@@ -52,6 +52,11 @@ public class StudentFeesLineItem {
     @Column(name = "session", nullable = false)
     private String session;
 
+    /** Authoritative session reference (Phase B1, foundation only) — see StudentFees.
+     * academicSessionId for full rationale. Not yet populated or read anywhere. */
+    @Column(name = "academic_session_id")
+    private Long academicSessionId;
+
     @Column(name = "month", nullable = false)
     private Integer month;
 

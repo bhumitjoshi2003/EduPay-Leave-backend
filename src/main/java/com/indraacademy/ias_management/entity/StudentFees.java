@@ -45,6 +45,14 @@ public class StudentFees {
     @Column(name = "year")
     private String year;
 
+    /** Authoritative session reference (Phase B1, foundation only) — not yet populated or
+     * read by any application code; {@code year} remains the sole session identity in use
+     * until a later phase begins writing this field. Plain id, not a relationship, matching
+     * StudentEnrollment.academicSessionId's own precedent (avoids lazy-loading/entity-graph/
+     * serialization changes for a field nothing yet consults). */
+    @Column(name = "academic_session_id")
+    private Long academicSessionId;
+
     @Column(name = "distance")
     private Double distance;
 
