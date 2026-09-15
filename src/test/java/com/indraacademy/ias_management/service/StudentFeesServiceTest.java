@@ -69,6 +69,7 @@ class StudentFeesServiceTest {
     private StudentFeesService service;
 
     private static final Long SCHOOL_ID = 1L;
+    private static final Long SESSION_ID = 10L;
 
     @BeforeEach
     void setUp() {
@@ -155,6 +156,7 @@ class StudentFeesServiceTest {
      * the old school(startMonth) + parsed-label reconstruction. */
     private void academicSession(LocalDate startDate) {
         AcademicSession s = new AcademicSession();
+        s.setId(SESSION_ID);
         s.setSchoolId(SCHOOL_ID);
         s.setLabel("2025-2026");
         s.setStartDate(startDate);
@@ -372,6 +374,7 @@ class StudentFeesServiceTest {
         fee.setStudentId("S1");
         fee.setSchoolId(SCHOOL_ID);
         fee.setYear("2025-2026");
+        fee.setAcademicSessionId(SESSION_ID);
         fee.setMonth(month);
         fee.setPaid(false);
         fee.setBaseAmountDue(baseAmountDue);
@@ -380,11 +383,16 @@ class StudentFeesServiceTest {
         fee.setSnapshotStatus(baseAmountDue != null ? SnapshotStatus.COMPUTED : null);
         ReflectionTestUtils.setField(fee, "id", 100L + month);
         // markFeesAsPaid/refund reversal use the row-locking finder; computeCheckoutQuote and
-        // the manual-payment bucket-computation pass use the plain one — stub both so any
-        // caller in this test file finds the same row.
+        // the manual-payment bucket-computation pass use the plain one — stub both label- and
+        // id-based variants so any caller in this test file (old or Phase C2 authoritative-id)
+        // finds the same row.
         lenient().when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", SCHOOL_ID, "2025-2026", month))
                 .thenReturn(fee);
         lenient().when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonthForUpdate("S1", SCHOOL_ID, "2025-2026", month))
+                .thenReturn(fee);
+        lenient().when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("S1", SCHOOL_ID, SESSION_ID, month))
+                .thenReturn(fee);
+        lenient().when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonthForUpdate("S1", SCHOOL_ID, SESSION_ID, month))
                 .thenReturn(fee);
         return fee;
     }
@@ -785,9 +793,11 @@ class StudentFeesServiceTest {
         service.recordManualPayment(req, "127.0.0.1");
 
         verify(studentFeesRepository, atLeastOnce())
-                .findByStudentIdAndSchoolIdAndYearAndMonthForUpdate("S1", SCHOOL_ID, "2025-2026", 1);
+                .findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonthForUpdate("S1", SCHOOL_ID, SESSION_ID, 1);
         verify(studentFeesRepository, never())
                 .findByStudentIdAndSchoolIdAndYearAndMonth(anyString(), any(), anyString(), anyInt());
+        verify(studentFeesRepository, never())
+                .findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth(anyString(), any(), any(), anyInt());
     }
 
     @Test
@@ -869,7 +879,7 @@ class StudentFeesServiceTest {
         // under THIS schoolId, so it resolves to "unknown" and is refused, exactly like any
         // other unresolved month. It must never fall back to trusting a client-supplied
         // schoolId.
-        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonthForUpdate("OTHER_SCHOOL_STUDENT", SCHOOL_ID, "2025-2026", 1))
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonthForUpdate("OTHER_SCHOOL_STUDENT", SCHOOL_ID, SESSION_ID, 1))
                 .thenReturn(null);
         ManualPaymentRequest req = manualRequest("100000000000", BigDecimal.valueOf(2000), "CASH", null);
         req.setStudentId("OTHER_SCHOOL_STUDENT");
@@ -1004,7 +1014,7 @@ class StudentFeesServiceTest {
     @Test
     void createStudentFees_computesSnapshotServerSide_startsUnpaid() {
         school(4);
-        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("NEW1", SCHOOL_ID, "2025-2026", 6))
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("NEW1", SCHOOL_ID, SESSION_ID, 6))
                 .thenReturn(null);
         when(feeCalculationService.validateFeeConfiguration(SCHOOL_ID, "2025-2026", "6A"))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
@@ -1035,7 +1045,7 @@ class StudentFeesServiceTest {
     @Test
     void createStudentFees_persistsLineItemsFromTheSnapshotLinkedToTheNewRow() {
         school(4);
-        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("NEW1", SCHOOL_ID, "2025-2026", 6))
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("NEW1", SCHOOL_ID, SESSION_ID, 6))
                 .thenReturn(null);
         when(feeCalculationService.validateFeeConfiguration(SCHOOL_ID, "2025-2026", "6A"))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());

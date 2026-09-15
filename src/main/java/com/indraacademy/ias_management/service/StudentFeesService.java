@@ -225,8 +225,16 @@ public class StudentFeesService {
                 int monthNumber = i + 1;
 
                 try {
-                    StudentFees studentFees = studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonthForUpdate(
-                            studentId, schoolId, session, monthNumber);
+                    // Authoritative-identity selection when the payment already carries a
+                    // resolved AcademicSession id (every payment created after the dual-write
+                    // phase) — falls back to the label-based lookup only for a payment old
+                    // enough to predate that phase, never silently for a modern one.
+                    Long paymentAcademicSessionId = payment.getAcademicSessionId();
+                    StudentFees studentFees = paymentAcademicSessionId != null
+                            ? studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonthForUpdate(
+                                    studentId, schoolId, paymentAcademicSessionId, monthNumber)
+                            : studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonthForUpdate(
+                                    studentId, schoolId, session, monthNumber);
 
                     if (studentFees != null) {
                         Optional<BigDecimal> schoolFeeDue = feeCalculationService.resolveSchoolFeeDue(studentFees, schoolId, session);
@@ -441,7 +449,12 @@ public class StudentFeesService {
         for (int i = 0; i < 12; i++) {
             if (months.charAt(i) == '1') {
                 int monthNumber = i + 1;
-                StudentFees fee = studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonthForUpdate(studentId, schoolId, session, monthNumber);
+                // Same resolved AcademicSession used for the Payment row itself below — the
+                // manual-payment pre-pass and markFeesAsPaid's own Pass 1 must select the
+                // identical row, which authoritative-id selection guarantees more strongly
+                // than a second independent label lookup would.
+                StudentFees fee = studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonthForUpdate(
+                        studentId, schoolId, academicSession.getId(), monthNumber);
                 if (fee == null) {
                     // No StudentFees row under THIS admin's own schoolId — either a bad month
                     // selection or (critically) a studentId that doesn't actually belong to
@@ -760,8 +773,14 @@ public class StudentFeesService {
                 request.getStudentId(), request.getYear(), request.getMonth());
 
         Long schoolId = securityUtil.getSchoolId();
-        if (studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(
-                request.getStudentId(), schoolId, request.getYear(), request.getMonth()) != null) {
+        // Resolved once, up front — used both for the authoritative-identity dedup check below
+        // and for everything downstream (asOfDate, the persisted label+id pair), never
+        // independently re-resolved.
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, request.getYear())
+                .orElseThrow(() -> new IllegalStateException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + request.getYear() + "'"));
+        if (studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth(
+                request.getStudentId(), schoolId, academicSession.getId(), request.getMonth()) != null) {
             throw new IllegalStateException("A StudentFees record already exists for this student/year/month.");
         }
 
@@ -775,11 +794,6 @@ public class StudentFeesService {
 
         try {
             boolean takesBus = Boolean.TRUE.equals(request.getTakesBus());
-            // Real configured boundaries — validateFeeConfiguration above already guarantees
-            // this AcademicSession exists for request.getYear(), so this never silently guesses.
-            AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, request.getYear())
-                    .orElseThrow(() -> new IllegalStateException(
-                            "AcademicSession not found for schoolId=" + schoolId + ", session='" + request.getYear() + "'"));
             LocalDate asOfDate = academicSessionService.academicMonthToDate(academicSession, request.getMonth());
             Set<Long> chargedOneTimeFeeHeadIds = new HashSet<>(
                     studentOneTimeFeeChargedRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, request.getStudentId()));

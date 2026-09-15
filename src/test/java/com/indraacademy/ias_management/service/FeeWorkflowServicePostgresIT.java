@@ -252,4 +252,33 @@ class FeeWorkflowServicePostgresIT {
         assertThat(generatedClassNames("STU-PROMO", LABEL_2025)).containsExactly("9");
         assertThat(generatedClassNames("STU-PROMO", LABEL_2026)).containsExactly("10");
     }
+
+    /** Financial AcademicSession Authority, Phase C2: the dedup check must key off the
+     * authoritative {@code academic_session_id}, not the raw {@code year} label — proven by
+     * pre-seeding a StudentFees row for month 1 whose label is deliberately wrong (matches
+     * neither session), but whose {@code academic_session_id} correctly matches SESSION_2025.
+     * Generation must still recognize it as already-generated and skip, never creating a second,
+     * duplicate row for the same student/session/month. */
+    @Test void dedupCheck_matchesByAuthoritativeSessionId_evenWhenRawYearSnapshotIsMalformed() {
+        insertStudent("STU-DEDUP-ID", CLASS_9, "9");
+        insertEnrollment("STU-DEDUP-ID", SESSION_2025, "ACTIVE", CLASS_9, LocalDate.of(2025, 4, 1), null);
+        insertAssignment("STU-DEDUP-ID", LABEL_2025);
+        jdbc.update("INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '9', 1, false, false, 'MALFORMED-LABEL', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED')",
+                SCHOOL, "STU-DEDUP-ID", SESSION_2025);
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        List<GenerationResult> results = service.generate(
+                new AssignmentRequest(List.of("STU-DEDUP-ID"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), "ip");
+
+        assertThat(results.getFirst().successful()).isTrue();
+        assertThat(results.getFirst().generated()).isZero();
+        assertThat(results.getFirst().skipped()).isEqualTo(1);
+        Integer totalRows = jdbc.queryForObject(
+                "SELECT count(*) FROM student_fees WHERE school_id=? AND student_id=? AND academic_session_id=? AND month=1",
+                Integer.class, SCHOOL, "STU-DEDUP-ID", SESSION_2025);
+        assertThat(totalRows).isEqualTo(1);
+    }
 }

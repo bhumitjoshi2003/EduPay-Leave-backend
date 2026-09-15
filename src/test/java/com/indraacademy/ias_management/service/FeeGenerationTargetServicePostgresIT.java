@@ -305,8 +305,12 @@ class FeeGenerationTargetServicePostgresIT {
         insertStudent("STU-PARTIAL", SCHOOL, CLASS_9, SECTION_A, false, 0);
         insertEnrollment("STU-PARTIAL", SCHOOL, SESSION, "ACTIVE", CLASS_9, SECTION_A, LocalDate.of(2026, 7, 1));
         Long enrollmentId = enrollmentIdOf("STU-PARTIAL", SESSION);
-        jdbc.update("INSERT INTO student_fees (school_id,student_id,class_id,class_name,month,year,paid,manually_paid,takes_bus,distance,base_amount_due,bus_fee_due,discount_amount) VALUES " +
-                "(?,?,?,?,1,?,false,false,false,0,100000,0,0)", SCHOOL, "STU-PARTIAL", CLASS_9, "9", SESSION_LABEL);
+        // Financial AcademicSession Authority, Phase C2: academic_session_id must be set here —
+        // the dedup check this test exercises now selects by that id, not the year label (every
+        // real StudentFees row has carried it since the dual-write phase; a row missing it would
+        // simulate pre-dual-write data, which this test isn't about).
+        jdbc.update("INSERT INTO student_fees (school_id,student_id,class_id,class_name,month,year,academic_session_id,paid,manually_paid,takes_bus,distance,base_amount_due,bus_fee_due,discount_amount) VALUES " +
+                "(?,?,?,?,1,?,?,false,false,false,0,100000,0,0)", SCHOOL, "STU-PARTIAL", CLASS_9, "9", SESSION_LABEL, SESSION);
 
         StudentGenerationResult result = service.generate(genRequest(decision("STU-PARTIAL", enrollmentId, CLASS_9)), "ip").getFirst();
 
@@ -314,6 +318,32 @@ class FeeGenerationTargetServicePostgresIT {
         assertThat(result.generatedMonths()).isEqualTo(11);
         assertThat(result.skippedMonths()).isEqualTo(1);
         assertThat(feeRowCount("STU-PARTIAL")).isEqualTo(12);
+    }
+
+    /** Financial AcademicSession Authority, Phase C2: the dedup check must key off the
+     * authoritative {@code academic_session_id}, not the raw {@code year} label — proven by
+     * pre-seeding month 1's row with a deliberately malformed label (matching neither this nor
+     * any other session) but the correct {@code academic_session_id}. Generation must still
+     * recognize month 1 as already-generated and only fill in the remaining 11 months, never
+     * creating a duplicate month-1 row. */
+    @Test void dedupCheck_matchesByAuthoritativeSessionId_evenWhenRawYearSnapshotIsMalformed() {
+        insertStudent("STU-DEDUP-ID", SCHOOL, CLASS_9, SECTION_A, false, 0);
+        insertEnrollment("STU-DEDUP-ID", SCHOOL, SESSION, "ACTIVE", CLASS_9, SECTION_A, LocalDate.of(2026, 7, 1));
+        Long enrollmentId = enrollmentIdOf("STU-DEDUP-ID", SESSION);
+        jdbc.update("INSERT INTO student_fees (school_id,student_id,class_id,class_name,month,year,academic_session_id," +
+                        "paid,manually_paid,takes_bus,distance,base_amount_due,bus_fee_due,discount_amount) VALUES " +
+                        "(?,?,?,?,1,?,?,false,false,false,0,100000,0,0)",
+                SCHOOL, "STU-DEDUP-ID", CLASS_9, "9", "MALFORMED-LABEL", SESSION);
+
+        StudentGenerationResult result = service.generate(genRequest(decision("STU-DEDUP-ID", enrollmentId, CLASS_9)), "ip").getFirst();
+
+        assertThat(result.outcome()).isEqualTo(GenerationOutcome.PARTIALLY_GENERATED);
+        assertThat(result.generatedMonths()).isEqualTo(11);
+        assertThat(result.skippedMonths()).isEqualTo(1);
+        Integer monthOneRows = jdbc.queryForObject(
+                "SELECT count(*) FROM student_fees WHERE school_id=? AND student_id=? AND academic_session_id=? AND month=1",
+                Integer.class, SCHOOL, "STU-DEDUP-ID", SESSION);
+        assertThat(monthOneRows).isEqualTo(1);
     }
 
     @Test void concurrentDuplicateGenerationNeverDuplicatesAMonth() throws Exception {

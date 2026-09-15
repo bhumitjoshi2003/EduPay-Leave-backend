@@ -30,6 +30,23 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
     @Query("SELECT sf FROM StudentFees sf WHERE sf.studentId = :studentId AND sf.schoolId = :schoolId AND sf.year = :year AND sf.month = :month")
     StudentFees findByStudentIdAndSchoolIdAndYearAndMonthForUpdate(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("year") String year, @Param("month") Integer month);
 
+    /** Financial AcademicSession Authority, Phase C2 — the authoritative-identity counterpart
+     * to {@link #findByStudentIdAndSchoolIdAndYearAndMonth}: selects by {@code academicSessionId}
+     * (the resolved AcademicSession's real id) instead of the raw, display-only {@code year}
+     * label. Used only where the caller already holds a non-null id from an already-resolved
+     * AcademicSession (see the dual-write phase) — the label-based method above remains for
+     * every call site that cannot yet guarantee one (a payment/row old enough to predate the
+     * dual-write phase, or a test fixture that doesn't set it), and is never removed. */
+    StudentFees findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth(String studentId, Long schoolId, Long academicSessionId, Integer month);
+
+    /** Same authoritative-identity selection as {@link #findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth},
+     * with the identical row-level write lock as {@link #findByStudentIdAndSchoolIdAndYearAndMonthForUpdate} —
+     * only the selection predicate differs (id instead of label); lock mode, transaction
+     * assumptions, and cardinality are unchanged. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT sf FROM StudentFees sf WHERE sf.studentId = :studentId AND sf.schoolId = :schoolId AND sf.academicSessionId = :academicSessionId AND sf.month = :month")
+    StudentFees findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonthForUpdate(@Param("studentId") String studentId, @Param("schoolId") Long schoolId, @Param("academicSessionId") Long academicSessionId, @Param("month") Integer month);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT sf FROM StudentFees sf WHERE sf.id = :id")
     StudentFees findByIdForUpdate(@Param("id") Long id);

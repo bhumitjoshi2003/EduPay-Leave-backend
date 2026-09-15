@@ -798,7 +798,7 @@ public class FeeWorkflowService {
         for (int month : months) {
             MonthDecision decision = monthDecision(month, session, policy);
             if (!decision.eligible()) { skipped++; continue; }
-            if (studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(student.getStudentId(), schoolId, session, month) != null) { skipped++; continue; }
+            if (studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth(student.getStudentId(), schoolId, academicSession.getId(), month) != null) { skipped++; continue; }
             LocalDate asOf = academicMonthStart(session, schoolId, month);
             TransportState transport = transportState(student, session, asOf);
             FeeCalculationService.MonthSnapshot snapshot = calculationService.computeMonthSnapshot(schoolId, session,

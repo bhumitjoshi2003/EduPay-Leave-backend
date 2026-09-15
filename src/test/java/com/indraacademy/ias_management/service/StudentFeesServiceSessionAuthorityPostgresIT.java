@@ -84,10 +84,14 @@ class StudentFeesServiceSessionAuthorityPostgresIT {
     }
 
     private void insertStudentFees(long schoolId, String studentId, int month) {
+        insertStudentFeesWithLabelAndSessionId(schoolId, studentId, month, LABEL, schoolId == SCHOOL_A ? sessionAId : sessionBId);
+    }
+
+    private void insertStudentFeesWithLabelAndSessionId(long schoolId, String studentId, int month, String yearLabel, long academicSessionId) {
         jdbc.update("INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
-                        "distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, discount_amount, snapshot_status) " +
-                        "VALUES (?, ?, '6A', ?, false, false, ?, 0, false, 0, 1000, 0, 0, 'COMPUTED')",
-                schoolId, studentId, month, LABEL);
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, discount_amount, snapshot_status) " +
+                        "VALUES (?, ?, '6A', ?, false, false, ?, ?, 0, false, 0, 1000, 0, 0, 'COMPUTED')",
+                schoolId, studentId, month, yearLabel, academicSessionId);
     }
 
     @AfterEach
@@ -153,6 +157,64 @@ class StudentFeesServiceSessionAuthorityPostgresIT {
 
         assertThat(saved.getAcademicSessionId()).isEqualTo(sessionBId);
         assertThat(saved.getAcademicSessionId()).isNotEqualTo(sessionAId);
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+    }
+
+    /** Financial AcademicSession Authority, Phase C2 — the most important correctness proof:
+     * a StudentFees row whose display-only {@code year} snapshot has been deliberately
+     * corrupted/mismatched must still be found and correctly locked by the new authoritative-id
+     * lookup, since {@code academic_session_id} — not the label — is now what operational
+     * queries select by. This is the concrete demonstration of why the migration matters: the
+     * old label-based query would have missed this exact row. */
+    @Test
+    void manualPayment_findsRowByAuthoritativeId_evenWhenRawLabelSnapshotIsMalformed() {
+        seed();
+        actingAsSchool(SCHOOL_A);
+        insertStudentFeesWithLabelAndSessionId(SCHOOL_A, "STU-MALFORMED", 1, "2099-2100", sessionAId);
+
+        // Amount comfortably exceeds base due (1000) plus any possible date-dependent late fee
+        // (max 30*21=630, per StudentFeesService.calculateLateFees) — the point of this test is
+        // authoritative-id row selection, not exercising the separate late-fee schedule.
+        ManualPaymentRequest request = manualRequest("STU-MALFORMED", LABEL, "100000000000", new BigDecimal("2000"));
+        Payment saved = service.recordManualPayment(request, "127.0.0.1");
+
+        assertThat(saved.getId()).isNotNull();
+        assertThat(jdbc.queryForObject("SELECT paid FROM student_fees WHERE student_id='STU-MALFORMED'", Boolean.class))
+                .isTrue();
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+    }
+
+    /** Manual-payment correct-row selection: two sessions can legitimately both have a "month
+     * 1" liability for the same student (e.g. an academic-month-1 row exists in both the
+     * current and a historical session). Paying against one session's label must only ever
+     * touch that session's own row — proven by authoritative-id selection, not by hoping the
+     * label happens to disambiguate them (it always would today, but the id is what the query
+     * now actually uses). */
+    @Test
+    void manualPayment_selectsOnlyTheTargetSessionsLiability_leavesTheOtherSessionsRowUntouched() {
+        seed();
+        actingAsSchool(SCHOOL_A);
+        insertStudentFeesWithLabelAndSessionId(SCHOOL_A, "STU-TWO-SESSIONS", 1, LABEL, sessionAId);
+        String otherLabel = "2024-2025";
+        jdbc.update("INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) VALUES " +
+                        "(?,?,DATE '2024-04-01',DATE '2025-03-31',false,CURRENT_TIMESTAMP)",
+                SCHOOL_A, otherLabel);
+        long otherSessionId = jdbc.queryForObject("SELECT id FROM academic_session WHERE school_id=? AND label=?", Long.class, SCHOOL_A, otherLabel);
+        insertStudentFeesWithLabelAndSessionId(SCHOOL_A, "STU-TWO-SESSIONS", 1, otherLabel, otherSessionId);
+
+        // See the comment in manualPayment_findsRowByAuthoritativeId_evenWhenRawLabelSnapshotIsMalformed
+        // for why this amount exceeds the base due — comfortably covers any date-dependent late fee too.
+        ManualPaymentRequest request = manualRequest("STU-TWO-SESSIONS", LABEL, "100000000000", new BigDecimal("2000"));
+        service.recordManualPayment(request, "127.0.0.1");
+
+        assertThat(jdbc.queryForObject(
+                "SELECT paid FROM student_fees WHERE student_id='STU-TWO-SESSIONS' AND academic_session_id=?",
+                Boolean.class, sessionAId)).isTrue();
+        assertThat(jdbc.queryForObject(
+                "SELECT paid FROM student_fees WHERE student_id='STU-TWO-SESSIONS' AND academic_session_id=?",
+                Boolean.class, otherSessionId)).isFalse();
+        // @AfterEach's cleanUp() already deletes every academic_session row under SCHOOL_A,
+        // which includes this test's extra "2024-2025" row.
         com.indraacademy.ias_management.util.SchoolContext.clear();
     }
 

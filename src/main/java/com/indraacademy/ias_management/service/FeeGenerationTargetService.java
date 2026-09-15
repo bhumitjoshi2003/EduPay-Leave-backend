@@ -365,7 +365,7 @@ public class FeeGenerationTargetService {
         boolean first = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(studentId, schoolId, targetSession.getLabel()).isEmpty();
         int generated = 0, skipped = 0;
         for (int month = 1; month <= 12; month++) {
-            if (studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth(studentId, schoolId, targetSession.getLabel(), month) != null) {
+            if (studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth(studentId, schoolId, targetSession.getId(), month) != null) {
                 skipped++; continue;
             }
             LocalDate asOf = academicSessionService.academicMonthToDate(targetSession, month);

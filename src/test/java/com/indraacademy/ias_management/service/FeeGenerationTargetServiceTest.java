@@ -225,7 +225,7 @@ class FeeGenerationTargetServiceTest {
                 .thenReturn(List.of(enrollment(100L, "S1", StudentEnrollmentStatus.ACTIVE, CLASS_9, null)));
         when(students.findByStudentIdAndSchoolId("S1", SCHOOL)).thenReturn(Optional.of(student("S1", CLASS_9)));
         for (int m = 1; m <= 12; m++) {
-            when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", SCHOOL, "2026-2027", m)).thenReturn(new StudentFees());
+            when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("S1", SCHOOL, SESSION, m)).thenReturn(new StudentFees());
         }
 
         List<StudentGenerationResult> results = service.generate(request(List.of(decision("S1", 100L, CLASS_9))), "ip");
@@ -239,7 +239,7 @@ class FeeGenerationTargetServiceTest {
         when(enrollments.findAllHistoryForUpdate(SCHOOL, "S1"))
                 .thenReturn(List.of(enrollment(100L, "S1", StudentEnrollmentStatus.ACTIVE, CLASS_9, null)));
         when(students.findByStudentIdAndSchoolId("S1", SCHOOL)).thenReturn(Optional.of(student("S1", CLASS_9)));
-        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", SCHOOL, "2026-2027", 1)).thenReturn(new StudentFees());
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("S1", SCHOOL, SESSION, 1)).thenReturn(new StudentFees());
 
         List<StudentGenerationResult> results = service.generate(request(List.of(decision("S1", 100L, CLASS_9))), "ip");
 

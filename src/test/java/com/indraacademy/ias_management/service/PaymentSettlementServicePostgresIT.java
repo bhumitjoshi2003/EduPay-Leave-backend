@@ -197,6 +197,66 @@ class PaymentSettlementServicePostgresIT {
                 .isGreaterThan(0);
     }
 
+    /** Financial AcademicSession Authority, Phase C2 — the correct-row selection proof: a
+     * second StudentFees row exists for the SAME student/month but a DIFFERENT session, whose
+     * {@code year} label is deliberately malformed (matches neither session's real label). Note
+     * that a label-based query would ALSO have avoided this row here, since it doesn't share the
+     * target session's real label — the DB's UNIQUE(school_id, student_id, year, month)
+     * constraint makes a genuine same-label, different-session collision for one student/month
+     * impossible to construct at all. What this proves instead is the same thing the malformed-
+     * label identity test proves (see StudentFeesServiceSessionAuthorityPostgresIT): the
+     * authoritative-id lookup correctly ignores a row whose label snapshot has been corrupted/
+     * never matched its own session, selecting only the row whose academic_session_id actually
+     * agrees with the PaymentOrder's — the decoy row must remain completely untouched (unpaid,
+     * no allocation). */
+    @Test
+    void settlement_selectsOnlyTheAuthoritativeSessionsLiability_leavesADecoyOtherSessionRowUntouched() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        Long decoySessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2024-2025', DATE '2024-04-01', DATE '2025-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        String orderId = "psi-it-order-correctrow";
+        String paymentId = "psi-it-pay-correctrow";
+        String studentId = "psi-it-student-correctrow";
+        // The decoy: same student, same month, a DIFFERENT session — with a deliberately
+        // malformed year label matching neither session's real label (see the class-level
+        // comment on why this, not a same-label collision, is the meaningful scenario here).
+        Long decoyStudentFeesId = jdbc.queryForObject(
+                "INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2099-2100', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED') RETURNING id",
+                Long.class, SCHOOL, studentId, decoySessionId);
+        Long targetStudentFeesId = jdbc.queryForObject(
+                "INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED') RETURNING id",
+                Long.class, SCHOOL, studentId, sessionId);
+        // Amount (200000 paise = ₹2000) comfortably exceeds base due (₹1000) plus any possible
+        // date-dependent late fee (max 30*21=₹630, per StudentFeesService.calculateLateFees) —
+        // the point of this test is correct-row selection, not exercising the late-fee schedule.
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, " +
+                        "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
+                        "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 200000, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, ?)",
+                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        assertThat(jdbc.queryForObject("SELECT paid FROM student_fees WHERE id = ?", Boolean.class, targetStudentFeesId)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT paid FROM student_fees WHERE id = ?", Boolean.class, decoyStudentFeesId)).isFalse();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment_student_fees_allocation WHERE student_fees_id = ?", Integer.class, decoyStudentFeesId))
+                .isZero();
+    }
+
     @Test
     void consumedOrderWithDifferentPaymentId_realRow_isRejected() {
         String orderId = "psi-it-order-conflict";

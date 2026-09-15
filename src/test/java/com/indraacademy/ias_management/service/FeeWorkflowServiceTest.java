@@ -434,7 +434,7 @@ class FeeWorkflowServiceTest {
         when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
         when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
                 .thenReturn(List.of());
-        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", 1L, "2026-2027", 5))
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("S1", 1L, 10L, 5))
                 .thenReturn(null);
         when(transportRepository.effectiveOn(eq(1L), eq("S1"), eq("2026-2027"), any())).thenReturn(Optional.empty());
         FeeCalculationService.MonthSnapshot full = snapshot("1000.00");
@@ -495,7 +495,7 @@ class FeeWorkflowServiceTest {
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
         when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
         when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2025-2026")).thenReturn(List.of());
-        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", 1L, "2025-2026", 1)).thenReturn(null);
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("S1", 1L, 11L, 1)).thenReturn(null);
         when(transportRepository.effectiveOn(eq(1L), eq("S1"), eq("2025-2026"), any())).thenReturn(Optional.empty());
         when(calculationService.computeMonthSnapshot(eq(1L), eq("2025-2026"), eq("Class 9"), eq("S1"),
                 eq(1), eq(true), any(), eq(false), any(), any())).thenReturn(snapshot("1000.00"));
@@ -593,7 +593,7 @@ class FeeWorkflowServiceTest {
         when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
         when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
                 .thenReturn(List.of(fee(5)));
-        when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearAndMonth("S1", 1L, "2026-2027", 5))
+        when(studentFeesRepository.findByStudentIdAndSchoolIdAndAcademicSessionIdAndMonth("S1", 1L, 10L, 5))
                 .thenReturn(fee(5));
 
         List<GenerationResult> results = service.generate(new AssignmentRequest(List.of("S1"), "2026-2027",
