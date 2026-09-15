@@ -133,6 +133,34 @@ class PaymentSettlementServicePostgresIT {
     }
 
     @Test
+    void onlineGrossCapture_allocatesOnlyStudentFeesPrincipal_platformAndLeaveStaySeparate() {
+        String orderId = "psi-it-order-principal";
+        String paymentId = "psi-it-pay-principal";
+        String studentId = "psi-it-student-principal";
+        Long studentFeesId = jdbc.queryForObject(
+                "INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, discount_amount, snapshot_status) " +
+                        "VALUES (?, ?, '6A', 1, false, false, '2025-2026', 0, false, 0, 1000, 0, 0, 'COMPUTED') RETURNING id",
+                Long.class, SCHOOL, studentId);
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, month, " +
+                        "amount, bus_fee, tuition_fee, annual_charges, lab_charges, eca_project, examination_fee, " +
+                        "additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', '100000000000', 104000, 0, 0, 0, 0, 0, 0, 2500, 0, 1500, false, ?)",
+                orderId, SCHOOL, studentId, LocalDateTime.now());
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        assertThat(jdbc.queryForObject("SELECT amount FROM payment WHERE payment_id = ?", Integer.class, paymentId))
+                .isEqualTo(104000);
+        assertThat(jdbc.queryForObject("SELECT SUM(amount_paise) FROM payment_student_fees_allocation WHERE payment_id = ?",
+                Long.class, result.payment().getId())).isEqualTo(100000L);
+        assertThat(jdbc.queryForObject("SELECT amount_paid FROM student_fees WHERE id = ?", java.math.BigDecimal.class, studentFeesId))
+                .isEqualByComparingTo("1000.00");
+    }
+
+    @Test
     void consumedOrderWithDifferentPaymentId_realRow_isRejected() {
         String orderId = "psi-it-order-conflict";
         String existingPaymentId = "psi-it-pay-existing";

@@ -185,6 +185,22 @@ class RefundSettlementServiceTest {
     }
 
     @Test
+    void reserve_ledgerPayment_capsRefundAtAllocatedPrincipal_notGrossCapture() {
+        Payment payment = razorpayPayment();
+        payment.setAmountPaid(101_500);
+        payment.setPlatformFee(1_500);
+        when(paymentRepository.findByIdForUpdate(PAYMENT_ID)).thenReturn(Optional.of(payment));
+        when(paymentAllocationRepository.existsByPaymentId(PAYMENT_ID)).thenReturn(true);
+        when(paymentAllocationRepository.sumAmountPaiseByPaymentId(PAYMENT_ID)).thenReturn(100_000L);
+        RefundRequest request = refundRequest(100_001L, "platform fee must not be refundable as liability", "principal-cap");
+
+        RefundSettlementService.ReservationResult result = service.reserve(PAYMENT_ID, request, SCHOOL_ID);
+
+        assertThat(result.outcome()).isEqualTo(RefundSettlementService.ReservationOutcome.REJECTED);
+        verify(refundRepository, never()).save(any());
+    }
+
+    @Test
     void reserve_alreadyFullyRefunded_rejected() {
         Payment payment = razorpayPayment();
         payment.setRefundedAmountPaise(400000L); // == amountPaid

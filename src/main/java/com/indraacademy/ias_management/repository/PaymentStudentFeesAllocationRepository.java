@@ -24,6 +24,9 @@ public interface PaymentStudentFeesAllocationRepository extends JpaRepository<Pa
     @Query("SELECT COALESCE(SUM(a.amountPaise), 0) FROM PaymentStudentFeesAllocation a WHERE a.studentFeesId = :studentFeesId")
     long sumAmountPaiseByStudentFeesId(@Param("studentFeesId") Long studentFeesId);
 
+    @Query("SELECT COALESCE(SUM(a.amountPaise), 0) FROM PaymentStudentFeesAllocation a WHERE a.paymentId = :paymentId")
+    long sumAmountPaiseByPaymentId(@Param("paymentId") Long paymentId);
+
     /** Gross amount allocated to this row from payments whose manualPaymentMode is set (i.e.
      * cash/cheque/UPI/bank-transfer, not a Razorpay-gateway payment) — the basis for deriving
      * StudentFees.manuallyPaid/manualPaymentReceived honestly from the ledger instead of a

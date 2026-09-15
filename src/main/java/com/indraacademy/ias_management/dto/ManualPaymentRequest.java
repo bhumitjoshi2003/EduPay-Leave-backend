@@ -24,9 +24,8 @@ public class ManualPaymentRequest {
     private BigDecimal amountReceived;
     private String paymentMode;
     private String referenceNumber;
-    /** Optional extra charge (e.g. a prior-dues adjustment), in rupees — added to the first
-     * selected month's total, mirroring markFeesAsPaid's existing Payment.additionalCharges
-     * semantics. Never used to reduce what's owed. */
+    /** Unapplied-leave charge included in the received total, in rupees. It is persisted in
+     * paise on Payment but is not allocated to a StudentFees monthly liability. */
     private Integer additionalCharges;
 
     public String getStudentId() { return studentId; }

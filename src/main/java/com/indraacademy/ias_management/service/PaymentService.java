@@ -96,9 +96,9 @@ public class PaymentService {
                     payment.getEcaProject(),
                     payment.getExaminationFee(),
                     payment.getAmountPaid(),
-                    payment.getAdditionalCharges(),
-                    payment.getLateFees(),
-                    payment.getPlatformFee()
+                    payment.getAdditionalCharges() / 100,
+                    payment.getLateFees() / 100,
+                    payment.getPlatformFee() / 100
             );
             dto.setSchoolName(sName);
             return dto;
@@ -531,9 +531,9 @@ public class PaymentService {
         } else {
             appendMutedRow(feeRows, "Detailed fee breakdown unavailable for this payment");
         }
-        rowIdx = appendFeeRow(feeRows, "Leave Charges",    BigDecimal.valueOf(payment.getAdditionalCharges()), rowIdx);
-        rowIdx = appendFeeRow(feeRows, "Late Fees",        BigDecimal.valueOf(payment.getLateFees()),          rowIdx);
-               appendFeeRow(feeRows, "Platform Fee",      BigDecimal.valueOf(payment.getPlatformFee()),       rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Leave Charges",    BigDecimal.valueOf(payment.getAdditionalCharges(), 2), rowIdx);
+        rowIdx = appendFeeRow(feeRows, "Late Fees",        BigDecimal.valueOf(payment.getLateFees(), 2),          rowIdx);
+               appendFeeRow(feeRows, "Platform Fee",      BigDecimal.valueOf(payment.getPlatformFee(), 2),       rowIdx);
 
         String logoHtml = logoDataUri.isEmpty() ? ""
                 : "<img src=\"" + logoDataUri + "\" style=\"width: 75pt; height: 75pt;\" alt=\"logo\"/><br/>";

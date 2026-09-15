@@ -7,6 +7,7 @@ import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.PaymentOrderRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
@@ -57,6 +58,7 @@ class PaymentControllerTest {
     @Mock private SecurityUtil securityUtil;
     @Mock private StudentFeesService studentFeesService;
     @Mock private ParentPortalService parentPortalService;
+    @Mock private AttendanceService attendanceService;
 
     private PaymentController controller;
 
@@ -74,8 +76,10 @@ class PaymentControllerTest {
         ReflectionTestUtils.setField(controller, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(controller, "studentFeesService", studentFeesService);
         ReflectionTestUtils.setField(controller, "parentPortalService", parentPortalService);
+        ReflectionTestUtils.setField(controller, "attendanceService", attendanceService);
 
         lenient().when(authService.getRole()).thenReturn(Role.ADMIN);
+        lenient().when(attendanceService.getTotalUnappliedLeaveCount(anyString(), anyString())).thenReturn(0L);
         lenient().when(razorpayService.calculateOutstandingBalancePaise(anyString(), anyString())).thenReturn(500000L);
         lenient().when(razorpayService.createOrder(
                 anyInt(), anyString(), anyString(), anyString(), anyString(), anyString(),
@@ -163,5 +167,22 @@ class PaymentControllerTest {
                 anyInt(), eq(STUDENT_ID), anyString(), classNameCaptor.capture(), eq(SESSION), eq(monthSelection),
                 any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt());
         assertThat(classNameCaptor.getValue()).isIn("9", "10");
+    }
+
+    @Test
+    void createOrder_rejectsClientManipulatedLeaveCharge() {
+        CreateOrderRequest req = request("6A", "100000000000", 1025_00);
+        req.setAdditionalCharges(1_000);
+        when(attendanceService.getTotalUnappliedLeaveCount(STUDENT_ID, SESSION)).thenReturn(1L);
+        CheckoutQuoteDto quote = new CheckoutQuoteDto();
+        quote.setUnresolvedMonths(List.of());
+        quote.setTotalAmount(BigDecimal.valueOf(1000));
+        quote.setLateFee(BigDecimal.ZERO);
+        quote.setPlatformFee(BigDecimal.ZERO);
+        when(studentFeesService.computeCheckoutQuote(eq(STUDENT_ID), eq(SESSION), any())).thenReturn(quote);
+
+        ResponseEntity<Map<String, Object>> response = controller.createOrder(req);
+
+        assertThat(response.getStatusCode().is4xxClientError()).isTrue();
     }
 }

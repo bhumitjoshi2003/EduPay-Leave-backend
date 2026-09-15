@@ -220,7 +220,6 @@ public class StudentFeesService {
         // determined either way refuses the whole payment rather than silently skipping it.
         record PendingMonthAllocation(StudentFees studentFees, long dueForMonthPaise, long alreadyNetAllocatedPaise) {}
         List<PendingMonthAllocation> pending = new java.util.ArrayList<>();
-        boolean firstMonth = true;
         for (int i = 0; i < 12; i++) {
             if (selectedMonths.charAt(i) == '1') {
                 int monthNumber = i + 1;
@@ -241,10 +240,6 @@ public class StudentFeesService {
                         }
 
                         double totalAmount = schoolFeeDue.get().doubleValue();
-                        if (firstMonth) {
-                            totalAmount += payment.getAdditionalCharges();
-                            firstMonth = false;
-                        }
                         totalAmount += calculateLateFees(monthNumber);
                         long dueForMonthPaise = Math.round(totalAmount * 100.0);
 
@@ -284,13 +279,16 @@ public class StudentFeesService {
         }
 
         // Pass 2: distribute the payment across the selected months, in month order, up to
-        // each month's remaining need — never more. Any amount left over once every month's
-        // need is satisfied (an intentional/accidental overpayment) is credited to the last
-        // month that received an allocation, so the full payment amount is always accounted
-        // for by allocation rows (SUM(allocations for this payment) == payment.amountPaid).
+        // each month's remaining need — never more. Payment.amount is the gross receipt;
+        // platform fees and the separately-tracked unapplied-leave charge do not satisfy a
+        // StudentFees liability and must never enter this ledger.
         long[] allocatedPaise = new long[pending.size()];
-        long remainingPool = payment.getAmount();
-        int lastAllocatedIndex = -1;
+        long nonAllocatablePaise = payment.getAdditionalCharges()
+                + (payment.getManualPaymentMode() == null ? (long) payment.getPlatformFee() : 0L);
+        long remainingPool = (long) payment.getAmount() - nonAllocatablePaise;
+        if (remainingPool <= 0) {
+            throw new IllegalStateException("Payment contains no allocatable student-fee principal.");
+        }
         for (int idx = 0; idx < pending.size() && remainingPool > 0; idx++) {
             PendingMonthAllocation p = pending.get(idx);
             long remainingNeed = Math.max(0, p.dueForMonthPaise() - p.alreadyNetAllocatedPaise());
@@ -298,11 +296,11 @@ public class StudentFeesService {
             if (portion > 0) {
                 allocatedPaise[idx] = portion;
                 remainingPool -= portion;
-                lastAllocatedIndex = idx;
             }
         }
-        if (remainingPool > 0 && lastAllocatedIndex >= 0) {
-            allocatedPaise[lastAllocatedIndex] += remainingPool;
+        if (remainingPool > 0) {
+            log.warn("Payment {} has {} paise left after satisfying selected liabilities; leaving it unallocated rather than creating surplus StudentFees credit.",
+                    payment.getId(), remainingPool);
         }
 
         for (int idx = 0; idx < pending.size(); idx++) {
@@ -452,7 +450,9 @@ public class StudentFeesService {
         }
 
         int amountReceivedPaise = request.getAmountReceived().movePointRight(2).setScale(0, RoundingMode.HALF_UP).intValueExact();
-        int additionalCharges = request.getAdditionalCharges() != null ? request.getAdditionalCharges() : 0;
+        int additionalCharges = request.getAdditionalCharges() != null
+                ? BigDecimal.valueOf(request.getAdditionalCharges()).movePointRight(2).intValueExact()
+                : 0;
 
         Payment payment = new Payment(
                 studentId,
@@ -471,7 +471,7 @@ public class StudentFeesService {
                 true,
                 amountReceivedPaise,
                 additionalCharges,
-                lateFeeBucket
+                Math.multiplyExact(lateFeeBucket, 100)
         );
         payment.setSchoolId(schoolId);
         payment.setRazorpaySignature("MANUAL-PAYMENT");

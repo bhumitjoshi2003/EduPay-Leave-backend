@@ -119,7 +119,11 @@ public class RefundSettlementService {
             }
         }
 
-        long remainingRefundablePaise = payment.getAmountPaid() - payment.getRefundedAmountPaise();
+        boolean hasAllocationLedger = paymentAllocationRepository.existsByPaymentId(paymentId);
+        long refundableBasisPaise = hasAllocationLedger
+                ? paymentAllocationRepository.sumAmountPaiseByPaymentId(paymentId)
+                : payment.getAmountPaid();
+        long remainingRefundablePaise = refundableBasisPaise - payment.getRefundedAmountPaise();
         if (request.getAmount() == null || request.getAmount() <= 0) {
             return ReservationResult.rejected("Refund amount must be positive.");
         }
@@ -263,7 +267,10 @@ public class RefundSettlementService {
         refund.setLegacyApproximation(legacyApproximation);
         Refund savedRefund = refundRepository.save(refund);
 
-        payment.setStatus(payment.getRefundedAmountPaise() >= payment.getAmountPaid() ? "refunded" : "partially_refunded");
+        long refundableBasisPaise = paymentAllocationRepository.existsByPaymentId(paymentId)
+                ? paymentAllocationRepository.sumAmountPaiseByPaymentId(paymentId)
+                : payment.getAmountPaid();
+        payment.setStatus(payment.getRefundedAmountPaise() >= refundableBasisPaise ? "refunded" : "partially_refunded");
         paymentRepository.save(payment);
 
         businessNotifications.studentAndParents(schoolId, payment.getStudentId(),

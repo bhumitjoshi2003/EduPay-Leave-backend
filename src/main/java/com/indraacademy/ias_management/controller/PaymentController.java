@@ -11,6 +11,7 @@ import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.PaymentOrderRepository;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.service.StudentFeesService;
@@ -47,6 +48,7 @@ public class PaymentController {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private ParentPortalService parentPortalService;
+    @Autowired private AttendanceService attendanceService;
 
     /** Tight tolerance for the client-displayed vs. server-computed core checkout amount
      * (school fee + late fee + platform fee) — absorbs last-cent rounding differences, not
@@ -114,7 +116,13 @@ public class PaymentController {
         }
 
         long serverCorePaise = quote.getTotalAmount().movePointRight(2).longValueExact(); // schoolFee+lateFee+platformFee, rupees -> paise
-        long clientCorePaise = (long) clientAmount - req.getAdditionalCharges();
+        long serverAdditionalChargesPaise = Math.multiplyExact(
+                attendanceService.getTotalUnappliedLeaveCount(req.getStudentId(), req.getSession()), 2_500L);
+        if (req.getAdditionalCharges() != serverAdditionalChargesPaise) {
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "The unapplied-leave charge has changed — please refresh and try again."));
+        }
+        long clientCorePaise = (long) clientAmount - serverAdditionalChargesPaise;
         if (Math.abs(clientCorePaise - serverCorePaise) > AMOUNT_MISMATCH_TOLERANCE_PAISE) {
             log.error("Rejected order creation: client core amount {} paise does not match server-computed {} paise "
                             + "for student {} session {} months {} — stale or tampered checkout data.",
@@ -125,7 +133,7 @@ public class PaymentController {
 
         long lateFeesPaise = quote.getLateFee().movePointRight(2).longValueExact();
         long platformFeePaise = quote.getPlatformFee().movePointRight(2).longValueExact();
-        long serverAmountPaise = serverCorePaise + req.getAdditionalCharges();
+        long serverAmountPaise = serverCorePaise + serverAdditionalChargesPaise;
 
         // className is server-derived from the actual StudentFees row(s) behind the months
         // just validated above (computeCheckoutQuote already guarantees every one of `months`
@@ -152,7 +160,7 @@ public class PaymentController {
                 req.getTotalLabCharges(),
                 req.getTotalEcaProject(),
                 req.getTotalExaminationFee(),
-                req.getAdditionalCharges(),
+                Math.toIntExact(serverAdditionalChargesPaise),
                 (int) lateFeesPaise,
                 (int) platformFeePaise
         );

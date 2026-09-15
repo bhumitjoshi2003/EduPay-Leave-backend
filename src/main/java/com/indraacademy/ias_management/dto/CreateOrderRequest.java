@@ -41,6 +41,7 @@ public class CreateOrderRequest {
     @NotNull
     private Integer totalExaminationFee;
 
+    /** Server-verified unapplied-leave charge, in paise. */
     private Integer additionalCharges;
 
     private Integer lateFees;

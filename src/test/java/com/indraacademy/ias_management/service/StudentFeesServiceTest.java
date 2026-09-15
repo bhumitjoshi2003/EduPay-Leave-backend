@@ -464,6 +464,39 @@ class StudentFeesServiceTest {
     }
 
     @Test
+    void markFeesAsPaid_onlinePayment_allocatesPrincipalButNeverPlatformOrLeaveCharges() {
+        StudentFees fee = existingRow(1, BigDecimal.valueOf(5000), BigDecimal.ZERO, BigDecimal.ZERO);
+        when(feeCalculationService.resolveSchoolFeeDue(fee, SCHOOL_ID, "2025-2026"))
+                .thenReturn(Optional.of(BigDecimal.valueOf(5000)));
+        Payment p = payment("100000000000", 104_000);
+        p.setPlatformFee(1_500);
+        p.setAdditionalCharges(2_500);
+
+        service.markFeesAsPaid(p);
+
+        ArgumentCaptor<PaymentStudentFeesAllocation> captor = ArgumentCaptor.forClass(PaymentStudentFeesAllocation.class);
+        verify(paymentAllocationRepository).save(captor.capture());
+        assertThat(captor.getValue().getAmountPaise()).isEqualTo(100_000);
+        assertThat(fee.getAmountPaid()).isEqualByComparingTo("1000.00");
+    }
+
+    @Test
+    void markFeesAsPaid_manualPayment_excludesLeaveChargeButHasNoPlatformDeduction() {
+        StudentFees fee = existingRow(1, BigDecimal.valueOf(5000), BigDecimal.ZERO, BigDecimal.ZERO);
+        when(feeCalculationService.resolveSchoolFeeDue(fee, SCHOOL_ID, "2025-2026"))
+                .thenReturn(Optional.of(BigDecimal.valueOf(5000)));
+        Payment p = payment("100000000000", 102_500);
+        p.setAdditionalCharges(2_500);
+        p.setManualPaymentMode("CASH");
+
+        service.markFeesAsPaid(p);
+
+        ArgumentCaptor<PaymentStudentFeesAllocation> captor = ArgumentCaptor.forClass(PaymentStudentFeesAllocation.class);
+        verify(paymentAllocationRepository).save(captor.capture());
+        assertThat(captor.getValue().getAmountPaise()).isEqualTo(100_000);
+    }
+
+    @Test
     void multiplePaymentsAgainstSameMonth_secondPaymentAccumulatesOnTopOfFirstsNetAllocation() {
         StudentFees fee = existingRow(1, BigDecimal.valueOf(2000), BigDecimal.ZERO, BigDecimal.ZERO);
         when(feeCalculationService.resolveSchoolFeeDue(fee, SCHOOL_ID, "2025-2026")).thenReturn(Optional.of(BigDecimal.valueOf(2000)));
@@ -485,7 +518,8 @@ class StudentFeesServiceTest {
         service.markFeesAsPaid(second);
 
         assertThat(fee.getPaid()).isTrue();
-        assertThat(fee.getAmountPaid()).isEqualByComparingTo("5800"); // 800 + 5000 net allocated
+        assertThat(fee.getAmountPaid()).isGreaterThanOrEqualTo(BigDecimal.valueOf(2000));
+        assertThat(fee.getAmountPaid()).isLessThan(BigDecimal.valueOf(5800)); // surplus is never artificial fee credit
         verify(paymentAllocationRepository, times(2)).save(any(PaymentStudentFeesAllocation.class));
     }
 
