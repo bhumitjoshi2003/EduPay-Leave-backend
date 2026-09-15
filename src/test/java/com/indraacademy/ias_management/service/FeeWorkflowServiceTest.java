@@ -163,7 +163,7 @@ class FeeWorkflowServiceTest {
         assignment.setStudentId("S1");
         when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
         when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH)));
-        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
+        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSessionId(1L, "S1", 10L))
                 .thenReturn(Optional.of(assignment));
         List<StudentFees> fees = List.of(fee(1), fee(2), fee(3));
         when(studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc("S1", 1L, "2026-2027"))
@@ -233,7 +233,7 @@ class FeeWorkflowServiceTest {
         assignment.setAcademicSessionId(999L); // a different session id than session()'s own 10L
         when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 1L)).thenReturn(List.of(student));
         when(settingsRepository.findBySchoolId(1L)).thenReturn(Optional.of(settings(MidSessionFeePolicy.FROM_EFFECTIVE_MONTH)));
-        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(1L, "S1", "2026-2027"))
+        when(assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSessionId(1L, "S1", 10L))
                 .thenReturn(Optional.of(assignment));
 
         assertThatThrownBy(() -> service.assign(new AssignmentRequest(List.of("S1"), "2026-2027",
@@ -496,7 +496,7 @@ class FeeWorkflowServiceTest {
         StudentFeeAssignment assignment = new StudentFeeAssignment();
         assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
         assignment.setStatus(StudentFeeAssignmentStatus.READY);
-        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2026-2027"))
+        when(assignmentRepository.findForGenerationUpdateByAcademicSessionId(1L, "S1", 10L))
                 .thenReturn(Optional.of(assignment));
         when(calculationService.validateFeeConfiguration(1L, "2026-2027", "6A"))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
@@ -559,7 +559,7 @@ class FeeWorkflowServiceTest {
         StudentFeeAssignment assignment = new StudentFeeAssignment();
         assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2025-2026");
         assignment.setStatus(StudentFeeAssignmentStatus.READY);
-        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2025-2026")).thenReturn(Optional.of(assignment));
+        when(assignmentRepository.findForGenerationUpdateByAcademicSessionId(1L, "S1", 11L)).thenReturn(Optional.of(assignment));
         when(calculationService.validateFeeConfiguration(1L, "2025-2026", "Class 9"))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
         when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());
@@ -605,7 +605,7 @@ class FeeWorkflowServiceTest {
         StudentFeeAssignment assignment = new StudentFeeAssignment();
         assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
         assignment.setStatus(StudentFeeAssignmentStatus.READY);
-        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2026-2027")).thenReturn(Optional.of(assignment));
+        when(assignmentRepository.findForGenerationUpdateByAcademicSessionId(1L, "S1", 10L)).thenReturn(Optional.of(assignment));
 
         List<GenerationResult> results = service.generate(new AssignmentRequest(List.of("S1"), "2026-2027",
                 LocalDate.of(2026, 4, 1), List.of(1), null, null), "127.0.0.1");
@@ -656,7 +656,7 @@ class FeeWorkflowServiceTest {
         StudentFeeAssignment assignment = new StudentFeeAssignment();
         assignment.setSchoolId(1L); assignment.setStudentId("S1"); assignment.setAcademicSession("2026-2027");
         assignment.setStatus(StudentFeeAssignmentStatus.READY);
-        when(assignmentRepository.findForGenerationUpdate(1L, "S1", "2026-2027")).thenReturn(Optional.of(assignment));
+        when(assignmentRepository.findForGenerationUpdateByAcademicSessionId(1L, "S1", 10L)).thenReturn(Optional.of(assignment));
         when(calculationService.validateFeeConfiguration(1L, "2026-2027", "6A"))
                 .thenReturn(FeeCalculationService.FeeConfigurationStatus.ok());
         when(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(1L, "S1")).thenReturn(Set.of());

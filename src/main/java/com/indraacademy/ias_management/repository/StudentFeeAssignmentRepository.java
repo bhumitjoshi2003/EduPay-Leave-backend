@@ -19,4 +19,23 @@ public interface StudentFeeAssignmentRepository extends JpaRepository<StudentFee
             @Param("studentId") String studentId, @Param("session") String session);
     List<StudentFeeAssignment> findBySchoolIdAndAcademicSession(Long schoolId, String academicSession);
     long countBySchoolIdAndAcademicSessionAndStatus(Long schoolId, String academicSession, StudentFeeAssignmentStatus status);
+
+    /** Financial AcademicSession Authority, Phase D4 — the authoritative-identity counterpart to
+     * {@link #findBySchoolIdAndStudentIdAndAcademicSession}: selects by {@code academicSessionId}
+     * (the resolved AcademicSession's real id) instead of the raw, display-only
+     * {@code academicSession} label. Used only where the caller already holds a non-null id from
+     * an already-resolved AcademicSession — which is now every operational write site,
+     * {@code markGenerationFailed}'s bookkeeping path included (see its own comment for why that
+     * migration is safe). The label-based method above is kept as compatibility surface with
+     * zero live callers, never removed. */
+    Optional<StudentFeeAssignment> findBySchoolIdAndStudentIdAndAcademicSessionId(Long schoolId, String studentId, Long academicSessionId);
+
+    /** Same authoritative-identity selection as {@link #findBySchoolIdAndStudentIdAndAcademicSessionId},
+     * with the identical row-level write lock as {@link #findForGenerationUpdate} — only the
+     * selection predicate differs (id instead of label); lock mode, transaction assumptions, and
+     * cardinality are unchanged. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT a FROM StudentFeeAssignment a WHERE a.schoolId = :schoolId AND a.studentId = :studentId AND a.academicSessionId = :academicSessionId")
+    Optional<StudentFeeAssignment> findForGenerationUpdateByAcademicSessionId(@Param("schoolId") Long schoolId,
+            @Param("studentId") String studentId, @Param("academicSessionId") Long academicSessionId);
 }

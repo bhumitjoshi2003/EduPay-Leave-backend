@@ -115,9 +115,17 @@ class FeeWorkflowServicePostgresIT {
         jdbc.update("INSERT INTO student_enrollment (school_id,student_id,academic_session_id,class_id,class_name_snapshot,status,effective_from,effective_until,closure_reason) " +
                 "VALUES (?,?,?,?,'x',?,?,?,?)", SCHOOL, studentId, sessionId, classId, status, from, until, closureReason);
     }
+    /** Financial AcademicSession Authority, Phase D4: every real assignment row has carried
+     * academic_session_id since D3's dual-write went live (production had zero rows before it) —
+     * this helper now matches that shape, since the generation lock is id-based from D4 onward
+     * and a label-only row would simply never be found (see insertAssignmentWithLabelAndSessionId
+     * for the deliberate-mismatch tests that exist specifically to prove that). */
     private void insertAssignment(String studentId, String sessionLabel) {
-        jdbc.update("INSERT INTO student_fee_assignment (school_id, student_id, academic_session, status) VALUES (?,?,?,'READY')",
-                SCHOOL, studentId, sessionLabel);
+        insertAssignmentWithLabelAndSessionId(studentId, sessionLabel, sessionLabel.equals(LABEL_2025) ? SESSION_2025 : SESSION_2026);
+    }
+    private void insertAssignmentWithLabelAndSessionId(String studentId, String sessionLabel, long academicSessionId) {
+        jdbc.update("INSERT INTO student_fee_assignment (school_id, student_id, academic_session, academic_session_id, status) VALUES (?,?,?,?,'READY')",
+                SCHOOL, studentId, sessionLabel, academicSessionId);
     }
     private List<String> generatedClassNames(String studentId, String sessionLabel) {
         return jdbc.queryForList("SELECT DISTINCT class_name FROM student_fees WHERE school_id=? AND student_id=? AND year=?",
@@ -412,7 +420,17 @@ class FeeWorkflowServicePostgresIT {
      * but its stored id already points at the DIFFERENT, same-school 2026-2027 session — the
      * composite FK permits this since both sessions belong to SCHOOL) must fail closed rather
      * than silently rewriting the id to match the newly-resolved session. */
-    @Test void assign_conflictingExistingAcademicSessionId_failsClosed_neverRewritesToTheNewlyResolvedSession() {
+    /** Financial AcademicSession Authority, Phase D4 — this fixture predates the D4 lookup
+     * migration in shape (updated from the D3-era test that originally expected
+     * applyAcademicSessionIdentity's own IllegalStateException here). Since assign()'s upsert
+     * lookup is now id-based, this row (label=2025-2026, id=SESSION_2026) is simply never found
+     * by findBySchoolIdAndStudentIdAndAcademicSessionId(..., SESSION_2025) — the code falls
+     * through to orElseGet(new), attempts to INSERT a second row, and the unchanged label-based
+     * uq_student_fee_assignment constraint rejects it as a duplicate (school_id, student_id,
+     * academic_session). Still genuinely fail-closed — no duplicate ever commits, the existing
+     * conflicted row is completely untouched — just via a different, still-understandable
+     * exception (a named unique-constraint violation) than the earlier code path produced. */
+    @Test void assign_conflictingExistingAcademicSessionId_failsClosed_rejectedByTheUnchangedLabelUniqueConstraint() {
         insertStudent("STU-CONFLICT", CLASS_9, "9");
         jdbc.update("INSERT INTO student_fee_assignment (school_id, student_id, academic_session, academic_session_id, status) VALUES (?,?,?,?,'READY')",
                 SCHOOL, "STU-CONFLICT", LABEL_2025, SESSION_2026);
@@ -420,9 +438,13 @@ class FeeWorkflowServicePostgresIT {
 
         assertThatThrownBy(() -> service.assign(
                 new AssignmentRequest(List.of("STU-CONFLICT"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), false, "ip"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("conflicts");
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+                .hasMessageContaining("uq_student_fee_assignment");
 
+        // No duplicate ever committed — exactly the original row survives, completely unchanged.
+        Integer rowCount = jdbc.queryForObject(
+                "SELECT count(*) FROM student_fee_assignment WHERE school_id=? AND student_id='STU-CONFLICT'", Integer.class, SCHOOL);
+        assertThat(rowCount).isEqualTo(1);
         Long persistedSessionId = jdbc.queryForObject(
                 "SELECT academic_session_id FROM student_fee_assignment WHERE school_id=? AND student_id='STU-CONFLICT'", Long.class, SCHOOL);
         assertThat(persistedSessionId).isEqualTo(SESSION_2026);
@@ -435,7 +457,16 @@ class FeeWorkflowServicePostgresIT {
      * check now runs immediately after the assignment lock in generateForStudent, before any fee
      * calculation or financial write — this proves it, rather than merely relying on
      * transactional rollback as an implicit, unstated safety net. */
-    @Test void generate_conflictingExistingAcademicSessionId_failsClosed_createsNoFinancialDataForTheRequestedSession() {
+    /** Financial AcademicSession Authority, Phase D4 — updated from the D3-era test that expected
+     * applyAcademicSessionIdentity's own conflict exception here. Since the pessimistic
+     * generation lock is now id-based (findForGenerationUpdateByAcademicSessionId), this fixture
+     * (label=2025-2026, id=SESSION_2026) is simply never found when locking for SESSION_2025 — it
+     * behaves exactly like "no assignment for this session" (a graceful, non-throwing result),
+     * not a thrown conflict. markGenerationFailed is therefore never invoked either, since
+     * generateForStudent returns normally rather than throwing — the row is left completely
+     * untouched, not merely "not overwritten." Still fail-closed in every safety-relevant sense:
+     * zero StudentFees, zero line items, zero duplicate, an understandable result message. */
+    @Test void generate_conflictingExistingAcademicSessionId_isTreatedAsNoAssignmentForThisSession_createsNoFinancialData() {
         insertStudent("STU-GEN-CONFLICT", CLASS_9, "9");
         insertEnrollment("STU-GEN-CONFLICT", SESSION_2025, "ACTIVE", CLASS_9, LocalDate.of(2025, 4, 1), null);
         jdbc.update("INSERT INTO student_fee_assignment (school_id, student_id, academic_session, academic_session_id, status, selected_months) VALUES (?,?,?,?,'READY',?)",
@@ -446,17 +477,17 @@ class FeeWorkflowServicePostgresIT {
                 new AssignmentRequest(List.of("STU-GEN-CONFLICT"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), "ip");
 
         assertThat(results.getFirst().successful()).isFalse();
-        assertThat(results.getFirst().message()).contains("conflicts");
+        assertThat(results.getFirst().message()).contains("not assigned");
         assertThat(feeRowCount("STU-GEN-CONFLICT", LABEL_2025)).isZero();
         Integer lineItemCount = jdbc.queryForObject(
                 "SELECT count(*) FROM student_fees_line_item WHERE school_id=? AND student_id='STU-GEN-CONFLICT'", Integer.class, SCHOOL);
         assertThat(lineItemCount).isZero();
-        // markGenerationFailed's own best-effort bookkeeping still records the failure status,
-        // but must never overwrite the pre-existing conflicting id — proving the same fail-closed
-        // policy holds even in the error-handling path, not just the primary one.
-        Long persistedSessionId = jdbc.queryForObject(
-                "SELECT academic_session_id FROM student_fee_assignment WHERE school_id=? AND student_id='STU-GEN-CONFLICT'", Long.class, SCHOOL);
-        assertThat(persistedSessionId).isEqualTo(SESSION_2026);
+        // Completely untouched — the lock never found this row at all, so nothing about it
+        // (status, id) was ever mutated, not even by markGenerationFailed's bookkeeping.
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT status, academic_session_id FROM student_fee_assignment WHERE school_id=? AND student_id='STU-GEN-CONFLICT'", SCHOOL);
+        assertThat(row.get("status")).isEqualTo("READY");
+        assertThat(row.get("academic_session_id")).isEqualTo(SESSION_2026);
     }
 
     /** Task 22: two schools can legitimately share the same session label — assign() for SCHOOL
@@ -484,6 +515,181 @@ class FeeWorkflowServicePostgresIT {
             jdbc.update("DELETE FROM school WHERE id=?", otherSchool);
         }
     }
+
+    // ── Financial AcademicSession Authority, Phase D4 — query/lock authority migration ────────
+
+    /** Task 15: assign() must find and update an EXISTING row purely by its authoritative id,
+     * even when that row's raw label snapshot is malformed — the concrete proof the query
+     * migration matters, not merely that it still works when the label happens to be correct. */
+    @Test void assign_findsExistingRowByAuthoritativeId_evenWhenRawLabelSnapshotIsMalformed() {
+        insertStudent("STU-MALFORMED-ASSIGN", CLASS_9, "9");
+        insertAssignmentWithLabelAndSessionId("STU-MALFORMED-ASSIGN", "MALFORMED-LABEL", SESSION_2025);
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        List<StudentFeeAssignment> saved = service.assign(
+                new AssignmentRequest(List.of("STU-MALFORMED-ASSIGN"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1, 2), null, null), false, "ip");
+
+        // Exactly one row exists — the id-based lookup found and updated the existing malformed-
+        // label row rather than creating a duplicate (which the still-label-based unique
+        // constraint would have permitted here, since 'MALFORMED-LABEL' never matched LABEL_2025).
+        Integer count = jdbc.queryForObject(
+                "SELECT count(*) FROM student_fee_assignment WHERE school_id=? AND student_id='STU-MALFORMED-ASSIGN'", Integer.class, SCHOOL);
+        assertThat(count).isEqualTo(1);
+        assertThat(saved.getFirst().getAcademicSession()).isEqualTo(LABEL_2025); // corrected back to the real label
+        assertThat(saved.getFirst().getAcademicSessionId()).isEqualTo(SESSION_2025);
+    }
+
+    /** Task 16: the pessimistic generation lock must find and lock the SAME row purely by its
+     * authoritative id — the old label-based lock would have searched for
+     * academic_session = LABEL_2025 and found nothing here (this row's label is malformed),
+     * returning "Student is not assigned for fees" and generating zero StudentFees rows. */
+    @Test void generate_locksExistingRowByAuthoritativeId_evenWhenRawLabelSnapshotIsMalformed() {
+        insertStudent("STU-MALFORMED-LOCK", CLASS_9, "9");
+        insertEnrollment("STU-MALFORMED-LOCK", SESSION_2025, "ACTIVE", CLASS_9, LocalDate.of(2025, 4, 1), null);
+        insertAssignmentWithLabelAndSessionId("STU-MALFORMED-LOCK", "MALFORMED-LABEL", SESSION_2025);
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        List<GenerationResult> results = service.generate(
+                new AssignmentRequest(List.of("STU-MALFORMED-LOCK"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), "ip");
+
+        assertThat(results.getFirst().successful()).isTrue();
+        assertThat(results.getFirst().generated()).isEqualTo(1);
+        assertThat(feeRowCount("STU-MALFORMED-LOCK", LABEL_2025)).isEqualTo(1);
+    }
+
+    /** Task 17: proves the id-based assignment lookup is genuinely school-scoped, not merely
+     * relying on AcademicSession ids being globally unique PKs. A second school has its own
+     * assignment row (under its own, distinct student id — student.student_id is this schema's
+     * actual global PRIMARY KEY, confirmed directly against the live schema, so it cannot be
+     * reused across schools) for a session sharing the identical label — assign() for SCHOOL
+     * must create/find only its own row, never touching or reusing the other school's. */
+    @Test void assign_tenantIsolatedLookup_neverTouchesAnotherSchoolsAssignmentRow() {
+        // student.student_id is this schema's actual global PRIMARY KEY (student_pkey), not
+        // school-scoped — confirmed directly against the real schema during this audit — so a
+        // genuinely distinct student id is used for the other school's row rather than a
+        // same-string collision, which the database itself would refuse to store at all.
+        long otherSchool = -98096L;
+        long otherSession = -98095L;
+        jdbc.update("INSERT INTO school (id,active,created_at,name,plan,slug,academic_year_start_month,periods_per_day,timezone) VALUES " +
+                "(?,true,CURRENT_TIMESTAMP,'FeeWorkflow Other IT 2','TRIAL','feeworkflow-other-it-2',4,8,'Asia/Kolkata')", otherSchool);
+        jdbc.update("INSERT INTO academic_session (id,school_id,label,start_date,end_date,is_current,created_at) VALUES " +
+                "(?,?,?,DATE '2025-04-01',DATE '2026-03-31',false,CURRENT_TIMESTAMP)", otherSession, otherSchool, LABEL_2025);
+        insertStudent("STU-TENANT-2", CLASS_9, "9");
+        jdbc.update("INSERT INTO student (student_id,school_id,status,class_name,takes_bus,joining_date) VALUES " +
+                "('STU-TENANT-2-OTHER', ?, 'ACTIVE', '9', false, DATE '2025-04-01')", otherSchool);
+        jdbc.update("INSERT INTO student_fee_assignment (school_id, student_id, academic_session, academic_session_id, status, selected_months) VALUES (?,?,?,?,'GENERATED',?)",
+                otherSchool, "STU-TENANT-2-OTHER", LABEL_2025, otherSession, "1,2,3,4,5,6,7,8,9,10,11,12");
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        try {
+            List<StudentFeeAssignment> saved = service.assign(
+                    new AssignmentRequest(List.of("STU-TENANT-2"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), false, "ip");
+
+            assertThat(saved.getFirst().getAcademicSessionId()).isEqualTo(SESSION_2025);
+            assertThat(saved.getFirst().getSchoolId()).isEqualTo(SCHOOL);
+
+            Integer schoolRowCount = jdbc.queryForObject(
+                    "SELECT count(*) FROM student_fee_assignment WHERE school_id=? AND student_id='STU-TENANT-2'", Integer.class, SCHOOL);
+            assertThat(schoolRowCount).isEqualTo(1);
+
+            // The other school's row remains completely untouched — still GENERATED, still its own id.
+            Map<String, Object> otherRow = jdbc.queryForMap(
+                    "SELECT status, academic_session_id FROM student_fee_assignment WHERE school_id=? AND student_id='STU-TENANT-2-OTHER'", otherSchool);
+            assertThat(otherRow.get("status")).isEqualTo("GENERATED");
+            assertThat(otherRow.get("academic_session_id")).isEqualTo(otherSession);
+        } finally {
+            jdbc.update("DELETE FROM student_fee_assignment WHERE school_id=? AND student_id='STU-TENANT-2-OTHER'", otherSchool);
+            jdbc.update("DELETE FROM student WHERE school_id=? AND student_id='STU-TENANT-2-OTHER'", otherSchool);
+            jdbc.update("DELETE FROM academic_session WHERE id=?", otherSession);
+            jdbc.update("DELETE FROM school WHERE id=?", otherSchool);
+        }
+    }
+
+    /** Task 18: same school, same student, two DIFFERENT session assignments — an assign() or
+     * generate() call scoped to Session A must only ever touch A's own row; Session B's
+     * assignment (status, generatedAt, failureReason, academicSessionId) must remain byte-for-
+     * byte unchanged throughout. */
+    @Test void multiSessionSameStudent_operationsForSessionA_leaveSessionBAssignmentCompletelyUntouched() {
+        insertStudent("STU-MULTI-SESSION", CLASS_9, "9");
+        insertEnrollment("STU-MULTI-SESSION", SESSION_2025, "ACTIVE", CLASS_9, LocalDate.of(2025, 4, 1), null);
+        insertAssignmentWithLabelAndSessionId("STU-MULTI-SESSION", LABEL_2025, SESSION_2025);
+        insertAssignmentWithLabelAndSessionId("STU-MULTI-SESSION", LABEL_2026, SESSION_2026);
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        service.assign(new AssignmentRequest(List.of("STU-MULTI-SESSION"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1, 2), null, null), false, "ip");
+
+        Map<String, Object> sessionBAfterAssign = jdbc.queryForMap(
+                "SELECT status, academic_session_id, selected_months FROM student_fee_assignment WHERE school_id=? AND student_id='STU-MULTI-SESSION' AND academic_session_id=?",
+                SCHOOL, SESSION_2026);
+        assertThat(sessionBAfterAssign.get("status")).isEqualTo("READY");
+        assertThat(sessionBAfterAssign.get("selected_months")).isNull(); // insertAssignmentWithLabelAndSessionId never set it — untouched by A's assign call
+        assertThat(sessionBAfterAssign.get("academic_session_id")).isEqualTo(SESSION_2026);
+
+        List<GenerationResult> results = service.generate(
+                new AssignmentRequest(List.of("STU-MULTI-SESSION"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1, 2), null, null), "ip");
+        assertThat(results.getFirst().successful()).isTrue();
+
+        Map<String, Object> sessionBAfterGenerate = jdbc.queryForMap(
+                "SELECT status, generated_at, failure_reason, academic_session_id FROM student_fee_assignment WHERE school_id=? AND student_id='STU-MULTI-SESSION' AND academic_session_id=?",
+                SCHOOL, SESSION_2026);
+        assertThat(sessionBAfterGenerate.get("status")).isEqualTo("READY"); // never touched by A's generate call
+        assertThat(sessionBAfterGenerate.get("generated_at")).isNull();
+        assertThat(sessionBAfterGenerate.get("failure_reason")).isNull();
+        assertThat(sessionBAfterGenerate.get("academic_session_id")).isEqualTo(SESSION_2026);
+
+        Map<String, Object> sessionAAfterGenerate = jdbc.queryForMap(
+                "SELECT status, academic_session_id FROM student_fee_assignment WHERE school_id=? AND student_id='STU-MULTI-SESSION' AND academic_session_id=?",
+                SCHOOL, SESSION_2025);
+        assertThat(sessionAAfterGenerate.get("status")).isNotEqualTo("READY"); // A's own row DID get updated
+        assertThat(sessionAAfterGenerate.get("academic_session_id")).isEqualTo(SESSION_2025);
+        assertThat(feeRowCount("STU-MULTI-SESSION", LABEL_2025)).isEqualTo(2);
+    }
+
+    /** Task 22: a legacy/synthetic row with academic_session_id = NULL is treated by the new
+     * id-based lock exactly like "no assignment for this session" — a graceful, non-throwing
+     * result, never an exception, never a duplicate, never financial corruption. Production
+     * carried zero rows in this table before D3, so this shape is only ever reachable via a
+     * manually-constructed fixture, never real data. */
+    @Test void generate_legacyNullIdAssignment_isTreatedAsNoAssignmentForThisSession() {
+        insertStudent("STU-NULL-ID", CLASS_9, "9");
+        insertEnrollment("STU-NULL-ID", SESSION_2025, "ACTIVE", CLASS_9, LocalDate.of(2025, 4, 1), null);
+        jdbc.update("INSERT INTO student_fee_assignment (school_id, student_id, academic_session, status, selected_months) VALUES (?,?,?,'READY',?)",
+                SCHOOL, "STU-NULL-ID", LABEL_2025, "1"); // academic_session_id deliberately left NULL
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        List<GenerationResult> results = service.generate(
+                new AssignmentRequest(List.of("STU-NULL-ID"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), "ip");
+
+        assertThat(results.getFirst().successful()).isFalse();
+        assertThat(results.getFirst().message()).contains("not assigned");
+        assertThat(feeRowCount("STU-NULL-ID", LABEL_2025)).isZero();
+    }
+
+    /** Final pre-commit audit, Task 12: the same legacy-null-id shape, but via assign() rather
+     * than generate() — the id-based upsert lookup misses this row (NULL never matches a real
+     * id), falls through to orElseGet(new), and the unchanged label-based unique constraint
+     * rejects the resulting duplicate-label insert attempt. Same mechanism, same safe outcome,
+     * as the label-A/id-B conflict test above — documented here explicitly for the NULL-id
+     * origin specifically, since production's zero pre-D3 rows make this the only realistic
+     * "legacy-shaped" row this code could ever actually encounter. */
+    @Test void assign_legacyNullIdRowWithSameLabel_failsClosed_rejectedByTheUnchangedLabelUniqueConstraint() {
+        insertStudent("STU-NULL-ID-ASSIGN", CLASS_9, "9");
+        jdbc.update("INSERT INTO student_fee_assignment (school_id, student_id, academic_session, status) VALUES (?,?,?,'READY')",
+                SCHOOL, "STU-NULL-ID-ASSIGN", LABEL_2025); // academic_session_id deliberately left NULL
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        assertThatThrownBy(() -> service.assign(
+                new AssignmentRequest(List.of("STU-NULL-ID-ASSIGN"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), false, "ip"))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+                .hasMessageContaining("uq_student_fee_assignment");
+
+        Integer rowCount = jdbc.queryForObject(
+                "SELECT count(*) FROM student_fee_assignment WHERE school_id=? AND student_id='STU-NULL-ID-ASSIGN'", Integer.class, SCHOOL);
+        assertThat(rowCount).isEqualTo(1);
+    }
+
+    /** Task 24/25 supporting evidence lives in the audit report (EXPLAIN ANALYZE against a
+     * synthetic 25,000-row single-school dataset) — no schema change accompanies this phase. */
 
     /** Task 13/24/29: retry selects the original batch purely by its numeric PK (unchanged) and
      * reconstructs the request from the batch's own stored label — proving the retry's freshly

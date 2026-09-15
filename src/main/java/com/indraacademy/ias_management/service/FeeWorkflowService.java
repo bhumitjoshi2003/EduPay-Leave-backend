@@ -174,8 +174,18 @@ public class FeeWorkflowService {
         for (Student student : students) {
             PolicyContext policy = resolvePolicyContext(student, request.academicSession(), request.effectiveDate(),
                     request.midSessionPolicy(), settings);
+            // Financial AcademicSession Authority, Phase D4 — authoritative-identity lookup:
+            // academicSession is already resolved above, so this selects by its real id rather
+            // than the raw label. Unconditional (no label-based fallback), matching the same
+            // "AcademicSession is always freshly resolved here" precedent as
+            // StudentFeesService.recordManualPayment's own pre-pass migration — production had
+            // zero rows before D3, so every real row has carried this id since day one. A
+            // synthetic/lower-environment row still missing it (never reachable in production)
+            // is simply invisible to this lookup and falls into the orElseGet(new) branch; the
+            // unchanged, still-label-based uq_student_fee_assignment constraint remains the
+            // final backstop against an actual duplicate row ever committing for that case.
             StudentFeeAssignment assignment = assignmentRepository
-                    .findBySchoolIdAndStudentIdAndAcademicSession(schoolId, student.getStudentId(), request.academicSession())
+                    .findBySchoolIdAndStudentIdAndAcademicSessionId(schoolId, student.getStudentId(), academicSession.getId())
                     .orElseGet(StudentFeeAssignment::new);
             applyAcademicSessionIdentity(assignment, academicSession);
             assignment.setSchoolId(schoolId);
@@ -793,18 +803,30 @@ public class FeeWorkflowService {
     private GenerationResult generateForStudent(Student student, AcademicSession academicSession, LocalDate requestedEffectiveDate,
                                                 List<Integer> months, MidSessionFeePolicy requestPolicy,
                                                 SchoolFeeSettings settings) {
-        // Financial AcademicSession Authority, Phase D3 — academicSession is now resolved exactly
+        // Financial AcademicSession Authority, Phase D3/D4 — academicSession is resolved exactly
         // ONCE by the caller (generate()), for the whole batch, not re-resolved per student here.
         // session (the label) is still what every OTHER, still-label-based lookup below uses —
-        // findForGenerationUpdate's lock, resolvePolicyContext, resolveAuthoritativeClass, etc.
-        // are deliberately unchanged in this phase (Phase D4's query-migration scope, not D3's).
+        // resolvePolicyContext, resolveAuthoritativeClass, computeMonthSnapshot, etc. are
+        // deliberately unchanged in this phase (D4's scope is the assignment identity/lock only).
         String session = academicSession.getLabel();
         Long schoolId = securityUtil.getSchoolId();
-        StudentFeeAssignment assignment = assignmentRepository.findForGenerationUpdate(schoolId, student.getStudentId(), session)
+        // Phase D4 — the pessimistic generation lock now selects by the authoritative id rather
+        // than the raw label: a row whose label was ever corrupted/mismatched (or, structurally,
+        // any row that doesn't yet carry this exact id) can no longer be found and locked here.
+        // A legacy/synthetic row with a NULL id is therefore treated identically to "no
+        // assignment for this session" (the same early return below), never as an exception —
+        // it simply never reaches the id-based WHERE clause at all.
+        StudentFeeAssignment assignment = assignmentRepository
+                .findForGenerationUpdateByAcademicSessionId(schoolId, student.getStudentId(), academicSession.getId())
                 .orElse(null);
         if (assignment == null || assignment.isExcluded() || assignment.getStatus() == StudentFeeAssignmentStatus.NOT_ASSIGNED) {
             return new GenerationResult(student.getStudentId(), 0, months.size(), false, "Student is not assigned for fees.");
         }
+        // Retained as defensive validation even though the lock above already selects by this
+        // exact id (making its conflict branch structurally unreachable through this lock going
+        // forward): kept per explicit D4 scope — this is still useful protection for any future
+        // caller of applyAcademicSessionIdentity that doesn't go through this exact lock, and
+        // documents the invariant inline rather than relying on it being true only implicitly.
         // Validated immediately after the assignment is locked/loaded, before any financial work
         // (fee calculation, StudentFees/line-item creation) below — a conflicting non-null
         // academic_session_id must never let this method proceed to generate financial data
@@ -869,7 +891,13 @@ public class FeeWorkflowService {
     }
 
     private void markGenerationFailed(Long schoolId, String studentId, AcademicSession academicSession, RuntimeException ex) {
-        assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSession(schoolId, studentId, academicSession.getLabel()).ifPresent(assignment -> {
+        // Phase D4 — safe to use the authoritative-id lookup here too: generateForStudent's ONLY
+        // assignment-obtaining call is now the id-based lock above, and every exception this
+        // method is ever invoked for happens strictly after that lock already found a row
+        // matching this exact academicSession.getId() (a lock miss returns early, never throws).
+        // A secondary lookup failure here (row deleted between the rolled-back attempt and this
+        // call) is a harmless no-op via ifPresent — it never masks the primary ex.
+        assignmentRepository.findBySchoolIdAndStudentIdAndAcademicSessionId(schoolId, studentId, academicSession.getId()).ifPresent(assignment -> {
             assignment.setStatus(StudentFeeAssignmentStatus.GENERATION_FAILED);
             assignment.setFailureReason(safeMessage(ex));
             // Best-effort identity bookkeeping only — deliberately does NOT reuse
