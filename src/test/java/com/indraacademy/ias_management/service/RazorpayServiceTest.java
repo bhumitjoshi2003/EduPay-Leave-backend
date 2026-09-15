@@ -48,6 +48,7 @@ class RazorpayServiceTest {
     @Mock private EmailService emailService;
     @Mock private com.indraacademy.ias_management.repository.RefundRepository refundRepository;
     @Mock private RefundSettlementService refundSettlementService;
+    @Mock private com.indraacademy.ias_management.repository.AcademicSessionRepository academicSessionRepository;
 
     private RazorpayService service;
 
@@ -70,7 +71,25 @@ class RazorpayServiceTest {
         ReflectionTestUtils.setField(service, "emailService", emailService);
         ReflectionTestUtils.setField(service, "refundRepository", refundRepository);
         ReflectionTestUtils.setField(service, "refundSettlementService", refundSettlementService);
+        ReflectionTestUtils.setField(service, "academicSessionRepository", academicSessionRepository);
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+    }
+
+    // ── createOrder: session must resolve to a real AcademicSession before anything else ───
+
+    /** Closes the pre-existing gap where PaymentOrder.session was only @NotBlank-checked: an
+     * unresolvable session must be rejected before any PaymentOrder row is persisted, and —
+     * just as importantly — before the real Razorpay API is ever called (no orphaned remote
+     * order for a session that doesn't exist). */
+    @Test
+    void createOrder_unresolvableSession_rejectsBeforePersistingOrCallingRazorpay() {
+        when(academicSessionRepository.findBySchoolIdAndLabel(SCHOOL_ID, "2099-2100")).thenReturn(Optional.empty());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createOrder(
+                        100000, "S1", "Student One", "6A", "2099-2100", "000000000000",
+                        0, 0, 0, 0, 0, 0, 0, 0, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("AcademicSession not found");
     }
 
     // ── reconcileRefund: pull-based reconciliation (Phase C) ────────────────────────────────

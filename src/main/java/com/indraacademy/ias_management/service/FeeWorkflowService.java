@@ -787,6 +787,12 @@ public class FeeWorkflowService {
         if (!authoritative.valid()) throw new IllegalStateException(authoritative.reason());
         FeeCalculationService.FeeConfigurationStatus config = calculationService.validateFeeConfiguration(schoolId, session, authoritative.className());
         if (!config.valid()) throw new IllegalStateException(config.reason());
+        // Resolved once for the whole call — both StudentFees.year/StudentFeesLineItem.session
+        // (the label) and their new academic_session_id are derived from this SAME object below,
+        // never independently trusted.
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
         Set<Long> charged = new HashSet<>(oneTimeRepository.findFeeHeadIdBySchoolIdAndStudentId(schoolId, student.getStudentId()));
         boolean first = studentFeesRepository.findByStudentIdAndSchoolIdAndYearOrderByMonthAsc(student.getStudentId(), schoolId, session).isEmpty();
         for (int month : months) {
@@ -801,7 +807,8 @@ public class FeeWorkflowService {
             StudentFees fee = new StudentFees();
             fee.setSchoolId(schoolId); fee.setStudentId(student.getStudentId()); fee.setClassName(authoritative.className());
             fee.setClassId(authoritative.classId());
-            fee.setMonth(month); fee.setYear(session); fee.setPaid(false); fee.setTakesBus(transport.enabled());
+            fee.setMonth(month); fee.setYear(academicSession.getLabel()); fee.setAcademicSessionId(academicSession.getId());
+            fee.setPaid(false); fee.setTakesBus(transport.enabled());
             fee.setDistance(transport.distance() == null ? 0.0 : transport.distance()); fee.setManuallyPaid(false);
             fee.setBaseAmountDue(snapshot.baseAmountDue()); fee.setBusFeeDue(snapshot.busFeeDue());
             fee.setDiscountAmount(snapshot.discountAmount()); fee.setAmountComputedAt(LocalDateTime.now());
@@ -812,7 +819,8 @@ public class FeeWorkflowService {
             for (FeeCalculationService.LineItemSnapshot li : snapshot.lineItems()) {
                 StudentFeesLineItem item = new StudentFeesLineItem();
                 item.setStudentFeesId(fee.getId()); item.setSchoolId(schoolId); item.setStudentId(student.getStudentId());
-                item.setSession(session); item.setMonth(month); item.setLineItemType(LineItemType.valueOf(li.lineItemType()));
+                item.setSession(academicSession.getLabel()); item.setAcademicSessionId(academicSession.getId());
+                item.setMonth(month); item.setLineItemType(LineItemType.valueOf(li.lineItemType()));
                 item.setFeeHeadId(li.feeHeadId()); item.setFeeHeadCode(li.feeHeadCode()); item.setFeeHeadName(li.feeHeadName());
                 item.setFrequency(li.frequency()); item.setGrossAmountPaise(li.grossPaise());
                 item.setDiscountAmountPaise(li.discountPaise()); item.setNetAmountPaise(li.netPaise());

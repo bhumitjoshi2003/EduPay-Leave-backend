@@ -204,6 +204,7 @@ public class PaymentSettlementService {
         payment.setStudentName(studentName);
         payment.setClassName(paymentOrder.getClassName());
         payment.setSession(paymentOrder.getSession());
+        payment.setAcademicSessionId(paymentOrder.getAcademicSessionId());
         payment.setMonth(paymentOrder.getMonth());
         int amountInPaise = paymentOrder.getAmount();
         payment.setAmount(amountInPaise); // Stored in paise

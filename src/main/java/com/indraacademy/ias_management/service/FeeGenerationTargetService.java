@@ -375,6 +375,7 @@ public class FeeGenerationTargetService {
             StudentFees fee = new StudentFees();
             fee.setSchoolId(schoolId); fee.setStudentId(studentId); fee.setClassId(enrollment.getClassId());
             fee.setClassName(className); fee.setMonth(month); fee.setYear(targetSession.getLabel());
+            fee.setAcademicSessionId(targetSession.getId());
             fee.setPaid(false); fee.setTakesBus(transport.enabled());
             fee.setDistance(transport.distance() == null ? 0.0 : transport.distance()); fee.setManuallyPaid(false);
             fee.setBaseAmountDue(snapshot.baseAmountDue()); fee.setBusFeeDue(snapshot.busFeeDue());
@@ -385,7 +386,8 @@ public class FeeGenerationTargetService {
             for (FeeCalculationService.LineItemSnapshot li : snapshot.lineItems()) {
                 StudentFeesLineItem item = new StudentFeesLineItem();
                 item.setStudentFeesId(fee.getId()); item.setSchoolId(schoolId); item.setStudentId(studentId);
-                item.setSession(targetSession.getLabel()); item.setMonth(month); item.setLineItemType(LineItemType.valueOf(li.lineItemType()));
+                item.setSession(targetSession.getLabel()); item.setAcademicSessionId(targetSession.getId());
+                item.setMonth(month); item.setLineItemType(LineItemType.valueOf(li.lineItemType()));
                 item.setFeeHeadId(li.feeHeadId()); item.setFeeHeadCode(li.feeHeadCode()); item.setFeeHeadName(li.feeHeadName());
                 item.setFrequency(li.frequency()); item.setGrossAmountPaise(li.grossPaise());
                 item.setDiscountAmountPaise(li.discountPaise()); item.setNetAmountPaise(li.netPaise());

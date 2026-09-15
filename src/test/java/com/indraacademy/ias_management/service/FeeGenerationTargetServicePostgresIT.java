@@ -135,6 +135,25 @@ class FeeGenerationTargetServicePostgresIT {
         assertZeroFinancialSideEffects("STU-PLANNED");
     }
 
+    /** Financial AcademicSession Authority, Phase B3/B4: every generated StudentFees row and
+     * its line items must carry the target session's real id, not merely its label. */
+    @Test void generationPopulatesAcademicSessionIdFromTargetSession() {
+        insertStudent("STU-SESSIONID", SCHOOL, CLASS_9, SECTION_A, false, 0);
+        insertEnrollment("STU-SESSIONID", SCHOOL, SESSION, "ACTIVE", CLASS_9, SECTION_A, LocalDate.of(2026, 7, 1));
+        Long enrollmentId = enrollmentIdOf("STU-SESSIONID", SESSION);
+
+        List<StudentGenerationResult> results = service.generate(genRequest(decision("STU-SESSIONID", enrollmentId, CLASS_9)), "ip");
+
+        assertThat(results.getFirst().outcome()).isEqualTo(GenerationOutcome.GENERATED);
+        List<Long> sessionIds = jdbc.query("SELECT academic_session_id FROM student_fees WHERE school_id=? AND student_id=?",
+                (rs, i) -> rs.getLong("academic_session_id"), SCHOOL, "STU-SESSIONID");
+        assertThat(sessionIds).allMatch(id -> id == SESSION);
+        List<Long> lineItemSessionIds = jdbc.query(
+                "SELECT academic_session_id FROM student_fees_line_item WHERE school_id=? AND student_id=?",
+                (rs, i) -> rs.getLong("academic_session_id"), SCHOOL, "STU-SESSIONID");
+        assertThat(lineItemSessionIds).isNotEmpty().allMatch(id -> id == SESSION);
+    }
+
     @Test void activeEnrollmentGeneratesIdenticalAmountsToPlannedInSameClass() {
         insertStudent("STU-PLANNED2", SCHOOL, CLASS_10, SECTION_B, false, 0);
         insertStudent("STU-ACTIVE", SCHOOL, CLASS_10, SECTION_B, false, 0);

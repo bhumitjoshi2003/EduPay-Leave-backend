@@ -152,6 +152,7 @@ public class RefundSettlementService {
         refund.setSchoolId(schoolId);
         refund.setStudentId(payment.getStudentId());
         refund.setSession(payment.getSession());
+        refund.setAcademicSessionId(payment.getAcademicSessionId());
         refund.setAmountPaise(request.getAmount());
         refund.setReason(request.getReason());
         refund.setStatus(STATUS_PENDING);

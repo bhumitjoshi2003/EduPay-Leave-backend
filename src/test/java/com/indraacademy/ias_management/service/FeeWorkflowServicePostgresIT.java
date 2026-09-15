@@ -164,6 +164,27 @@ class FeeWorkflowServicePostgresIT {
         assertThat(generatedClassNames("STU-HIST", LABEL_2025)).containsExactly("9");
     }
 
+    /** Financial AcademicSession Authority, Phase B3/B4: a freshly-generated StudentFees row
+     * and its line item must both carry the resolved AcademicSession's real id, alongside the
+     * unchanged label — not merely the label as before this phase. */
+    @Test void generation_populatesAcademicSessionIdOnStudentFeesAndLineItem() {
+        insertStudent("STU-SESSIONID", CLASS_9, "9");
+        insertEnrollment("STU-SESSIONID", SESSION_2025, "ACTIVE", CLASS_9, LocalDate.of(2025, 4, 1), null);
+        insertAssignment("STU-SESSIONID", LABEL_2025);
+        TestTransaction.flagForCommit(); TestTransaction.end();
+
+        List<GenerationResult> results = service.generate(
+                new AssignmentRequest(List.of("STU-SESSIONID"), LABEL_2025, LocalDate.of(2025, 4, 1), List.of(1), null, null), "ip");
+
+        assertThat(results.getFirst().successful()).isTrue();
+        assertThat(jdbc.queryForObject(
+                "SELECT academic_session_id FROM student_fees WHERE student_id = 'STU-SESSIONID'", Long.class))
+                .isEqualTo(SESSION_2025);
+        assertThat(jdbc.queryForObject(
+                "SELECT academic_session_id FROM student_fees_line_item WHERE student_id = 'STU-SESSIONID'", Long.class))
+                .isEqualTo(SESSION_2025);
+    }
+
     /** Test 2: the student IS enrollment-covered (has a segment for a DIFFERENT session) but has
      * no valid enrollment for the session actually being generated — no StudentFees row must be
      * created, and the mutable Student.className must never be used as a silent fallback. */

@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.service;
 
+import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.PaymentOrder;
 import com.indraacademy.ias_management.entity.School;
@@ -49,6 +50,7 @@ public class RazorpayService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private com.indraacademy.ias_management.repository.RefundRepository refundRepository;
     @Autowired private RefundSettlementService refundSettlementService;
+    @Autowired private com.indraacademy.ias_management.repository.AcademicSessionRepository academicSessionRepository;
 
     /** Global fallback keys from application.properties — used when a school has no own keys configured. */
     @Value("${razorpay.key.id:}")
@@ -206,6 +208,17 @@ public class RazorpayService {
         // Amount is expected in paisa by Razorpay, but passed as an int representing paisa here.
         log.info("Creating Razorpay order for student ID: {} with amount: {} paisa", studentId, amount);
 
+        // Resolved BEFORE ever calling out to Razorpay — closes the pre-existing gap where
+        // PaymentOrder.session was only @NotBlank-checked, never validated against a real
+        // AcademicSession, and avoids creating a real (if harmless/unused) remote order for a
+        // session that doesn't exist. Both the stored label and the new authoritative id
+        // persisted onto PaymentOrder below come from this ONE resolved row, never
+        // independently trusted.
+        Long schoolId = securityUtil.getSchoolId();
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, session)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + session + "'"));
+
         try {
             JSONObject options = new JSONObject();
             options.put("amount", amount);
@@ -223,13 +236,13 @@ public class RazorpayService {
             // of trusting whatever a client claims the order was for at verify time — a
             // Razorpay signature only proves a payment was captured for this orderId, never
             // which student/amount/months it was actually created for.
-            Long schoolId = securityUtil.getSchoolId();
             PaymentOrder paymentOrder = new PaymentOrder();
             paymentOrder.setOrderId(orderId);
             paymentOrder.setSchoolId(schoolId);
             paymentOrder.setStudentId(studentId);
             paymentOrder.setClassName(className);
-            paymentOrder.setSession(session);
+            paymentOrder.setSession(academicSession.getLabel());
+            paymentOrder.setAcademicSessionId(academicSession.getId());
             paymentOrder.setMonth(month);
             paymentOrder.setAmount(amount);
             paymentOrder.setBusFee(busFee != null ? busFee : 0);

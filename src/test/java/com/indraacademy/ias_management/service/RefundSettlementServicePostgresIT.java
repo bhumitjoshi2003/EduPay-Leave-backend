@@ -87,6 +87,7 @@ class RefundSettlementServicePostgresIT {
         jdbc.update("DELETE FROM student_fees WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM refund WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM payment WHERE school_id = ?", SCHOOL);
+        jdbc.update("DELETE FROM academic_session WHERE school_id = ?", SCHOOL);
     }
 
     private static String normalizeJdbcUrl(String url) {
@@ -484,6 +485,26 @@ class RefundSettlementServicePostgresIT {
         req.setAmount(amountPaise);
         req.setReason(reason);
         return req;
+    }
+
+    /** Financial AcademicSession Authority, Phase B3/B4: reserve() must propagate
+     * Payment.academicSessionId onto the new Refund row unchanged — never a fresh
+     * AcademicSession lookup, and never left behind even though every other Refund field here
+     * is freshly constructed. */
+    @Test
+    void reserve_propagatesAcademicSessionIdFromPaymentUnchanged() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        long paymentId = insertPayment(100000L, 0L);
+        jdbc.update("UPDATE payment SET academic_session_id = ? WHERE id = ?", sessionId, paymentId);
+
+        var result = refundSettlementService.reserve(paymentId, refundRequest(70000L, "session-propagation"), SCHOOL);
+
+        assertThat(result.outcome()).isEqualTo(RefundSettlementService.ReservationOutcome.RESERVED);
+        assertThat(jdbc.queryForObject("SELECT academic_session_id FROM refund WHERE id = ?", Long.class, result.refund().getId()))
+                .isEqualTo(sessionId);
     }
 
     private long insertPayment(long amountPaidPaise, long refundedAmountPaise) {

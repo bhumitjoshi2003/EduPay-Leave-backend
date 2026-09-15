@@ -277,6 +277,11 @@ public class StudentFeesRecalculationService {
             newLineItem.setSchoolId(schoolId);
             newLineItem.setStudentId(studentId);
             newLineItem.setSession(session);
+            // Derived from the parent row, never re-resolved — a recalculation replaces this
+            // StudentFees row's line items in place, so its session identity (however this
+            // phase's dual-write left it — populated for a modern row, still null for a
+            // legacy/pre-existing one) is exactly what every replacement line item must carry.
+            newLineItem.setAcademicSessionId(fee.getAcademicSessionId());
             newLineItem.setMonth(month);
             newLineItem.setLineItemType(LineItemType.valueOf(li.lineItemType()));
             newLineItem.setFeeHeadId(li.feeHeadId());

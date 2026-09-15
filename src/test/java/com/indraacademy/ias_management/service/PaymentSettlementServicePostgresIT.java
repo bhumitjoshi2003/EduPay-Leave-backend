@@ -86,6 +86,7 @@ class PaymentSettlementServicePostgresIT {
         jdbc.update("DELETE FROM payment WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM payment_order WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM student_fees WHERE school_id = ?", SCHOOL);
+        jdbc.update("DELETE FROM academic_session WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM school WHERE id = ?", SCHOOL);
     }
 
@@ -158,6 +159,42 @@ class PaymentSettlementServicePostgresIT {
                 Long.class, result.payment().getId())).isEqualTo(100000L);
         assertThat(jdbc.queryForObject("SELECT amount_paid FROM student_fees WHERE id = ?", java.math.BigDecimal.class, studentFeesId))
                 .isEqualByComparingTo("1000.00");
+    }
+
+    /** Financial AcademicSession Authority, Phase B3/B4: PaymentOrder.academicSessionId (as
+     * populated by RazorpayService.createOrder) must propagate unchanged onto Payment during
+     * settlement, and onward onto every allocation created for it — never a fresh lookup, per
+     * the settlement lock's existing idempotency/authority guarantees. */
+    @Test
+    void settlement_propagatesAcademicSessionIdFromPaymentOrderToPaymentAndAllocations() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        String orderId = "psi-it-order-sessionid";
+        String paymentId = "psi-it-pay-sessionid";
+        String studentId = "psi-it-student-sessionid";
+        jdbc.update("INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED')",
+                SCHOOL, studentId, sessionId);
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, " +
+                        "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
+                        "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, ?)",
+                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        assertThat(jdbc.queryForObject("SELECT academic_session_id FROM payment WHERE payment_id = ?", Long.class, paymentId))
+                .isEqualTo(sessionId);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment_student_fees_allocation WHERE payment_id = ? AND academic_session_id = ?",
+                Integer.class, result.payment().getId(), sessionId))
+                .isGreaterThan(0);
     }
 
     @Test

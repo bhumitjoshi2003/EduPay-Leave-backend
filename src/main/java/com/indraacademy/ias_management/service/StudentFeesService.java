@@ -308,12 +308,27 @@ public class StudentFeesService {
             PendingMonthAllocation p = pending.get(idx);
             StudentFees studentFees = p.studentFees();
 
+            // The payment's and the targeted StudentFees row's session identity must already
+            // agree, since the Pass 1 lookup above is itself keyed by payment.getSession() —
+            // a mismatch here (both populated, but different) would mean a genuine correctness
+            // bug elsewhere and must never be silently allocated against; a legacy/test row
+            // with either side still null (pre-dating this phase's dual-write) safely falls
+            // back to whichever side is populated.
+            Long paymentSessionId = payment.getAcademicSessionId();
+            Long feesSessionId = studentFees.getAcademicSessionId();
+            if (paymentSessionId != null && feesSessionId != null && !paymentSessionId.equals(feesSessionId)) {
+                throw new IllegalStateException("Payment academicSessionId (" + paymentSessionId
+                        + ") does not match StudentFees academicSessionId (" + feesSessionId + ") for student "
+                        + studentId + " month " + studentFees.getMonth() + ".");
+            }
+
             PaymentStudentFeesAllocation allocation = new PaymentStudentFeesAllocation();
             allocation.setPaymentId(payment.getId());
             allocation.setStudentFeesId(studentFees.getId());
             allocation.setSchoolId(schoolId);
             allocation.setStudentId(studentId);
             allocation.setSession(session);
+            allocation.setAcademicSessionId(paymentSessionId != null ? paymentSessionId : feesSessionId);
             allocation.setMonth(studentFees.getMonth());
             allocation.setAmountPaise(allocatedPaise[idx]);
             paymentAllocationRepository.save(allocation);
@@ -384,7 +399,15 @@ public class StudentFeesService {
 
         Long schoolId = securityUtil.getSchoolId();
         String studentId = request.getStudentId();
-        String session = request.getSession();
+        // Resolved up front, before any StudentFees lookup below — closes the gap where a raw,
+        // never-validated client label could be persisted directly onto Payment.session. Both
+        // the label and the id persisted onto the Payment row come from this ONE resolved
+        // AcademicSession, never independently trusted (session drift between the two would
+        // otherwise be possible if the label were re-typed later).
+        AcademicSession academicSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, request.getSession())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "AcademicSession not found for schoolId=" + schoolId + ", session='" + request.getSession() + "'"));
+        String session = academicSession.getLabel();
         String referenceNumber = request.getReferenceNumber() != null ? request.getReferenceNumber().trim() : null;
         if (referenceNumber != null && !referenceNumber.isEmpty()
                 && paymentRepository.existsByManualReferenceNumberAndSchoolId(referenceNumber, schoolId)) {
@@ -474,6 +497,7 @@ public class StudentFeesService {
                 Math.multiplyExact(lateFeeBucket, 100)
         );
         payment.setSchoolId(schoolId);
+        payment.setAcademicSessionId(academicSession.getId());
         payment.setRazorpaySignature("MANUAL-PAYMENT");
         payment.setManualPaymentMode(paymentMode);
         payment.setManualReferenceNumber((referenceNumber != null && !referenceNumber.isEmpty()) ? referenceNumber : null);
@@ -767,7 +791,8 @@ public class StudentFeesService {
             StudentFees studentFees = new StudentFees();
             studentFees.setStudentId(request.getStudentId());
             studentFees.setClassName(request.getClassName());
-            studentFees.setYear(request.getYear());
+            studentFees.setYear(academicSession.getLabel());
+            studentFees.setAcademicSessionId(academicSession.getId());
             studentFees.setMonth(request.getMonth());
             studentFees.setSchoolId(schoolId);
             studentFees.setTakesBus(takesBus);
@@ -790,7 +815,8 @@ public class StudentFeesService {
                 lineItem.setStudentFeesId(saved.getId());
                 lineItem.setSchoolId(schoolId);
                 lineItem.setStudentId(request.getStudentId());
-                lineItem.setSession(request.getYear());
+                lineItem.setSession(academicSession.getLabel());
+                lineItem.setAcademicSessionId(academicSession.getId());
                 lineItem.setMonth(request.getMonth());
                 lineItem.setLineItemType(LineItemType.valueOf(li.lineItemType()));
                 lineItem.setFeeHeadId(li.feeHeadId());
@@ -963,7 +989,8 @@ public class StudentFeesService {
                 studentFee.setMonth(month);
                 studentFee.setPaid(false);
                 studentFee.setTakesBus(takesBus);
-                studentFee.setYear(year);
+                studentFee.setYear(academicSession.getLabel());
+                studentFee.setAcademicSessionId(academicSession.getId());
                 studentFee.setDistance(Objects.requireNonNullElse(distance, 0.0));
                 studentFee.setManuallyPaid(false);
                 studentFee.setManualPaymentReceived(null);
@@ -981,7 +1008,8 @@ public class StudentFeesService {
                     lineItem.setStudentFeesId(studentFee.getId());
                     lineItem.setSchoolId(schoolId);
                     lineItem.setStudentId(studentId);
-                    lineItem.setSession(year);
+                    lineItem.setSession(academicSession.getLabel());
+                    lineItem.setAcademicSessionId(academicSession.getId());
                     lineItem.setMonth(month);
                     lineItem.setLineItemType(LineItemType.valueOf(li.lineItemType()));
                     lineItem.setFeeHeadId(li.feeHeadId());
