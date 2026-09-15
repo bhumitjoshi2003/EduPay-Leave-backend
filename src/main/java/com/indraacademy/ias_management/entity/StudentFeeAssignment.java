@@ -21,6 +21,13 @@ public class StudentFeeAssignment {
     private String studentId;
     @Column(name = "academic_session", nullable = false, length = 20)
     private String academicSession;
+    /** Financial AcademicSession Authority, Phase D2 — the authoritative reference alongside
+     * {@link #academicSession} (which remains the permanent, immutable historical/display
+     * snapshot). Not yet populated or read anywhere; a scalar id rather than a {@code @ManyToOne}
+     * to match the established precedent in {@code StudentEnrollment}/{@code StudentFees}/
+     * {@code Payment}. */
+    @Column(name = "academic_session_id")
+    private Long academicSessionId;
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
     private StudentFeeAssignmentStatus status = StudentFeeAssignmentStatus.NOT_ASSIGNED;

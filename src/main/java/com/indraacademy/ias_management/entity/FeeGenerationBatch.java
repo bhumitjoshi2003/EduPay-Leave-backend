@@ -15,6 +15,11 @@ public class FeeGenerationBatch {
     private Long id;
     @Column(name = "school_id", nullable = false) private Long schoolId;
     @Column(name = "academic_session", nullable = false, length = 20) private String academicSession;
+    /** Financial AcademicSession Authority, Phase D2 — the authoritative reference alongside
+     * {@link #academicSession} (which remains the permanent, immutable batch snapshot). Not yet
+     * populated or read anywhere; a scalar id rather than a {@code @ManyToOne} to match the
+     * established precedent in {@code StudentEnrollment}/{@code StudentFees}/{@code Payment}. */
+    @Column(name = "academic_session_id") private Long academicSessionId;
     @Column(name = "effective_date", nullable = false) private LocalDate effectiveDate;
     @Column(name = "selected_months", nullable = false, length = 40) private String selectedMonths;
     @Column(name = "requested_student_ids", nullable = false, columnDefinition = "TEXT") private String requestedStudentIds;
