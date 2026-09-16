@@ -8,6 +8,7 @@ import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.StudentEnrollment;
+import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.AttendanceRepository;
 import com.indraacademy.ias_management.repository.LeaveRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
@@ -72,6 +73,7 @@ public class StudentService {
     @Autowired private IdGeneratorService idGeneratorService;
     @Autowired private AcademicSessionRepository academicSessionRepository;
     @Autowired private StudentEnrollmentService studentEnrollmentService;
+    @Autowired private StudentEnrollmentRepository studentEnrollmentRepository;
     @Autowired private Clock clock;
 
     private LocalDate schoolToday(Long schoolId) {
@@ -601,14 +603,20 @@ public class StudentService {
 
     /**
      * Permanently deletes a student and all their associated records (attendance,
-     * fees, leaves, payments, and the login User account) within the caller's school.
+     * leaves, and the login User account) within the caller's school.
      *
      * The deletion is wrapped in a single transaction so that all tables are cleaned
      * up atomically — a partial failure rolls back the entire operation.
      *
      * NOTE: Payment records are retained for accounting/audit purposes and are NOT
-     * deleted. This is intentional: fee receipts must remain available even after
-     * a student is removed. Only attendance, fees schedule, and leave records are purged.
+     * deleted. A student with ANY retained financial history (a StudentFees row —
+     * paid or not; a generated-but-unpaid liability is still accounting history) OR
+     * ANY retained enrollment history (a StudentEnrollment row — current or closed;
+     * ordinary admission always creates one) is refused outright, before any destructive
+     * cleanup — see the guards below. Use the exit workflow ({@code exitStudent},
+     * GRADUATED/TRANSFERRED/WITHDRAWN) to remove such an established student instead.
+     * Hard deletion remains available only for a student with neither kind of history —
+     * a provisional/mistakenly-created record.
      */
     @Transactional
     public void deleteStudent(String studentId, HttpServletRequest request) {
@@ -620,11 +628,37 @@ public class StudentService {
         Student student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
 
+        // Financial history must never be destructively removed just to permit student
+        // deletion. student_fees_line_item and payment_student_fees_allocation both FK
+        // NOT NULL to student_fees(id) with no cascade — deleting a StudentFees row that
+        // either references would already fail with a raw DataIntegrityViolationException,
+        // a confusing 500 that leaks nothing useful to the caller. Checking up front instead
+        // means a clean, expected 409 for a genuinely business-meaningful condition — this
+        // student has financial history — rather than treating it as a database error.
+        if (studentFeesRepository.existsByStudentIdAndSchoolId(studentId, schoolId)) {
+            log.warn("Refusing to delete student {} for school {}: retained financial history exists.",
+                    studentId, schoolId);
+            throw new IllegalStateException(
+                    "Student cannot be deleted because financial records exist. Deactivate the student instead.");
+        }
+
+        // Enrollment history is likewise never destructively removed just to permit student
+        // deletion — fk_student_enrollment_student (school_id, student_id) is ON DELETE
+        // RESTRICT, and ordinary admission always creates a StudentEnrollment row, so this
+        // is the normal case for any established student, not an edge case. Deactivate via
+        // the exit workflow instead of hard-deleting academic/session history.
+        if (studentEnrollmentRepository.existsByStudentIdAndSchoolId(studentId, schoolId)) {
+            log.warn("Refusing to delete student {} for school {}: retained enrollment history exists.",
+                    studentId, schoolId);
+            throw new IllegalStateException(
+                    "Student cannot be deleted because enrollment/history records exist. Use the student exit workflow instead.");
+        }
+
         log.warn("Deleting student {} and all associated records for school {}", studentId, schoolId);
 
-        // 1. Delete related records (cascading cleanup)
+        // 1. Delete related records (cascading cleanup) — StudentFees is deliberately never
+        // touched here: the guard above already proved none exist for this student.
         attendanceRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
-        studentFeesRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
         leaveRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
         // Note: Payment records are intentionally kept for financial audit trail
 

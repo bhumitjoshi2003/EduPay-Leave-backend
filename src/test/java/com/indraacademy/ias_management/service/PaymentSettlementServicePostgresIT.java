@@ -82,6 +82,7 @@ class PaymentSettlementServicePostgresIT {
     @AfterEach
     void cleanUp() {
         com.indraacademy.ias_management.util.SchoolContext.clear();
+        jdbc.update("DELETE FROM attendance WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM payment_student_fees_allocation WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM payment WHERE school_id = ?", SCHOOL);
         jdbc.update("DELETE FROM payment_order WHERE school_id = ?", SCHOOL);
@@ -474,6 +475,86 @@ class PaymentSettlementServicePostgresIT {
                         "SELECT COUNT(*) FROM payment_student_fees_allocation WHERE payment_id = ? AND academic_session_id = ?",
                         Integer.class, result.payment().getId(), sessionId))
                 .isGreaterThan(0);
+    }
+
+    /** Fix B — AttendanceService webhook tenant context: updateChargePaidAfterPayment had its
+     * own instance of the exact bug fixed for markFeesAsPaid in Fix 1 — it derived schoolId
+     * from securityUtil.getSchoolId() (ambient SchoolContext), which is never populated for a
+     * genuine /api/webhooks/* request, so the attendance charge-paid side effect silently
+     * no-op'd (logged a warning, never threw) for every real webhook settlement. Now
+     * PaymentSettlementService passes its own already-validated schoolId explicitly. This
+     * proves the side effect actually happens, with SchoolContext completely absent. */
+    @Test
+    void webhookRecoverySettlement_updatesAttendanceChargePaid_withNoAmbientSchoolContext() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        String orderId = "psi-it-order-webhook-attendance";
+        String paymentId = "psi-it-pay-webhook-attendance";
+        String studentId = "psi-it-student-webhook-attendance";
+        jdbc.update("INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED')",
+                SCHOOL, studentId, sessionId);
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, " +
+                        "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
+                        "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 200000, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, ?)",
+                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
+                "VALUES (?, ?, '6A', DATE '2025-06-15', 'PRESENT', false)", SCHOOL, studentId);
+
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, null, SCHOOL, PaymentSettlementService.SettlementSource.RAZORPAY_WEBHOOK);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        assertThat(jdbc.queryForObject(
+                        "SELECT charge_paid FROM attendance WHERE school_id = ? AND student_id = ?",
+                        Boolean.class, SCHOOL, studentId))
+                .isTrue();
+    }
+
+    /** Fix B, defense-in-depth: a stale/wrong ambient SchoolContext must never redirect or
+     * suppress the attendance side effect — PaymentSettlementService's own validated schoolId
+     * is authoritative regardless of whatever the current thread happens to have set. -1L is
+     * a schoolId that doesn't even exist, deliberately, to prove it's never consulted at all. */
+    @Test
+    void webhookRecoverySettlement_attendanceUpdate_ignoresWrongAmbientSchoolContext() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        String orderId = "psi-it-order-webhook-attendance-wrongctx";
+        String paymentId = "psi-it-pay-webhook-attendance-wrongctx";
+        String studentId = "psi-it-student-webhook-attendance-wrongctx";
+        jdbc.update("INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED')",
+                SCHOOL, studentId, sessionId);
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, " +
+                        "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
+                        "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 200000, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, ?)",
+                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
+                "VALUES (?, ?, '6A', DATE '2025-06-15', 'PRESENT', false)", SCHOOL, studentId);
+
+        // Deliberately wrong, nonexistent ambient context — must be completely ignored.
+        com.indraacademy.ias_management.util.SchoolContext.set(-1L);
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, null, SCHOOL, PaymentSettlementService.SettlementSource.RAZORPAY_WEBHOOK);
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        assertThat(jdbc.queryForObject(
+                        "SELECT charge_paid FROM attendance WHERE school_id = ? AND student_id = ?",
+                        Boolean.class, SCHOOL, studentId))
+                .isTrue();
     }
 
     private static String normalizeJdbcUrl(String url) {

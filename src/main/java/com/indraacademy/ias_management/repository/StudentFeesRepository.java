@@ -72,6 +72,14 @@ public interface StudentFeesRepository extends JpaRepository<StudentFees, Long> 
 
     boolean existsByStudentIdAndYearAndSchoolId(String studentId, String year, Long schoolId);
 
+    /** Used by StudentService.deleteStudent to detect retained financial history: any
+     * StudentFees row — paid or not — is accounting/history state (a generated liability is
+     * still history) and must block hard deletion. student_fees_line_item and
+     * payment_student_fees_allocation both FK NOT NULL to student_fees(id) with no cascade,
+     * so "zero StudentFees rows for this student" already implies zero rows in either of
+     * those tables too — this single check is sufficient. */
+    boolean existsByStudentIdAndSchoolId(String studentId, Long schoolId);
+
     List<StudentFees> findBySchoolId(Long schoolId);
 
     List<StudentFees> findByStudentIdAndSchoolIdAndPaidFalse(String studentId, Long schoolId);

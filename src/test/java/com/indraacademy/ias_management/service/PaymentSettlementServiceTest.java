@@ -95,7 +95,10 @@ class PaymentSettlementServiceTest {
 
         assertThat(order.isConsumed()).isTrue();
         verify(paymentOrderRepository).save(order);
-        verify(attendanceService).updateChargePaidAfterPayment("S1", "2025-2026");
+        // Fix B: the trusted, already-validated schoolId is passed explicitly — never
+        // re-derived from ambient SecurityUtil/SchoolContext, which is never populated for a
+        // genuine /api/webhooks/* settlement.
+        verify(attendanceService).updateChargePaidAfterPayment("S1", "2025-2026", SCHOOL_ID);
         verify(studentFeesService).markFeesAsPaid(any(Payment.class));
     }
 

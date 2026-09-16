@@ -164,7 +164,7 @@ public class PaymentSettlementService {
         // G. Join the same transaction (both @Transactional(REQUIRED) by default, and both
         // are different Spring beans so the proxy correctly enlists them) — a failure in
         // either rolls back the Payment insert and the PaymentOrder consumption above too.
-        attendanceService.updateChargePaidAfterPayment(studentId, paymentOrder.getSession());
+        attendanceService.updateChargePaidAfterPayment(studentId, paymentOrder.getSession(), schoolId);
         studentFeesService.markFeesAsPaid(savedPayment);
         log.debug("Attendance and StudentFees marked as paid.");
 

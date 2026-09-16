@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.dto.StudentExitRequest;
 import com.indraacademy.ias_management.entity.*;
 import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
+import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,6 +61,7 @@ class StudentLifecyclePostgresIT {
     @Autowired StudentEnrollmentService enrollmentService;
     @Autowired StudentEnrollmentRepository enrollments;
     @Autowired StudentRepository students;
+    @Autowired PaymentRepository payments;
     @Autowired JdbcTemplate jdbc;
 
     @MockBean StudentFeesService studentFeesService;
@@ -304,6 +306,142 @@ class StudentLifecyclePostgresIT {
         } finally {
             pool.shutdownNow(); cleanupCommittedFixtures();
         }
+    }
+
+    // ── Fix A: student deletion must preserve financial history ────────────────────────────
+
+    /** A generated-but-unpaid StudentFees row is still accounting/history state — deletion
+     * must be cleanly rejected before any destructive cleanup, not merely once a FK happens
+     * to be hit. */
+    @Test void deleteStudent_withUnpaidGeneratedFees_isCleanlyRejected_studentAndFeesSurvive() {
+        insertStudentFees(SCHOOL, STUDENT, SESSION, 1, false);
+
+        assertThatThrownBy(() -> studentService.deleteStudent(STUDENT, request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("financial records exist");
+
+        assertThat(students.findByStudentIdAndSchoolId(STUDENT, SCHOOL)).isPresent();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM student_fees WHERE school_id=? AND student_id=?", Integer.class, SCHOOL, STUDENT))
+                .isEqualTo(1);
+    }
+
+    /** Paid history with a real Payment + allocation must also be rejected — and rejected
+     * BEFORE any destructive cleanup runs, never by letting a FK violation be the control
+     * mechanism (a raw DataIntegrityViolationException would leak as a confusing 500). */
+    @Test void deleteStudent_withPaidAllocationHistory_isCleanlyRejected_beforeAnyDestructiveCleanup() {
+        Long studentFeesId = insertStudentFees(SCHOOL, STUDENT, SESSION, 1, true);
+        Payment payment = new Payment(STUDENT, "Lifecycle Student", "9", "2026-2027", "100000000000",
+                100000, "PAY-" + STUDENT, "ORDER-" + STUDENT, java.time.LocalDateTime.now(), "success",
+                0, 100000, 0, 0, 0, 0, false, 100000, 0, 0);
+        payment.setSchoolId(SCHOOL);
+        payment.setAcademicSessionId(SESSION);
+        payment.setRazorpaySignature("TEST-SIGNATURE");
+        payment = payments.save(payment);
+        jdbc.update("INSERT INTO payment_student_fees_allocation " +
+                        "(payment_id, student_fees_id, school_id, student_id, session, month, amount_paise, created_at) " +
+                        "VALUES (?,?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+                payment.getId(), studentFeesId, SCHOOL, STUDENT, "2026-2027", 1, 100000L);
+        // Also seed attendance/leave rows the pre-guard cleanup would otherwise have deleted —
+        // if the guard's ordering were wrong (destructive cleanup before the check), these
+        // would already be gone by the time we assert.
+        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
+                "VALUES (?,?,?,CURRENT_DATE,'PRESENT',false)", SCHOOL, STUDENT, "9");
+
+        assertThatThrownBy(() -> studentService.deleteStudent(STUDENT, request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("financial records exist");
+
+        assertThat(students.findByStudentIdAndSchoolId(STUDENT, SCHOOL)).isPresent();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM student_fees WHERE id=?", Integer.class, studentFeesId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM payment WHERE id=?", Integer.class, payment.getId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM payment_student_fees_allocation WHERE payment_id=?", Integer.class, payment.getId()))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM attendance WHERE school_id=? AND student_id=?", Integer.class, SCHOOL, STUDENT))
+                .isEqualTo(1);
+    }
+
+    /** The realistic case: an ordinarily-admitted student (the shared fixture() @BeforeEach
+     * always creates a StudentEnrollment row, exactly like real admission does) has NO
+     * financial history at all. Hard deletion must still be cleanly rejected — enrollment
+     * history is retained the same way financial history is — recommending the exit workflow
+     * instead. Nothing destructive may run before this rejection. */
+    @Test void deleteStudent_ordinaryEnrolledStudent_isCleanlyRejected_recommendsExitWorkflow() {
+        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
+                "VALUES (?,?,?,CURRENT_DATE,'PRESENT',false)", SCHOOL, STUDENT, "9");
+
+        assertThatThrownBy(() -> studentService.deleteStudent(STUDENT, request))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("enrollment")
+                .hasMessageContaining("exit workflow");
+
+        assertThat(students.findByStudentIdAndSchoolId(STUDENT, SCHOOL)).isPresent();
+        assertThat(history()).isNotEmpty();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM attendance WHERE school_id=? AND student_id=?", Integer.class, SCHOOL, STUDENT))
+                .isEqualTo(1);
+    }
+
+    /** True empty-student hard delete: a student that was created but never actually
+     * enrolled (no StudentEnrollment row — e.g. a provisional/mistakenly-created record) and
+     * has no financial history either. Proves the two guards together do not disable hard
+     * deletion globally — the legitimately dependent records (attendance) still get cleaned
+     * up exactly as before. */
+    @Test void deleteStudent_trulyEmptyStudent_hardDeleteSucceeds() {
+        jdbc.update("DELETE FROM student_enrollment WHERE school_id=? AND student_id=?", SCHOOL, STUDENT);
+        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
+                "VALUES (?,?,?,CURRENT_DATE,'PRESENT',false)", SCHOOL, STUDENT, "9");
+
+        studentService.deleteStudent(STUDENT, request);
+
+        assertThat(students.findByStudentIdAndSchoolId(STUDENT, SCHOOL)).isEmpty();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM attendance WHERE school_id=? AND student_id=?", Integer.class, SCHOOL, STUDENT))
+                .isZero();
+    }
+
+    /** Tenant isolation for the FINANCIAL guard specifically: another school's financial
+     * history for a same-named studentId must never block deletion of THIS school's student,
+     * who (like {@link #deleteStudent_trulyEmptyStudent_hardDeleteSucceeds}) has neither
+     * financial nor enrollment history of its own. */
+    @Test void deleteStudent_anotherSchoolsFinancialHistory_neverBlocksThisSchoolsStudent() {
+        jdbc.update("DELETE FROM student_enrollment WHERE school_id=? AND student_id=?", SCHOOL, STUDENT);
+        insertStudentFees(OTHER_SCHOOL, STUDENT, null, 1, false);
+
+        studentService.deleteStudent(STUDENT, request);
+
+        assertThat(students.findByStudentIdAndSchoolId(STUDENT, SCHOOL)).isEmpty();
+        // The other school's row must remain completely untouched.
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM student_fees WHERE school_id=? AND student_id=?", Integer.class, OTHER_SCHOOL, STUDENT))
+                .isEqualTo(1);
+        jdbc.update("DELETE FROM student_fees WHERE school_id=? AND student_id=?", OTHER_SCHOOL, STUDENT);
+    }
+
+    // Note on enrollment-guard tenant scoping (Task 8): student.student_id is this schema's
+    // actual PRIMARY KEY ("student_pkey") — globally unique across every school, not
+    // composite with school_id — confirmed by attempting exactly this scenario, which fails
+    // with "duplicate key value violates unique constraint student_pkey" before even reaching
+    // student_enrollment. Two schools can therefore never share the same studentId in real
+    // data, making a genuine cross-school collision on the enrollment guard impossible to
+    // construct (unlike student_fees above, which carries no FK back to a real student row
+    // and so tolerates a synthetic same-id row for that narrower proof). The guard itself —
+    // studentEnrollmentRepository.existsByStudentIdAndSchoolId(studentId, schoolId) — is still
+    // correctly scoped by both fields, mechanically guaranteed by Spring Data's derived-query
+    // translation (WHERE student_id = ? AND school_id = ?), matching the same tenant-safe
+    // shape as fk_student_enrollment_student's own composite (school_id, student_id) FK.
+
+    private Long insertStudentFees(long schoolId, String studentId, Long academicSessionId, int month, boolean paid) {
+        return jdbc.queryForObject(
+                "INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '9', ?, ?, false, '2026-2027', ?, " +
+                        "0, false, 1000, 1000, 0, 0, 'COMPUTED') RETURNING id",
+                Long.class, schoolId, studentId, month, paid, academicSessionId);
     }
 
     private void cleanupCommittedFixtures(){

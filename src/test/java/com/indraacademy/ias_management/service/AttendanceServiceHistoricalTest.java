@@ -216,7 +216,7 @@ class AttendanceServiceHistoricalTest {
     void updateChargePaidSkipsRatherThanCrashesWhenNoMatchingSession() {
         when(academicSessionService.getSessionByLabel(SCHOOL_ID, "2099-2100")).thenReturn(Optional.empty());
 
-        service.updateChargePaidAfterPayment(STUDENT_ID, "2099-2100", null);
+        service.updateChargePaidAfterPayment(STUDENT_ID, "2099-2100", (jakarta.servlet.http.HttpServletRequest) null);
 
         verify(attendanceRepository, never()).updateChargePaidForSession(any(), any(), any(), any());
     }

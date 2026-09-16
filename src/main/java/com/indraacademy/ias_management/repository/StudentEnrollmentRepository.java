@@ -122,6 +122,13 @@ public interface StudentEnrollmentRepository extends JpaRepository<StudentEnroll
 
     boolean existsByIdAndSchoolId(Long id, Long schoolId);
 
+    /** Used by StudentService.deleteStudent to detect retained enrollment history: any
+     * StudentEnrollment row (current or historical/closed) FK-references student(school_id,
+     * student_id) with ON DELETE RESTRICT (see fk_student_enrollment_student), so it must
+     * block hard deletion the same way retained financial history does — an established,
+     * ordinarily-admitted student is removed via the exit workflow, never a hard delete. */
+    boolean existsByStudentIdAndSchoolId(String studentId, Long schoolId);
+
     boolean existsBySchoolId(Long schoolId);
 
     boolean existsBySchoolIdAndSectionId(Long schoolId, Long sectionId);

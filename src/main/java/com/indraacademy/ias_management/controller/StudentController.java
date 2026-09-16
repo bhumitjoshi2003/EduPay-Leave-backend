@@ -260,11 +260,10 @@ public class StudentController {
     }
 
     /**
-     * Permanently deletes a student and their related attendance, fee schedule, and
-     * leave records within the admin's school. Payment records are intentionally
-     * retained for financial audit purposes.
-     *
-     * This is a destructive, irreversible operation — use with caution.
+     * Permanently deletes a student and their related attendance and leave records
+     * within the admin's school. Refused with 409 if the student has any retained
+     * financial history (fees, payments, allocations) — deactivate via the exit
+     * workflow instead. This is a destructive, irreversible operation — use with caution.
      */
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{studentId}")
@@ -277,6 +276,9 @@ public class StudentController {
         } catch (NoSuchElementException e) {
             log.warn("Delete failed — student not found: {}", studentId);
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalStateException e) {
+            log.warn("Delete refused — {}: {}", studentId, e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
         } catch (Exception e) {
             log.error("Unexpected error deleting student: {}", studentId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

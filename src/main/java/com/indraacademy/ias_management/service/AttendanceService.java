@@ -329,6 +329,24 @@ public class AttendanceService {
     public void updateChargePaidAfterPayment(String studentId,
                                              String session,
                                              HttpServletRequest request) {
+        updateChargePaidAfterPayment(studentId, session, securityUtil.getSchoolId(), request);
+    }
+
+    /** Required Correctness Fix — Fix B: explicit trusted {@code schoolId}, for the payment
+     * settlement path (PaymentSettlementService.settle, both client-verify AND webhook
+     * recovery) where ambient SecurityUtil/SchoolContext is never populated for a genuine
+     * /api/webhooks/* request. settle() already validates and holds this schoolId itself
+     * (against the trusted PaymentOrder) before calling here — never re-derive it ambiently,
+     * the same principle already applied to StudentFeesService.markFeesAsPaid. */
+    @Transactional
+    public void updateChargePaidAfterPayment(String studentId, String session, Long schoolId) {
+        updateChargePaidAfterPayment(studentId, session, schoolId, null);
+    }
+
+    private void updateChargePaidAfterPayment(String studentId,
+                                             String session,
+                                             Long schoolId,
+                                             HttpServletRequest request) {
 
         if (studentId == null || studentId.trim().isEmpty()
                 || session == null || session.trim().isEmpty()) {
@@ -337,7 +355,6 @@ public class AttendanceService {
         }
 
         try {
-            Long schoolId = securityUtil.getSchoolId();
             Optional<AcademicSession> academicSession = academicSessionService.getSessionByLabel(schoolId, session);
             if (academicSession.isEmpty()) {
                 log.warn("No AcademicSession found for schoolId={} label='{}' — skipping chargePaid update for student {}.",
@@ -373,11 +390,6 @@ public class AttendanceService {
             log.error("Error updating chargePaid for student ID: {}", studentId, e);
             throw new RuntimeException("Could not update chargePaid", e);
         }
-    }
-
-    @Transactional
-    public void updateChargePaidAfterPayment(String studentId, String session) {
-        updateChargePaidAfterPayment(studentId, session, null);
     }
 
     @Transactional
