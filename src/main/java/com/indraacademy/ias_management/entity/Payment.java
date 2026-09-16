@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.time.LocalDateTime;
 
 @Entity
@@ -114,8 +115,27 @@ public class Payment {
     @Column(name = "late_fees")
     private int lateFees;
 
+    /** Legacy compatibility only. */
     @Column(name = "platform_fee")
     private int platformFee;
+
+    @Column(name = "school_liability_principal_paise")
+    private Long schoolLiabilityPrincipalPaise;
+
+    @JsonIgnore @Column(name = "gateway_rate_bps")
+    private Integer gatewayRateBps;
+
+    @JsonIgnore @Column(name = "gateway_tax_rate_bps")
+    private Integer gatewayTaxRateBps;
+
+    @JsonIgnore @Column(name = "gateway_recovery_fee_paise")
+    private Long gatewayRecoveryFeePaise;
+
+    @JsonIgnore @Column(name = "edunexify_transaction_fee_paise")
+    private Long edunexifyTransactionFeePaise;
+
+    @Column(name = "pricing_version", length = 40)
+    private String pricingVersion;
 
     /** Set only for manually-recorded payments (cash/cheque/UPI/bank transfer); NULL for
      * Razorpay-path rows. */
@@ -344,6 +364,11 @@ public class Payment {
     public int getPlatformFee() { return platformFee; }
 
     public void setPlatformFee(int platformFee) { this.platformFee = platformFee; }
+
+    public long getOnlineConvenienceFeePaise() {
+        return Math.addExact(gatewayRecoveryFeePaise != null ? gatewayRecoveryFeePaise : 0L,
+                edunexifyTransactionFeePaise != null ? edunexifyTransactionFeePaise : 0L);
+    }
 
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }

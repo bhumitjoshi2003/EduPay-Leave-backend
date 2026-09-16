@@ -81,13 +81,13 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
     // was overcorrecting net collected by ~100x on any Razorpay payment (manual payments,
     // which always have platformFee=0, never exposed it). Confirmed against the platform-wide
     // SUPER_ADMIN equivalent below, which never had the *100 and was always correct.
-    @Query("SELECT COALESCE(SUM(p.amountPaid - p.platformFee), 0) FROM Payment p WHERE p.schoolId = :schoolId AND EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
+    @Query("SELECT COALESCE(SUM(CASE WHEN p.pricingVersion = 'ONLINE_CONVENIENCE_FEE_V1' OR p.pricingVersion = 'MANUAL' THEN p.schoolLiabilityPrincipalPaise ELSE p.amountPaid - p.platformFee END), 0) FROM Payment p WHERE p.schoolId = :schoolId AND EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
     long sumAmountCollectedBySchoolIdAndMonthAndYear(@Param("schoolId") Long schoolId, @Param("month") int month, @Param("year") int year);
 
     List<Payment> findBySchoolIdAndPaymentDateAfter(Long schoolId, LocalDateTime since);
 
     // Platform-wide (SUPER_ADMIN dashboard — across all schools)
-    @Query("SELECT COALESCE(SUM(p.amountPaid - p.platformFee), 0) FROM Payment p WHERE EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
+    @Query("SELECT COALESCE(SUM(CASE WHEN p.pricingVersion = 'ONLINE_CONVENIENCE_FEE_V1' OR p.pricingVersion = 'MANUAL' THEN p.schoolLiabilityPrincipalPaise ELSE p.amountPaid - p.platformFee END), 0) FROM Payment p WHERE EXTRACT(MONTH FROM p.paymentDate) = :month AND EXTRACT(YEAR FROM p.paymentDate) = :year")
     long sumAmountCollectedByMonthAndYear(@Param("month") int month, @Param("year") int year);
 
     List<Payment> findBySchoolId(Long schoolId);

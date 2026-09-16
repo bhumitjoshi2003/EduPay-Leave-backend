@@ -134,17 +134,18 @@ class FeeReminderServiceTest {
         return fee;
     }
 
-    /** Mirrors StudentFeesService.computeCheckoutQuote's own output shape. */
+    /** Mirrors StudentFeesService.computeCheckoutQuote's own output shape.
+     * {@code platformFee} is accepted for call-site compatibility but no longer meaningful —
+     * schoolLiabilityPrincipalPaise (schoolFeeDue + lateFee only, paise-native) is the sole
+     * value FeeReminderService.totalDue reads. */
     private CheckoutQuoteDto quote(String studentId, List<Integer> months, BigDecimal schoolFeeDue,
                                     BigDecimal lateFee, BigDecimal platformFee, List<Integer> unresolvedMonths) {
         CheckoutQuoteDto dto = new CheckoutQuoteDto();
         dto.setStudentId(studentId);
         dto.setSession(SESSION);
         dto.setMonths(months);
-        dto.setSchoolFeeDue(schoolFeeDue);
-        dto.setLateFee(lateFee);
-        dto.setPlatformFee(platformFee);
-        dto.setTotalAmount(schoolFeeDue.add(lateFee).add(platformFee));
+        dto.setSchoolLiabilityPrincipalPaise(schoolFeeDue.add(lateFee).movePointRight(2).longValueExact());
+        dto.setLateFeePaise(lateFee.movePointRight(2).longValueExact());
         dto.setUnresolvedMonths(unresolvedMonths);
         return dto;
     }

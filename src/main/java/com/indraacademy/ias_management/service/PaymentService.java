@@ -101,6 +101,20 @@ public class PaymentService {
                     payment.getPlatformFee() / 100
             );
             dto.setSchoolName(sName);
+            boolean modern = OnlinePaymentPricingCalculator.PRICING_VERSION.equals(payment.getPricingVersion());
+            long conveniencePaise = modern ? payment.getOnlineConvenienceFeePaise() : payment.getPlatformFee();
+            long schoolDisplayPaise = modern
+                    ? Math.addExact(payment.getSchoolLiabilityPrincipalPaise(), (long) payment.getAdditionalCharges())
+                    : (long) payment.getAmount() - payment.getPlatformFee();
+            dto.setSchoolFeePaise(schoolDisplayPaise);
+            dto.setOnlineConvenienceFeePaise(conveniencePaise);
+            dto.setTotalPaidPaise(payment.getAmount());
+            dto.setPricingVersion(payment.getPricingVersion());
+            dto.setSchoolLiabilityPrincipalPaise(payment.getSchoolLiabilityPrincipalPaise());
+            dto.setGatewayRateBps(payment.getGatewayRateBps());
+            dto.setGatewayTaxRateBps(payment.getGatewayTaxRateBps());
+            dto.setGatewayRecoveryFeePaise(payment.getGatewayRecoveryFeePaise());
+            dto.setEdunexifyTransactionFeePaise(payment.getEdunexifyTransactionFeePaise());
             return dto;
         } catch (DataAccessException e) {
             log.error("Data access error fetching payment details for ID: {}", paymentId, e);
@@ -519,7 +533,13 @@ public class PaymentService {
         PaymentLineItemBreakdownDto breakdown = getPaymentLineItemBreakdown(payment.getPaymentId()).orElse(null);
         StringBuilder feeRows = new StringBuilder();
         int rowIdx = 0;
-        if (breakdown != null && breakdown.isLineItemBreakdownAvailable()) {
+        if (OnlinePaymentPricingCalculator.PRICING_VERSION.equals(payment.getPricingVersion())) {
+            long schoolDisplayPaise = Math.addExact(payment.getSchoolLiabilityPrincipalPaise(),
+                    (long) payment.getAdditionalCharges());
+            rowIdx = appendFeeRow(feeRows, "School Fee", BigDecimal.valueOf(schoolDisplayPaise, 2), rowIdx);
+            rowIdx = appendFeeRow(feeRows, "Online Convenience Fee",
+                    BigDecimal.valueOf(payment.getOnlineConvenienceFeePaise(), 2), rowIdx);
+        } else if (breakdown != null && breakdown.isLineItemBreakdownAvailable()) {
             for (FeeLineItemDto li : breakdown.getLineItems()) {
                 rowIdx = appendFeeRow(feeRows, li.getFeeHeadName(), li.getGrossAmount(), rowIdx);
                 if (li.getDiscountAmount() != null && li.getDiscountAmount().signum() > 0) {
@@ -531,9 +551,11 @@ public class PaymentService {
         } else {
             appendMutedRow(feeRows, "Detailed fee breakdown unavailable for this payment");
         }
-        rowIdx = appendFeeRow(feeRows, "Leave Charges",    BigDecimal.valueOf(payment.getAdditionalCharges(), 2), rowIdx);
-        rowIdx = appendFeeRow(feeRows, "Late Fees",        BigDecimal.valueOf(payment.getLateFees(), 2),          rowIdx);
-               appendFeeRow(feeRows, "Platform Fee",      BigDecimal.valueOf(payment.getPlatformFee(), 2),       rowIdx);
+        if (!OnlinePaymentPricingCalculator.PRICING_VERSION.equals(payment.getPricingVersion())) {
+            rowIdx = appendFeeRow(feeRows, "Leave Charges", BigDecimal.valueOf(payment.getAdditionalCharges(), 2), rowIdx);
+            rowIdx = appendFeeRow(feeRows, "Late Fees", BigDecimal.valueOf(payment.getLateFees(), 2), rowIdx);
+            appendFeeRow(feeRows, "Platform Fee", BigDecimal.valueOf(payment.getPlatformFee(), 2), rowIdx);
+        }
 
         String logoHtml = logoDataUri.isEmpty() ? ""
                 : "<img src=\"" + logoDataUri + "\" style=\"width: 75pt; height: 75pt;\" alt=\"logo\"/><br/>";

@@ -507,6 +507,143 @@ class RefundSettlementServicePostgresIT {
                 .isEqualTo(sessionId);
     }
 
+    // ── Online Convenience Fee refactor: refund capacity is principal-bound, never gross ─────
+
+    /** Builds a real modern (ONLINE_CONVENIENCE_FEE_V1) settled payment shape: a StudentFees
+     * row due for exactly the principal, a Payment row carrying the full pricing snapshot, and
+     * a single PaymentStudentFeesAllocation for the principal only — exactly what
+     * PaymentSettlementService.settle()/StudentFeesService.markFeesAsPaid produce for a real
+     * online payment (see PaymentSettlementServicePostgresIT's own
+     * onlineSettlement_copiesPricingSnapshotVerbatim_allocatesOnlyPrincipalNeverGross, which
+     * uses the identical fixture numbers so both tests are provably about the same payment
+     * shape). This exercises the REAL RefundSettlementService.reserve()/finalizeSuccessfulRefund
+     * — nothing about the refund subsystem itself is mocked. */
+    private long insertModernOnlinePayment(long principalPaise, long gatewayRecoveryFeePaise, long edunexifyFeePaise) {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        long grossPaise = principalPaise + gatewayRecoveryFeePaise + edunexifyFeePaise;
+        String paymentId = "RSVC-IT-CONV-PAY-" + System.nanoTime();
+        java.math.BigDecimal principalRupees = java.math.BigDecimal.valueOf(principalPaise, 2);
+        Long studentFeesId = jdbc.queryForObject(
+                "INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, 'RSVC-IT-CONV-STUDENT', '6A', 1, true, false, " +
+                        "'2025-2026', ?, 0, false, ?, ?, 0, 0, 'COMPUTED') RETURNING id",
+                Long.class, SCHOOL, sessionId, principalRupees, principalRupees);
+        Long dbPaymentId = jdbc.queryForObject(
+                "INSERT INTO payment (school_id, student_id, student_name, class_name, session, month, amount, " +
+                        "payment_id, order_id, payment_date, status, razorpay_signature, amount_paid, " +
+                        "refunded_amount_paise, bus_fee, tuition_fee, annual_charges, lab_charges, eca_project, " +
+                        "examination_fee, additional_charges, late_fees, platform_fee, paid_manually, " +
+                        "academic_session_id, school_liability_principal_paise, gateway_rate_bps, " +
+                        "gateway_tax_rate_bps, gateway_recovery_fee_paise, edunexify_transaction_fee_paise, pricing_version) " +
+                        "VALUES (?, 'RSVC-IT-CONV-STUDENT', 'IT Student', '6A', '2025-2026', '100000000000', ?, " +
+                        "?, ?, ?, 'success', 'sig', ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, " +
+                        "?, ?, 200, 1800, ?, ?, 'ONLINE_CONVENIENCE_FEE_V1') RETURNING id",
+                Long.class, SCHOOL, grossPaise, paymentId, paymentId + "-ORDER", LocalDateTime.now(), grossPaise,
+                sessionId, principalPaise, gatewayRecoveryFeePaise, edunexifyFeePaise);
+        jdbc.update("INSERT INTO payment_student_fees_allocation " +
+                        "(payment_id, student_fees_id, school_id, student_id, session, month, amount_paise, " +
+                        "academic_session_id, created_at) VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)",
+                dbPaymentId, studentFeesId, SCHOOL, "RSVC-IT-CONV-STUDENT", "2025-2026", 1, principalPaise, sessionId);
+        return dbPaymentId;
+    }
+
+    /** Release-blocking: a full school-principal refund reverses exactly the principal
+     * (1,000,000 paise) — the online convenience fee (26,219 paise: 24,219 gateway recovery +
+     * 2,000 Edunexify) is never touched, never mutates, and — critically — no refund capacity
+     * exists for it at all: once the principal is fully refunded, ANY further refund attempt
+     * (even 1 paise) is rejected, proving capacity is allocation-principal-bound, never gross. */
+    @Test
+    void fullSchoolPrincipalRefund_reversesOnlyPrincipal_convenienceFeeNeverTouchedOrRefundable() {
+        long principal = 1_000_000L;
+        long gatewayRecovery = 24_219L;
+        long edunexifyFee = 2_000L;
+        long gross = principal + gatewayRecovery + edunexifyFee; // 1,026,219
+        long paymentId = insertModernOnlinePayment(principal, gatewayRecovery, edunexifyFee);
+
+        var reservation = refundSettlementService.reserve(paymentId, refundRequest(principal, "full-school-refund"), SCHOOL);
+        assertThat(reservation.outcome()).isEqualTo(RefundSettlementService.ReservationOutcome.RESERVED);
+
+        refundSettlementService.finalizeSuccessfulRefund(
+                paymentId, reservation.refund().getId(), "rfnd_full_conv_test", "admin", "ADMIN", "127.0.0.1");
+
+        // Provider refund amount = allocation reversal = principal, never the gross.
+        assertThat(jdbc.queryForObject("SELECT amount_paise FROM refund WHERE id=?", Long.class, reservation.refund().getId()))
+                .isEqualTo(principal);
+        assertThat(jdbc.queryForObject(
+                        "SELECT COALESCE(SUM(amount_paise),0) FROM allocation_refund WHERE refund_id=?",
+                        Long.class, reservation.refund().getId()))
+                .isEqualTo(principal);
+
+        // No refund capacity exists for the remaining 26,219 convenience fee — even 1 more
+        // paise is rejected, proving the allocation ledger (never gross) is the capacity basis.
+        var secondAttempt = refundSettlementService.reserve(paymentId,
+                refundRequest(1L, "attempt-to-refund-convenience-fee"), SCHOOL);
+        assertThat(secondAttempt.outcome()).isEqualTo(RefundSettlementService.ReservationOutcome.REJECTED);
+        assertThat(secondAttempt.message()).contains("already been fully refunded");
+
+        // Convenience-fee/gross snapshot fields never mutate merely because a school refund
+        // occurred — the schema has no mechanism to reverse them, and nothing in this flow
+        // tries to.
+        assertThat(jdbc.queryForObject("SELECT gateway_recovery_fee_paise FROM payment WHERE id=?", Long.class, paymentId))
+                .isEqualTo(gatewayRecovery);
+        assertThat(jdbc.queryForObject("SELECT edunexify_transaction_fee_paise FROM payment WHERE id=?", Long.class, paymentId))
+                .isEqualTo(edunexifyFee);
+        assertThat(jdbc.queryForObject("SELECT amount FROM payment WHERE id=?", Long.class, paymentId))
+                .isEqualTo(gross);
+        assertThat(jdbc.queryForObject("SELECT refunded_amount_paise FROM payment WHERE id=?", Long.class, paymentId))
+                .isEqualTo(principal);
+    }
+
+    /** Release-blocking: a partial school-principal refund (400,000 of 1,000,000) leaves
+     * exactly 600,000 remaining refundable capacity — never 626,219 (which would imply the
+     * convenience fee had leaked into the refundable basis). The convenience fee and gross
+     * amount remain completely unchanged by the partial refund. */
+    @Test
+    void partialSchoolPrincipalRefund_remainingCapacityIsPrincipalBound_convenienceFeeUntouched() {
+        long principal = 1_000_000L;
+        long gatewayRecovery = 24_219L;
+        long edunexifyFee = 2_000L;
+        long gross = principal + gatewayRecovery + edunexifyFee;
+        long paymentId = insertModernOnlinePayment(principal, gatewayRecovery, edunexifyFee);
+
+        long partialRefund = 400_000L;
+        var reservation = refundSettlementService.reserve(paymentId, refundRequest(partialRefund, "partial-school-refund"), SCHOOL);
+        assertThat(reservation.outcome()).isEqualTo(RefundSettlementService.ReservationOutcome.RESERVED);
+
+        refundSettlementService.finalizeSuccessfulRefund(
+                paymentId, reservation.refund().getId(), "rfnd_partial_conv_test", "admin", "ADMIN", "127.0.0.1");
+
+        assertThat(jdbc.queryForObject("SELECT amount_paise FROM refund WHERE id=?", Long.class, reservation.refund().getId()))
+                .isEqualTo(partialRefund);
+        assertThat(jdbc.queryForObject(
+                        "SELECT COALESCE(SUM(amount_paise),0) FROM allocation_refund WHERE refund_id=?",
+                        Long.class, reservation.refund().getId()))
+                .isEqualTo(partialRefund);
+
+        // Remaining refundable capacity = principal(1,000,000) - alreadyRefunded(400,000) =
+        // 600,000 exactly — reserving it must succeed...
+        var remainingCapacity = refundSettlementService.reserve(paymentId,
+                refundRequest(600_000L, "remaining-principal"), SCHOOL);
+        assertThat(remainingCapacity.outcome()).isEqualTo(RefundSettlementService.ReservationOutcome.RESERVED);
+
+        // ...but one paise beyond that (which would start dipping into the 26,219 convenience
+        // fee) is rejected — proving capacity is bounded strictly by the remaining allocation
+        // principal, never the gross captured amount.
+        var overReach = refundSettlementService.reserve(paymentId, refundRequest(1L, "beyond-principal"), SCHOOL);
+        assertThat(overReach.outcome()).isEqualTo(RefundSettlementService.ReservationOutcome.REJECTED);
+
+        assertThat(jdbc.queryForObject("SELECT gateway_recovery_fee_paise FROM payment WHERE id=?", Long.class, paymentId))
+                .isEqualTo(gatewayRecovery);
+        assertThat(jdbc.queryForObject("SELECT edunexify_transaction_fee_paise FROM payment WHERE id=?", Long.class, paymentId))
+                .isEqualTo(edunexifyFee);
+        assertThat(jdbc.queryForObject("SELECT amount FROM payment WHERE id=?", Long.class, paymentId))
+                .isEqualTo(gross);
+    }
+
     private long insertPayment(long amountPaidPaise, long refundedAmountPaise) {
         String paymentId = "RSVC-IT-PAY-" + System.nanoTime();
         // Every primitive (never-null) int/long/boolean field on the Payment entity must get a

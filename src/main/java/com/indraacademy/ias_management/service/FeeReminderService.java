@@ -198,7 +198,7 @@ public class FeeReminderService {
             List<Integer> monthNumbers = fees.stream().map(StudentFees::getMonth).collect(Collectors.toList());
             CheckoutQuoteDto quote = studentFeesService.computeCheckoutQuote(studentId, session, monthNumbers);
             Double totalDue = quote.getUnresolvedMonths().isEmpty()
-                    ? quote.getSchoolFeeDue().add(quote.getLateFee()).doubleValue()
+                    ? java.math.BigDecimal.valueOf(quote.getSchoolLiabilityPrincipalPaise(), 2).doubleValue()
                     : null;
 
             // Last payment date

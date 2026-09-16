@@ -12,6 +12,7 @@ import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.service.StudentFeesService;
+import com.indraacademy.ias_management.service.OnlinePaymentPricingCalculator;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,7 @@ class PaymentControllerTest {
     @Mock private StudentFeesService studentFeesService;
     @Mock private ParentPortalService parentPortalService;
     @Mock private AttendanceService attendanceService;
+    @Mock private OnlinePaymentPricingCalculator paymentPricingCalculator;
 
     private PaymentController controller;
 
@@ -77,13 +79,18 @@ class PaymentControllerTest {
         ReflectionTestUtils.setField(controller, "studentFeesService", studentFeesService);
         ReflectionTestUtils.setField(controller, "parentPortalService", parentPortalService);
         ReflectionTestUtils.setField(controller, "attendanceService", attendanceService);
+        ReflectionTestUtils.setField(controller, "paymentPricingCalculator", paymentPricingCalculator);
 
         lenient().when(authService.getRole()).thenReturn(Role.ADMIN);
         lenient().when(attendanceService.getTotalUnappliedLeaveCount(anyString(), anyString())).thenReturn(0L);
         lenient().when(razorpayService.calculateOutstandingBalancePaise(anyString(), anyString())).thenReturn(500000L);
+        lenient().when(paymentPricingCalculator.calculate(any(Long.class), any(Long.class)))
+                .thenAnswer(inv -> new OnlinePaymentPricingCalculator.Pricing(
+                        inv.getArgument(0), inv.getArgument(1), 200, 1800, 100, 2000, 2100,
+                        (long) inv.getArgument(0) + (long) inv.getArgument(1) + 2100));
         lenient().when(razorpayService.createOrder(
                 anyInt(), anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt()))
+                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class)))
                 .thenReturn(Map.of("orderId", "order_test"));
     }
 
@@ -123,9 +130,7 @@ class PaymentControllerTest {
 
         CheckoutQuoteDto quote = new CheckoutQuoteDto();
         quote.setUnresolvedMonths(List.of());
-        quote.setTotalAmount(BigDecimal.valueOf(2000));
-        quote.setLateFee(BigDecimal.ZERO);
-        quote.setPlatformFee(BigDecimal.ZERO);
+        quote.setSchoolLiabilityPrincipalPaise(2000_00L);
         when(studentFeesService.computeCheckoutQuote(eq(STUDENT_ID), eq(SESSION), eq(List.of(6))))
                 .thenReturn(quote);
 
@@ -139,7 +144,7 @@ class PaymentControllerTest {
         ArgumentCaptor<String> classNameCaptor = ArgumentCaptor.forClass(String.class);
         verify(razorpayService).createOrder(
                 anyInt(), eq(STUDENT_ID), anyString(), classNameCaptor.capture(), eq(SESSION), eq(monthSelection),
-                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt());
+                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class));
         assertThat(classNameCaptor.getValue()).isEqualTo("6A");
     }
 
@@ -152,9 +157,7 @@ class PaymentControllerTest {
 
         CheckoutQuoteDto quote = new CheckoutQuoteDto();
         quote.setUnresolvedMonths(List.of());
-        quote.setTotalAmount(BigDecimal.valueOf(4000));
-        quote.setLateFee(BigDecimal.ZERO);
-        quote.setPlatformFee(BigDecimal.ZERO);
+        quote.setSchoolLiabilityPrincipalPaise(4000_00L);
         when(studentFeesService.computeCheckoutQuote(eq(STUDENT_ID), eq(SESSION), eq(List.of(6, 7))))
                 .thenReturn(quote);
         when(studentFeesService.getStudentFees(STUDENT_ID, SESSION))
@@ -165,24 +168,33 @@ class PaymentControllerTest {
         ArgumentCaptor<String> classNameCaptor = ArgumentCaptor.forClass(String.class);
         verify(razorpayService).createOrder(
                 anyInt(), eq(STUDENT_ID), anyString(), classNameCaptor.capture(), eq(SESSION), eq(monthSelection),
-                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt());
+                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class));
         assertThat(classNameCaptor.getValue()).isIn("9", "10");
     }
 
+    /** The backend is the sole pricing authority: whatever leave charge the client submits is
+     * never trusted or even compared against — createOrder recomputes it itself from
+     * AttendanceService and passes ONLY that server-derived figure into pricing/order creation.
+     * A manipulated client value must be silently ignored, never cause a rejection (there is
+     * nothing to "reject" once the client's own figure is never read for this purpose). */
     @Test
-    void createOrder_rejectsClientManipulatedLeaveCharge() {
+    void createOrder_ignoresClientSuppliedLeaveCharge_alwaysUsesServerComputedValue() {
         CreateOrderRequest req = request("6A", "100000000000", 1025_00);
-        req.setAdditionalCharges(1_000);
+        req.setAdditionalCharges(999_999); // a wildly wrong client-submitted value
         when(attendanceService.getTotalUnappliedLeaveCount(STUDENT_ID, SESSION)).thenReturn(1L);
         CheckoutQuoteDto quote = new CheckoutQuoteDto();
         quote.setUnresolvedMonths(List.of());
-        quote.setTotalAmount(BigDecimal.valueOf(1000));
-        quote.setLateFee(BigDecimal.ZERO);
-        quote.setPlatformFee(BigDecimal.ZERO);
+        quote.setSchoolLiabilityPrincipalPaise(1000_00L);
         when(studentFeesService.computeCheckoutQuote(eq(STUDENT_ID), eq(SESSION), any())).thenReturn(quote);
 
         ResponseEntity<Map<String, Object>> response = controller.createOrder(req);
 
-        assertThat(response.getStatusCode().is4xxClientError()).isTrue();
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        // 1 unapplied leave * 2500 paise/leave = 2500 paise — never the client's 999999.
+        verify(paymentPricingCalculator).calculate(1000_00L, 2_500L);
+        verify(razorpayService).createOrder(
+                anyInt(), eq(STUDENT_ID), anyString(), anyString(), eq(SESSION), anyString(),
+                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), eq(2_500), anyInt(),
+                any(OnlinePaymentPricingCalculator.Pricing.class));
     }
 }

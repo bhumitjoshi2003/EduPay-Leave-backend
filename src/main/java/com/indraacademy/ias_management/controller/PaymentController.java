@@ -16,6 +16,7 @@ import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.service.StudentFeesService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.OnlinePaymentPricingCalculator;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -49,6 +50,7 @@ public class PaymentController {
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private ParentPortalService parentPortalService;
     @Autowired private AttendanceService attendanceService;
+    @Autowired private OnlinePaymentPricingCalculator paymentPricingCalculator;
 
     /** Tight tolerance for the client-displayed vs. server-computed core checkout amount
      * (school fee + late fee + platform fee) — absorbs last-cent rounding differences, not
@@ -79,24 +81,11 @@ public class PaymentController {
         }
 
         // Server-side fee amount validation: verify client-submitted amount against outstanding balance
-        int clientAmount = req.getTotalAmount(); // in paise
-        if (clientAmount <= 0) {
-            log.warn("Rejected order creation: amount must be positive. Received: {} for student: {}", clientAmount, req.getStudentId());
-            return ResponseEntity.badRequest().body(Map.of("error", "Payment amount must be greater than zero."));
-        }
-
         long totalOutstandingPaise = razorpayService.calculateOutstandingBalancePaise(
                 req.getStudentId(), req.getSession());
         if (totalOutstandingPaise <= 0) {
             log.warn("Rejected order creation: no outstanding fees for student: {} session: {}", req.getStudentId(), req.getSession());
             return ResponseEntity.badRequest().body(Map.of("error", "No outstanding fees found for this student and session."));
-        }
-
-        if (clientAmount > totalOutstandingPaise) {
-            log.warn("Rejected order creation: client amount {} exceeds outstanding balance {} for student: {}",
-                    clientAmount, totalOutstandingPaise, req.getStudentId());
-            return ResponseEntity.badRequest().body(Map.of("error",
-                    "Payment amount exceeds the total outstanding balance. Outstanding: " + totalOutstandingPaise + " paise."));
         }
 
         // Backend-authoritative checkout quote: school fee due (from each selected month's
@@ -115,25 +104,14 @@ public class PaymentController {
                             + " — contact the school office before paying for these months."));
         }
 
-        long serverCorePaise = quote.getTotalAmount().movePointRight(2).longValueExact(); // schoolFee+lateFee+platformFee, rupees -> paise
         long serverAdditionalChargesPaise = Math.multiplyExact(
                 attendanceService.getTotalUnappliedLeaveCount(req.getStudentId(), req.getSession()), 2_500L);
-        if (req.getAdditionalCharges() != serverAdditionalChargesPaise) {
-            return ResponseEntity.badRequest().body(Map.of("error",
-                    "The unapplied-leave charge has changed — please refresh and try again."));
+        long principalPaise = quote.getSchoolLiabilityPrincipalPaise();
+        if (principalPaise <= 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "No allocatable school fee is due for the selected months."));
         }
-        long clientCorePaise = (long) clientAmount - serverAdditionalChargesPaise;
-        if (Math.abs(clientCorePaise - serverCorePaise) > AMOUNT_MISMATCH_TOLERANCE_PAISE) {
-            log.error("Rejected order creation: client core amount {} paise does not match server-computed {} paise "
-                            + "for student {} session {} months {} — stale or tampered checkout data.",
-                    clientCorePaise, serverCorePaise, req.getStudentId(), req.getSession(), months);
-            return ResponseEntity.badRequest().body(Map.of("error",
-                    "The amount shown does not match the current fee calculation — please refresh and try again."));
-        }
-
-        long lateFeesPaise = quote.getLateFee().movePointRight(2).longValueExact();
-        long platformFeePaise = quote.getPlatformFee().movePointRight(2).longValueExact();
-        long serverAmountPaise = serverCorePaise + serverAdditionalChargesPaise;
+        OnlinePaymentPricingCalculator.Pricing pricing = paymentPricingCalculator.calculate(
+                principalPaise, serverAdditionalChargesPaise);
 
         // className is server-derived from the actual StudentFees row(s) behind the months
         // just validated above (computeCheckoutQuote already guarantees every one of `months`
@@ -143,7 +121,7 @@ public class PaymentController {
         String serverClassName = resolveClassNameForOrder(req.getStudentId(), req.getSession(), months, req.getClassName());
 
         Map<String, Object> order = razorpayService.createOrder(
-                (int) serverAmountPaise,
+                Math.toIntExact(pricing.totalPayablePaise()),
                 req.getStudentId(),
                 req.getStudentName(),
                 serverClassName,
@@ -161,8 +139,8 @@ public class PaymentController {
                 req.getTotalEcaProject(),
                 req.getTotalExaminationFee(),
                 Math.toIntExact(serverAdditionalChargesPaise),
-                (int) lateFeesPaise,
-                (int) platformFeePaise
+                Math.toIntExact(quote.getLateFeePaise()),
+                pricing
         );
         log.info("Razorpay order created successfully for student {}.", req.getStudentId());
         return ResponseEntity.ok(order);
@@ -293,6 +271,13 @@ public class PaymentController {
         if (dto == null) {
             log.warn("Payment details not found for ID: {}", paymentId);
             return ResponseEntity.notFound().build();
+        }
+        if (!Role.ADMIN.equals(authService.getRole())) {
+            dto.setSchoolLiabilityPrincipalPaise(null);
+            dto.setGatewayRateBps(null);
+            dto.setGatewayTaxRateBps(null);
+            dto.setGatewayRecoveryFeePaise(null);
+            dto.setEdunexifyTransactionFeePaise(null);
         }
         return ResponseEntity.ok(dto);
     }

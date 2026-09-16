@@ -2,6 +2,7 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.time.LocalDateTime;
 
@@ -77,8 +78,32 @@ public class PaymentOrder {
     @Column(name = "late_fees")
     private int lateFees;
 
+    /** Legacy compatibility only. New ONLINE_CONVENIENCE_FEE_V1 orders leave this at zero. */
     @Column(name = "platform_fee")
     private int platformFee;
+
+    @Column(name = "school_liability_principal_paise")
+    private Long schoolLiabilityPrincipalPaise;
+
+    @JsonIgnore @Column(name = "gateway_rate_bps")
+    private Integer gatewayRateBps;
+
+    @JsonIgnore @Column(name = "gateway_tax_rate_bps")
+    private Integer gatewayTaxRateBps;
+
+    @JsonIgnore @Column(name = "gateway_recovery_fee_paise")
+    private Long gatewayRecoveryFeePaise;
+
+    @JsonIgnore @Column(name = "edunexify_transaction_fee_paise")
+    private Long edunexifyTransactionFeePaise;
+
+    @Column(name = "pricing_version", length = 40)
+    private String pricingVersion;
+
+    public long getOnlineConvenienceFeePaise() {
+        return Math.addExact(gatewayRecoveryFeePaise != null ? gatewayRecoveryFeePaise : 0L,
+                edunexifyTransactionFeePaise != null ? edunexifyTransactionFeePaise : 0L);
+    }
 
     /** Flipped true once a payment against this order has been successfully verified —
      * a second verify attempt against the same order is treated as a replay, not a new

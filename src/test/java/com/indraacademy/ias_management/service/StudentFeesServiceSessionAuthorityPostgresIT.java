@@ -128,6 +128,28 @@ class StudentFeesServiceSessionAuthorityPostgresIT {
         com.indraacademy.ias_management.util.SchoolContext.clear();
     }
 
+    /** Online Convenience Fee refactor: manual/offline payments must never carry a gateway or
+     * Edunexify transaction fee — those exist only for the online (Razorpay) channel. */
+    @Test
+    void manualPayment_neverChargesOnlineConvenienceFee_principalEqualsAllocatableAmount() {
+        seed();
+        actingAsSchool(SCHOOL_A);
+        insertStudentFees(SCHOOL_A, "STU-MANUAL-NOFEE", 1);
+
+        ManualPaymentRequest request = manualRequest("STU-MANUAL-NOFEE", LABEL, "100000000000", new BigDecimal("1000"));
+        Payment saved = service.recordManualPayment(request, "127.0.0.1");
+
+        assertThat(saved.getPricingVersion()).isEqualTo("MANUAL");
+        assertThat(saved.getGatewayRateBps()).isNull();
+        assertThat(saved.getGatewayTaxRateBps()).isNull();
+        assertThat(saved.getGatewayRecoveryFeePaise()).isEqualTo(0L);
+        assertThat(saved.getEdunexifyTransactionFeePaise()).isEqualTo(0L);
+        assertThat(saved.getOnlineConvenienceFeePaise()).isEqualTo(0L);
+        // amountReceived (₹1000 = 100000 paise) minus additionalCharges (0 here) = principal.
+        assertThat(saved.getSchoolLiabilityPrincipalPaise()).isEqualTo(100000L);
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+    }
+
     @Test
     void manualPayment_unresolvableSessionLabel_rejectsWithoutCreatingAnyRow() {
         seed();

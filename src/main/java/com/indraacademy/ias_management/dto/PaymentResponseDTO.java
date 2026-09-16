@@ -25,6 +25,21 @@ public class PaymentResponseDTO {
     private int lateFees;
     private int platformFee;
     private String schoolName;
+    private long schoolFeePaise;
+    private long onlineConvenienceFeePaise;
+    private long totalPaidPaise;
+    private String currency = "INR";
+    private String pricingVersion;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Long schoolLiabilityPrincipalPaise;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Integer gatewayRateBps;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Integer gatewayTaxRateBps;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Long gatewayRecoveryFeePaise;
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private Long edunexifyTransactionFeePaise;
 
     public PaymentResponseDTO() {}
 
@@ -214,4 +229,25 @@ public class PaymentResponseDTO {
     public String getSchoolName() { return schoolName; }
 
     public void setSchoolName(String schoolName) { this.schoolName = schoolName; }
+
+    public long getSchoolFeePaise() { return schoolFeePaise; }
+    public void setSchoolFeePaise(long value) { this.schoolFeePaise = value; }
+    public long getOnlineConvenienceFeePaise() { return onlineConvenienceFeePaise; }
+    public void setOnlineConvenienceFeePaise(long value) { this.onlineConvenienceFeePaise = value; }
+    public long getTotalPaidPaise() { return totalPaidPaise; }
+    public void setTotalPaidPaise(long value) { this.totalPaidPaise = value; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String value) { this.currency = value; }
+    public String getPricingVersion() { return pricingVersion; }
+    public void setPricingVersion(String value) { this.pricingVersion = value; }
+    public Long getSchoolLiabilityPrincipalPaise() { return schoolLiabilityPrincipalPaise; }
+    public void setSchoolLiabilityPrincipalPaise(Long value) { this.schoolLiabilityPrincipalPaise = value; }
+    public Integer getGatewayRateBps() { return gatewayRateBps; }
+    public void setGatewayRateBps(Integer value) { this.gatewayRateBps = value; }
+    public Integer getGatewayTaxRateBps() { return gatewayTaxRateBps; }
+    public void setGatewayTaxRateBps(Integer value) { this.gatewayTaxRateBps = value; }
+    public Long getGatewayRecoveryFeePaise() { return gatewayRecoveryFeePaise; }
+    public void setGatewayRecoveryFeePaise(Long value) { this.gatewayRecoveryFeePaise = value; }
+    public Long getEdunexifyTransactionFeePaise() { return edunexifyTransactionFeePaise; }
+    public void setEdunexifyTransactionFeePaise(Long value) { this.edunexifyTransactionFeePaise = value; }
 }

@@ -139,7 +139,11 @@ public class DashboardService {
             if (p.getPaymentDate() == null) continue;
             String key = p.getPaymentDate().getYear() + "-"
                     + String.format("%02d", p.getPaymentDate().getMonthValue());
-            sumByMonth.merge(key, p.getAmountPaid() - (long) p.getPlatformFee(), Long::sum);
+            long schoolCollection = (OnlinePaymentPricingCalculator.PRICING_VERSION.equals(p.getPricingVersion())
+                    || "MANUAL".equals(p.getPricingVersion())) && p.getSchoolLiabilityPrincipalPaise() != null
+                    ? p.getSchoolLiabilityPrincipalPaise()
+                    : p.getAmountPaid() - (long) p.getPlatformFee();
+            sumByMonth.merge(key, schoolCollection, Long::sum);
         }
         Map<String, Long> refundedByMonth = new TreeMap<>();
         for (com.indraacademy.ias_management.entity.Refund r : recentRefunds) {

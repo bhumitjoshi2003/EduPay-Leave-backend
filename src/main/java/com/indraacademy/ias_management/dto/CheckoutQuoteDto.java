@@ -1,5 +1,6 @@
 package com.indraacademy.ias_management.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.math.BigDecimal;
 import java.util.List;
 
@@ -19,10 +20,21 @@ public class CheckoutQuoteDto {
     private String studentId;
     private String session;
     private List<Integer> months;
-    private BigDecimal schoolFeeDue;
-    private BigDecimal lateFee;
-    private BigDecimal platformFee;
-    private BigDecimal totalAmount;
+    /** Parent-facing values are paise-native and unambiguous. */
+    private long schoolFeePaise;
+    private long onlineConvenienceFeePaise;
+    private long totalPayablePaise;
+    private String currency = "INR";
+
+    /** schoolLiabilityPrincipalPaise is an internal accounting input, never serialized — the
+     * parent-facing aggregate is schoolFeePaise above. additionalChargesPaise/lateFeePaise ARE
+     * serialized: unlike the gateway/Edunexify component split (which must never reach a
+     * parent), these are pre-existing, legitimate itemized breakdown lines the Fees UI already
+     * shows ("Late Fee Applied", "Unapplied Leave Charge") — hiding them would be an unrelated
+     * UX regression, not something this refactor's locked design asked for. */
+    @JsonIgnore private long schoolLiabilityPrincipalPaise;
+    private long additionalChargesPaise;
+    private long lateFeePaise;
     private List<Integer> unresolvedMonths;
 
     public String getStudentId() { return studentId; }
@@ -34,17 +46,20 @@ public class CheckoutQuoteDto {
     public List<Integer> getMonths() { return months; }
     public void setMonths(List<Integer> months) { this.months = months; }
 
-    public BigDecimal getSchoolFeeDue() { return schoolFeeDue; }
-    public void setSchoolFeeDue(BigDecimal schoolFeeDue) { this.schoolFeeDue = schoolFeeDue; }
-
-    public BigDecimal getLateFee() { return lateFee; }
-    public void setLateFee(BigDecimal lateFee) { this.lateFee = lateFee; }
-
-    public BigDecimal getPlatformFee() { return platformFee; }
-    public void setPlatformFee(BigDecimal platformFee) { this.platformFee = platformFee; }
-
-    public BigDecimal getTotalAmount() { return totalAmount; }
-    public void setTotalAmount(BigDecimal totalAmount) { this.totalAmount = totalAmount; }
+    public long getSchoolFeePaise() { return schoolFeePaise; }
+    public void setSchoolFeePaise(long value) { this.schoolFeePaise = value; }
+    public long getOnlineConvenienceFeePaise() { return onlineConvenienceFeePaise; }
+    public void setOnlineConvenienceFeePaise(long value) { this.onlineConvenienceFeePaise = value; }
+    public long getTotalPayablePaise() { return totalPayablePaise; }
+    public void setTotalPayablePaise(long value) { this.totalPayablePaise = value; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
+    public long getSchoolLiabilityPrincipalPaise() { return schoolLiabilityPrincipalPaise; }
+    public void setSchoolLiabilityPrincipalPaise(long value) { this.schoolLiabilityPrincipalPaise = value; }
+    public long getAdditionalChargesPaise() { return additionalChargesPaise; }
+    public void setAdditionalChargesPaise(long value) { this.additionalChargesPaise = value; }
+    public long getLateFeePaise() { return lateFeePaise; }
+    public void setLateFeePaise(long value) { this.lateFeePaise = value; }
 
     public List<Integer> getUnresolvedMonths() { return unresolvedMonths; }
     public void setUnresolvedMonths(List<Integer> unresolvedMonths) { this.unresolvedMonths = unresolvedMonths; }

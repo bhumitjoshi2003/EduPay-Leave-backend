@@ -18,6 +18,7 @@ import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.FeeReminderService;
 import com.indraacademy.ias_management.service.StudentFeesService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.OnlinePaymentPricingCalculator;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -44,6 +45,7 @@ public class StudentFeesController {
     @Autowired private FeeReminderService feeReminderService;
     @Autowired private StudentFeesRecalculationService recalculationService;
     @Autowired private ParentPortalService parentPortalService;
+    @Autowired private OnlinePaymentPricingCalculator paymentPricingCalculator;
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/{studentId}/{year}")
@@ -235,6 +237,21 @@ public class StudentFeesController {
 
         log.info("Checkout quote request: student={} session={} months={}", resolvedStudentId, session, monthList);
         CheckoutQuoteDto quote = studentFeesService.computeCheckoutQuote(resolvedStudentId, session, monthList);
+        long additionalChargesPaise = Math.multiplyExact(
+                attendanceService.getTotalUnappliedLeaveCount(resolvedStudentId, session), 2_500L);
+        quote.setAdditionalChargesPaise(additionalChargesPaise);
+        long schoolSidePaise = Math.addExact(quote.getSchoolLiabilityPrincipalPaise(), additionalChargesPaise);
+        quote.setSchoolFeePaise(schoolSidePaise);
+        if (Role.ADMIN.equals(role)) {
+            // This screen records an offline/manual payment for admins; no online fee applies.
+            quote.setOnlineConvenienceFeePaise(0L);
+            quote.setTotalPayablePaise(schoolSidePaise);
+        } else {
+            var pricing = paymentPricingCalculator.calculate(
+                    quote.getSchoolLiabilityPrincipalPaise(), additionalChargesPaise);
+            quote.setOnlineConvenienceFeePaise(pricing.onlineConvenienceFeePaise());
+            quote.setTotalPayablePaise(pricing.totalPayablePaise());
+        }
         return ResponseEntity.ok(quote);
     }
 

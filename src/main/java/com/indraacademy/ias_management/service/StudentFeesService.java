@@ -305,9 +305,20 @@ public class StudentFeesService {
         // platform fees and the separately-tracked unapplied-leave charge do not satisfy a
         // StudentFees liability and must never enter this ledger.
         long[] allocatedPaise = new long[pending.size()];
-        long nonAllocatablePaise = payment.getAdditionalCharges()
-                + (payment.getManualPaymentMode() == null ? (long) payment.getPlatformFee() : 0L);
-        long remainingPool = (long) payment.getAmount() - nonAllocatablePaise;
+        long remainingPool;
+        if (OnlinePaymentPricingCalculator.PRICING_VERSION.equals(payment.getPricingVersion())) {
+            if (payment.getSchoolLiabilityPrincipalPaise() == null) {
+                throw new IllegalStateException("Modern online payment is missing its principal snapshot.");
+            }
+            remainingPool = payment.getSchoolLiabilityPrincipalPaise();
+        } else if ("MANUAL".equals(payment.getPricingVersion()) && payment.getSchoolLiabilityPrincipalPaise() != null) {
+            remainingPool = payment.getSchoolLiabilityPrincipalPaise();
+        } else {
+            // Legacy compatibility: historical rows predate explicit pricing snapshots.
+            long nonAllocatablePaise = payment.getAdditionalCharges()
+                    + (payment.getManualPaymentMode() == null ? (long) payment.getPlatformFee() : 0L);
+            remainingPool = (long) payment.getAmount() - nonAllocatablePaise;
+        }
         if (remainingPool <= 0) {
             throw new IllegalStateException("Payment contains no allocatable student-fee principal.");
         }
@@ -528,6 +539,12 @@ public class StudentFeesService {
         payment.setRazorpaySignature("MANUAL-PAYMENT");
         payment.setManualPaymentMode(paymentMode);
         payment.setManualReferenceNumber((referenceNumber != null && !referenceNumber.isEmpty()) ? referenceNumber : null);
+        payment.setSchoolLiabilityPrincipalPaise((long) amountReceivedPaise - additionalCharges);
+        payment.setGatewayRateBps(null);
+        payment.setGatewayTaxRateBps(null);
+        payment.setGatewayRecoveryFeePaise(0L);
+        payment.setEdunexifyTransactionFeePaise(0L);
+        payment.setPricingVersion("MANUAL");
 
         try {
             paymentRepository.save(payment);
@@ -628,16 +645,16 @@ public class StudentFeesService {
         return ((calendarMonth - startMonth + 12) % 12) + 1;
     }
 
-    /** Payment-gateway charge, computed at checkout time — never part of the student's
-     * original school debt (see CheckoutQuoteDto). Matches the rate the frontend used to
-     * compute client-side; now backend-authoritative and the single source of truth. */
-    private static final BigDecimal PLATFORM_FEE_RATE = BigDecimal.valueOf(0.015);
-
     /**
      * Backend-authoritative checkout quote: REMAINING school fee due (each requested month's
      * StudentFees snapshot due, via FeeCalculationService.resolveSchoolFeeDue, minus that same
-     * row's ledger-derived net amountPaid — see below) + REMAINING late fee + platform fee
-     * (PLATFORM_FEE_RATE, applied to the two remaining figures) = totalAmount.
+     * row's ledger-derived net amountPaid — see below) + REMAINING late fee =
+     * schoolLiabilityPrincipalPaise. This method never computes the online convenience fee
+     * itself — that is layered on top by the caller (PaymentController/StudentFeesController)
+     * via OnlinePaymentPricingCalculator, the single authoritative gross-up implementation, so
+     * schoolFeePaise/onlineConvenienceFeePaise/totalPayablePaise here are placeholders
+     * (onlineConvenienceFeePaise=0, totalPayablePaise=principal) until the caller overwrites
+     * them for the actual payment channel (online vs. manual/admin).
      * <p>
      * Fixed defect (found during a fee-reminder investigation, but this method — not just the
      * reminder — was the actual bug): this used to sum each month's full original due amount
@@ -647,12 +664,10 @@ public class StudentFeesService {
      * again, on both the checkout screen and the actual Razorpay order-creation path
      * (PaymentController.createOrder) — a real double-charge risk, not just a display bug.
      * amountPaid is a single undifferentiated pool (the ledger doesn't track which of school
-     * fee / late fee / platform fee a given rupee paid down), so it's applied here in that
-     * same order: first against schoolFeeDue, any excess then against the late fee, matching
+     * fee / late fee a given rupee paid down), so it's applied here in that same order: first
+     * against schoolFeeDue, any excess then against the late fee, matching
      * recomputeStudentFeesNetState's own "amountPaid vs resolveSchoolFeeDue" basis for the
      * paid flag so the two never disagree about what's been credited to the school-fee portion.
-     * Platform fee, by contrast, is never reduced by a prior payment — it's a fresh
-     * payment-time charge on whatever principal is still genuinely outstanding.
      * <p>
      * A requested month with no StudentFees row, or whose amount can't be confidently
      * resolved, is added to unresolvedMonths and excluded from every total — the caller
@@ -697,19 +712,22 @@ public class StudentFeesService {
             lateFee = lateFee.add(remainingLateFee);
         }
 
-        BigDecimal preFeeSubtotal = schoolFeeDue.add(lateFee);
-        BigDecimal platformFee = preFeeSubtotal.multiply(PLATFORM_FEE_RATE)
-                .setScale(0, java.math.RoundingMode.CEILING); // ceiling, matching the frontend's prior Math.ceil
-        BigDecimal totalAmount = preFeeSubtotal.add(platformFee);
+        long schoolFeeDuePaise = schoolFeeDue.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
+        long lateFeePaise = lateFee.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
+        // Late fees are allocatable under the existing ledger semantics and therefore form
+        // part of P. Additional/unapplied charges are A and are added by the controller after
+        // it obtains their authoritative value from AttendanceService.
+        long principalPaise = Math.addExact(schoolFeeDuePaise, lateFeePaise);
 
         CheckoutQuoteDto dto = new CheckoutQuoteDto();
         dto.setStudentId(studentId);
         dto.setSession(session);
         dto.setMonths(months);
-        dto.setSchoolFeeDue(schoolFeeDue);
-        dto.setLateFee(lateFee);
-        dto.setPlatformFee(platformFee);
-        dto.setTotalAmount(totalAmount);
+        dto.setSchoolLiabilityPrincipalPaise(principalPaise);
+        dto.setLateFeePaise(lateFeePaise);
+        dto.setSchoolFeePaise(principalPaise);
+        dto.setOnlineConvenienceFeePaise(0L);
+        dto.setTotalPayablePaise(principalPaise);
         dto.setUnresolvedMonths(unresolvedMonths);
         return dto;
     }

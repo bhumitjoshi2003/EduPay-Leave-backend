@@ -199,7 +199,10 @@ public class RazorpayService {
         return Math.max(totalCeiling, minimumCeiling);
     }
 
-    public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className, String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges, int ecaProject, int examinationFee, int additionalCharges, int lateFees, int platformFee) {
+    public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className,
+            String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges,
+            int ecaProject, int examinationFee, int additionalCharges, int lateFees,
+            OnlinePaymentPricingCalculator.Pricing pricing) {
         if (amount <= 0 || studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to create order with invalid amount or missing student ID. Amount: {}", amount);
             throw new IllegalArgumentException("Invalid amount or missing student ID for order creation.");
@@ -253,7 +256,13 @@ public class RazorpayService {
             paymentOrder.setExaminationFee(examinationFee);
             paymentOrder.setAdditionalCharges(additionalCharges);
             paymentOrder.setLateFees(lateFees);
-            paymentOrder.setPlatformFee(platformFee);
+            paymentOrder.setPlatformFee(0);
+            paymentOrder.setSchoolLiabilityPrincipalPaise(pricing.schoolLiabilityPrincipalPaise());
+            paymentOrder.setGatewayRateBps(pricing.gatewayRateBps());
+            paymentOrder.setGatewayTaxRateBps(pricing.gatewayTaxRateBps());
+            paymentOrder.setGatewayRecoveryFeePaise(pricing.gatewayRecoveryFeePaise());
+            paymentOrder.setEdunexifyTransactionFeePaise(pricing.edunexifyTransactionFeePaise());
+            paymentOrder.setPricingVersion(OnlinePaymentPricingCalculator.PRICING_VERSION);
             paymentOrderRepository.save(paymentOrder);
 
             String schoolName = schoolRepository.findById(schoolId != null ? schoolId : -1L)
@@ -276,10 +285,11 @@ public class RazorpayService {
             response.put("ecaProject", ecaProject);
             response.put("examinationFee", examinationFee);
             response.put("paidManually", false);
-            response.put("amountPaid", order.get("amount")); // Amount in paisa
-            response.put("additionalCharges", additionalCharges);
-            response.put("lateFees", lateFees);
-            response.put("platformFee", platformFee);
+            response.put("schoolFeePaise", Math.addExact(pricing.schoolLiabilityPrincipalPaise(),
+                    pricing.otherCapturedNonConveniencePaise()));
+            response.put("onlineConvenienceFeePaise", pricing.onlineConvenienceFeePaise());
+            response.put("totalPayablePaise", pricing.totalPayablePaise());
+            response.put("currency", EXPECTED_CURRENCY);
 
             log.info("Razorpay order created successfully. Order ID: {}", Optional.ofNullable(order.get("id")));
             return response;

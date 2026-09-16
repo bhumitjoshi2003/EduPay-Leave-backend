@@ -217,11 +217,19 @@ public class PaymentSettlementService {
         payment.setEcaProject(paymentOrder.getEcaProject());
         payment.setExaminationFee(paymentOrder.getExaminationFee());
         payment.setPaidManually(false);
-        payment.setAmountPaid(amountInPaise); // Stored in paise
+        // Compatibility/history field retains its established gross-captured semantics.
+        // schoolLiabilityPrincipalPaise is the explicit modern allocation/refund authority.
+        payment.setAmountPaid(amountInPaise);
         payment.setRazorpaySignature(signature);
         payment.setAdditionalCharges(paymentOrder.getAdditionalCharges());
         payment.setLateFees(paymentOrder.getLateFees());
         payment.setPlatformFee(paymentOrder.getPlatformFee());
+        payment.setSchoolLiabilityPrincipalPaise(paymentOrder.getSchoolLiabilityPrincipalPaise());
+        payment.setGatewayRateBps(paymentOrder.getGatewayRateBps());
+        payment.setGatewayTaxRateBps(paymentOrder.getGatewayTaxRateBps());
+        payment.setGatewayRecoveryFeePaise(paymentOrder.getGatewayRecoveryFeePaise());
+        payment.setEdunexifyTransactionFeePaise(paymentOrder.getEdunexifyTransactionFeePaise());
+        payment.setPricingVersion(paymentOrder.getPricingVersion());
         payment.setSchoolId(schoolId);
         return payment;
     }

@@ -557,6 +557,116 @@ class PaymentSettlementServicePostgresIT {
                 .isTrue();
     }
 
+    /** Online Convenience Fee refactor — release-blocking: (1) settlement copies the
+     * PaymentOrder's persisted pricing snapshot verbatim onto Payment, never recalculating from
+     * "current" configuration (this test's Spring context doesn't even wire
+     * PaymentPricingProperties/OnlinePaymentPricingCalculator — settlement has no way to read
+     * live config even if it wanted to, structurally proving the snapshot is the only source);
+     * and (2) the allocatable pool for StudentFees/allocation is strictly
+     * schoolLiabilityPrincipalPaise, never the gross captured amount — the online convenience
+     * fee must never enter StudentFees.amountPaid or payment_student_fees_allocation.
+     * base_amount_due (₹10,000) is set exactly equal to the ₹10,000 (1,000,000 paise) principal
+     * so the allocation is capped at the principal regardless of any today-relative late fee
+     * that might additionally accrue on top (making this test date-independent). */
+    @Test
+    void onlineSettlement_copiesPricingSnapshotVerbatim_allocatesOnlyPrincipalNeverGross() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        String orderId = "psi-it-order-convenience-fee";
+        String paymentId = "psi-it-pay-convenience-fee";
+        String studentId = "psi-it-student-convenience-fee";
+        Long studentFeesId = jdbc.queryForObject(
+                "INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
+                        "0, false, 0, 10000, 0, 0, 'COMPUTED') RETURNING id",
+                Long.class, SCHOOL, studentId, sessionId);
+        // Pricing snapshot matches OnlinePaymentPricingCalculatorTest's own worked example:
+        // principal 1,000,000 + rateBps 200 + taxRateBps 1800 + edunexifyFee 2,000 => gross
+        // 1,026,219, gatewayRecoveryFeePaise 24,219 (see grossUpRecoversGatewayChargeOnFinalCapturedAmount).
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, " +
+                        "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
+                        "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, " +
+                        "school_liability_principal_paise, gateway_rate_bps, gateway_tax_rate_bps, " +
+                        "gateway_recovery_fee_paise, edunexify_transaction_fee_paise, pricing_version, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 1026219, 0, 0, 0, 0, 0, 0, 0, 0, 0, " +
+                        "false, 1000000, 200, 1800, 24219, 2000, 'ONLINE_CONVENIENCE_FEE_V1', ?)",
+                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        Long paymentDbId = result.payment().getId();
+
+        // 1. Gross provider amount is preserved unchanged.
+        assertThat(jdbc.queryForObject("SELECT amount FROM payment WHERE id=?", Long.class, paymentDbId))
+                .isEqualTo(1026219L);
+        // 2. Pricing snapshot copied verbatim from PaymentOrder — never recomputed.
+        assertThat(jdbc.queryForObject("SELECT school_liability_principal_paise FROM payment WHERE id=?", Long.class, paymentDbId))
+                .isEqualTo(1000000L);
+        assertThat(jdbc.queryForObject("SELECT gateway_rate_bps FROM payment WHERE id=?", Integer.class, paymentDbId))
+                .isEqualTo(200);
+        assertThat(jdbc.queryForObject("SELECT gateway_tax_rate_bps FROM payment WHERE id=?", Integer.class, paymentDbId))
+                .isEqualTo(1800);
+        assertThat(jdbc.queryForObject("SELECT gateway_recovery_fee_paise FROM payment WHERE id=?", Long.class, paymentDbId))
+                .isEqualTo(24219L);
+        assertThat(jdbc.queryForObject("SELECT edunexify_transaction_fee_paise FROM payment WHERE id=?", Long.class, paymentDbId))
+                .isEqualTo(2000L);
+        assertThat(jdbc.queryForObject("SELECT pricing_version FROM payment WHERE id=?", String.class, paymentDbId))
+                .isEqualTo("ONLINE_CONVENIENCE_FEE_V1");
+        // 3. Allocation total equals the PRINCIPAL only (1,000,000), never the gross (1,026,219).
+        Long allocatedTotal = jdbc.queryForObject(
+                "SELECT COALESCE(SUM(amount_paise),0) FROM payment_student_fees_allocation WHERE payment_id=?",
+                Long.class, paymentDbId);
+        assertThat(allocatedTotal).isEqualTo(1000000L);
+        // 4. StudentFees.amountPaid increased by exactly the principal, never the gross.
+        assertThat(jdbc.queryForObject("SELECT amount_paid FROM student_fees WHERE id=?", java.math.BigDecimal.class, studentFeesId))
+                .isEqualByComparingTo("10000.00");
+    }
+
+    /** Legacy compatibility: a PaymentOrder created before this refactor (pricing_version NULL,
+     * platform_fee populated, new snapshot columns NULL) must still settle successfully under
+     * its old semantics — no repricing, no dependency on the new pricing columns at all. */
+    @Test
+    void legacyOrderSettlement_succeedsUnderOldSemantics_withoutAnyModernPricingSnapshot() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        String orderId = "psi-it-order-legacy";
+        String paymentId = "psi-it-pay-legacy";
+        String studentId = "psi-it-student-legacy";
+        jdbc.update("INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED')",
+                SCHOOL, studentId, sessionId);
+        // Legacy shape: platform_fee populated (old 1.5% model), every new pricing column left
+        // NULL, pricing_version NULL — exactly what a pre-V66 order looks like.
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, " +
+                        "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
+                        "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 101500, 0, 0, 0, 0, 0, 0, 0, 0, 1500, false, ?)",
+                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        assertThat(jdbc.queryForObject("SELECT pricing_version FROM payment WHERE id=?", String.class, result.payment().getId()))
+                .isNull();
+        assertThat(jdbc.queryForObject("SELECT school_liability_principal_paise FROM payment WHERE id=?", Long.class, result.payment().getId()))
+                .isNull();
+        // Legacy allocation math: amount(101500) - additionalCharges(0) - platformFee(1500) = 100000.
+        assertThat(jdbc.queryForObject(
+                        "SELECT COALESCE(SUM(amount_paise),0) FROM payment_student_fees_allocation WHERE payment_id=?",
+                        Long.class, result.payment().getId()))
+                .isEqualTo(100000L);
+    }
+
     private static String normalizeJdbcUrl(String url) {
         return url.startsWith("jdbc:") ? url : "jdbc:" + url;
     }

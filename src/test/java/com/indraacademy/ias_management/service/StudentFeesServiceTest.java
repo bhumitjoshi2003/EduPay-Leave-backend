@@ -603,13 +603,16 @@ class StudentFeesServiceTest {
 
         CheckoutQuoteDto quote = service.computeCheckoutQuote("S1", "2025-2026", List.of(1, 2));
 
-        assertThat(quote.getSchoolFeeDue()).isEqualByComparingTo("4000");
+        // calculateLateFees is a real, unmocked private method computed against today's actual
+        // date — subtracting it out keeps this assertion about school-fee-due summation stable
+        // regardless of which late-fee tier today happens to fall into (see the analogous
+        // pattern already used elsewhere in this file/suite for the same reason).
+        assertThat(quote.getSchoolLiabilityPrincipalPaise() - quote.getLateFeePaise()).isEqualTo(400000L);
         assertThat(quote.getUnresolvedMonths()).isEmpty();
-        // platformFee = ceil((schoolFeeDue + lateFee) * 0.015); lateFee is 0 here since the
-        // mocked "today" context makes these months not overdue in this unit test's scope —
-        // what matters is totalAmount = schoolFeeDue + lateFee + platformFee, consistently.
-        assertThat(quote.getTotalAmount()).isEqualByComparingTo(
-                quote.getSchoolFeeDue().add(quote.getLateFee()).add(quote.getPlatformFee()));
+        // schoolLiabilityPrincipalPaise already bundles schoolFeeDue + lateFee; the online
+        // convenience fee is applied only by the controller layer, never inside
+        // computeCheckoutQuote itself.
+        assertThat(quote.getTotalPayablePaise()).isEqualTo(quote.getSchoolLiabilityPrincipalPaise());
     }
 
     @Test
@@ -622,7 +625,8 @@ class StudentFeesServiceTest {
         CheckoutQuoteDto quote = service.computeCheckoutQuote("S1", "2025-2026", List.of(1, 2));
 
         assertThat(quote.getUnresolvedMonths()).containsExactly(2);
-        assertThat(quote.getSchoolFeeDue()).isEqualByComparingTo("2000"); // only the resolvable month
+        // Late fee (real, date-relative) excluded — see the sibling test above for why.
+        assertThat(quote.getSchoolLiabilityPrincipalPaise() - quote.getLateFeePaise()).isEqualTo(200000L); // only the resolvable month
     }
 
     /**
@@ -641,7 +645,9 @@ class StudentFeesServiceTest {
 
         CheckoutQuoteDto quote = service.computeCheckoutQuote("S1", "2025-2026", List.of(1));
 
-        assertThat(quote.getSchoolFeeDue()).isEqualByComparingTo("1367"); // 17800 - 16433, never the full 17800 again
+        // Late fee (real, date-relative) excluded — see computeCheckoutQuote_sumsSchoolFeeDue...
+        // above for why this suite subtracts it rather than asserting an exact combined figure.
+        assertThat(quote.getSchoolLiabilityPrincipalPaise() - quote.getLateFeePaise()).isEqualTo(136700L); // 17800 - 16433, never the full 17800 again
     }
 
     @Test
@@ -655,7 +661,7 @@ class StudentFeesServiceTest {
 
         CheckoutQuoteDto quote = service.computeCheckoutQuote("S1", "2025-2026", List.of(1));
 
-        assertThat(quote.getSchoolFeeDue()).isEqualByComparingTo("0");
+        assertThat(quote.getSchoolLiabilityPrincipalPaise()).isEqualTo(0L);
     }
 
     // ─── getMonthFeeBreakdown — Phase 3 frontend/read-model line-item breakdown ─────────
