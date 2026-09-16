@@ -13,6 +13,7 @@ import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.service.StudentFeesService;
 import com.indraacademy.ias_management.service.OnlinePaymentPricingCalculator;
+import com.indraacademy.ias_management.service.PaymentPricingService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,7 +61,7 @@ class PaymentControllerTest {
     @Mock private StudentFeesService studentFeesService;
     @Mock private ParentPortalService parentPortalService;
     @Mock private AttendanceService attendanceService;
-    @Mock private OnlinePaymentPricingCalculator paymentPricingCalculator;
+    @Mock private PaymentPricingService paymentPricingService;
 
     private PaymentController controller;
 
@@ -79,18 +80,27 @@ class PaymentControllerTest {
         ReflectionTestUtils.setField(controller, "studentFeesService", studentFeesService);
         ReflectionTestUtils.setField(controller, "parentPortalService", parentPortalService);
         ReflectionTestUtils.setField(controller, "attendanceService", attendanceService);
-        ReflectionTestUtils.setField(controller, "paymentPricingCalculator", paymentPricingCalculator);
+        ReflectionTestUtils.setField(controller, "paymentPricingService", paymentPricingService);
 
         lenient().when(authService.getRole()).thenReturn(Role.ADMIN);
         lenient().when(attendanceService.getTotalUnappliedLeaveCount(anyString(), anyString())).thenReturn(0L);
         lenient().when(razorpayService.calculateOutstandingBalancePaise(anyString(), anyString())).thenReturn(500000L);
-        lenient().when(paymentPricingCalculator.calculate(any(Long.class), any(Long.class)))
-                .thenAnswer(inv -> new OnlinePaymentPricingCalculator.Pricing(
-                        inv.getArgument(0), inv.getArgument(1), 200, 1800, 100, 2000, 2100,
-                        (long) inv.getArgument(0) + (long) inv.getArgument(1) + 2100));
+        // OnlinePaymentPricingCalculator.calculate is a pure static method now (no instance
+        // state to mock) — only the pricing INPUTS (rate/tax/fee/configId) need mocking, via
+        // the resolved active configuration.
+        com.indraacademy.ias_management.entity.PaymentPricingConfig activeConfig =
+                new com.indraacademy.ias_management.entity.PaymentPricingConfig();
+        activeConfig.setId(1L);
+        activeConfig.setGatewayProvider("RAZORPAY");
+        activeConfig.setGatewayRateBps(200);
+        activeConfig.setGatewayTaxRateBps(1800);
+        activeConfig.setEdunexifyTransactionFeePaise(2000L);
+        lenient().when(paymentPricingService.resolveActive(PaymentPricingService.GatewayProvider.RAZORPAY))
+                .thenReturn(activeConfig);
         lenient().when(razorpayService.createOrder(
                 anyInt(), anyString(), anyString(), anyString(), anyString(), anyString(),
-                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class)))
+                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(),
+                any(OnlinePaymentPricingCalculator.Pricing.class), eq(1L)))
                 .thenReturn(Map.of("orderId", "order_test"));
     }
 
@@ -144,7 +154,7 @@ class PaymentControllerTest {
         ArgumentCaptor<String> classNameCaptor = ArgumentCaptor.forClass(String.class);
         verify(razorpayService).createOrder(
                 anyInt(), eq(STUDENT_ID), anyString(), classNameCaptor.capture(), eq(SESSION), eq(monthSelection),
-                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class));
+                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class), eq(1L));
         assertThat(classNameCaptor.getValue()).isEqualTo("6A");
     }
 
@@ -168,7 +178,7 @@ class PaymentControllerTest {
         ArgumentCaptor<String> classNameCaptor = ArgumentCaptor.forClass(String.class);
         verify(razorpayService).createOrder(
                 anyInt(), eq(STUDENT_ID), anyString(), classNameCaptor.capture(), eq(SESSION), eq(monthSelection),
-                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class));
+                any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), any(OnlinePaymentPricingCalculator.Pricing.class), eq(1L));
         assertThat(classNameCaptor.getValue()).isIn("9", "10");
     }
 
@@ -190,11 +200,13 @@ class PaymentControllerTest {
         ResponseEntity<Map<String, Object>> response = controller.createOrder(req);
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-        // 1 unapplied leave * 2500 paise/leave = 2500 paise — never the client's 999999.
-        verify(paymentPricingCalculator).calculate(1000_00L, 2_500L);
+        // 1 unapplied leave * 2500 paise/leave = 2500 paise — never the client's 999999 —
+        // proven by the additionalCharges argument captured below (eq(2_500)); pricing itself
+        // is resolved fresh from PaymentPricingService, never trusted from the client.
+        verify(paymentPricingService).resolveActive(PaymentPricingService.GatewayProvider.RAZORPAY);
         verify(razorpayService).createOrder(
                 anyInt(), eq(STUDENT_ID), anyString(), anyString(), eq(SESSION), anyString(),
                 any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), eq(2_500), anyInt(),
-                any(OnlinePaymentPricingCalculator.Pricing.class));
+                any(OnlinePaymentPricingCalculator.Pricing.class), eq(1L));
     }
 }

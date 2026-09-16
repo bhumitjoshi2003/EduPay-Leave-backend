@@ -17,6 +17,7 @@ import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.service.StudentFeesService;
 import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.service.OnlinePaymentPricingCalculator;
+import com.indraacademy.ias_management.service.PaymentPricingService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -50,7 +51,7 @@ public class PaymentController {
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private ParentPortalService parentPortalService;
     @Autowired private AttendanceService attendanceService;
-    @Autowired private OnlinePaymentPricingCalculator paymentPricingCalculator;
+    @Autowired private PaymentPricingService paymentPricingService;
 
     /** Tight tolerance for the client-displayed vs. server-computed core checkout amount
      * (school fee + late fee + platform fee) — absorbs last-cent rounding differences, not
@@ -110,8 +111,16 @@ public class PaymentController {
         if (principalPaise <= 0) {
             return ResponseEntity.badRequest().body(Map.of("error", "No allocatable school fee is due for the selected months."));
         }
-        OnlinePaymentPricingCalculator.Pricing pricing = paymentPricingCalculator.calculate(
-                principalPaise, serverAdditionalChargesPaise);
+        // Order-creation time is authoritative — always resolves the CURRENTLY effective
+        // pricing version fresh, never trusting whatever was active when an earlier quote was
+        // shown (PaymentPricingService.PricingUnavailableException, an IllegalStateException,
+        // is caught by GlobalExceptionHandler as a clean 409 if no version is configured —
+        // never a hardcoded/env-var fallback, never a 500).
+        com.indraacademy.ias_management.entity.PaymentPricingConfig activeConfig =
+                paymentPricingService.resolveActive(PaymentPricingService.GatewayProvider.RAZORPAY);
+        OnlinePaymentPricingCalculator.Pricing pricing = OnlinePaymentPricingCalculator.calculate(
+                principalPaise, serverAdditionalChargesPaise, activeConfig.getGatewayRateBps(),
+                activeConfig.getGatewayTaxRateBps(), activeConfig.getEdunexifyTransactionFeePaise());
 
         // className is server-derived from the actual StudentFees row(s) behind the months
         // just validated above (computeCheckoutQuote already guarantees every one of `months`
@@ -140,7 +149,8 @@ public class PaymentController {
                 req.getTotalExaminationFee(),
                 Math.toIntExact(serverAdditionalChargesPaise),
                 Math.toIntExact(quote.getLateFeePaise()),
-                pricing
+                pricing,
+                activeConfig.getId()
         );
         log.info("Razorpay order created successfully for student {}.", req.getStudentId());
         return ResponseEntity.ok(order);

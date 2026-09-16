@@ -202,7 +202,7 @@ public class RazorpayService {
     public Map<String, Object> createOrder(int amount, String studentId, String studentName, String className,
             String session, String month, Integer busFee, int tuitionFee, int annualCharges, int labCharges,
             int ecaProject, int examinationFee, int additionalCharges, int lateFees,
-            OnlinePaymentPricingCalculator.Pricing pricing) {
+            OnlinePaymentPricingCalculator.Pricing pricing, Long paymentPricingConfigId) {
         if (amount <= 0 || studentId == null || studentId.trim().isEmpty()) {
             log.warn("Attempted to create order with invalid amount or missing student ID. Amount: {}", amount);
             throw new IllegalArgumentException("Invalid amount or missing student ID for order creation.");
@@ -263,6 +263,7 @@ public class RazorpayService {
             paymentOrder.setGatewayRecoveryFeePaise(pricing.gatewayRecoveryFeePaise());
             paymentOrder.setEdunexifyTransactionFeePaise(pricing.edunexifyTransactionFeePaise());
             paymentOrder.setPricingVersion(OnlinePaymentPricingCalculator.PRICING_VERSION);
+            paymentOrder.setPaymentPricingConfigId(paymentPricingConfigId);
             paymentOrderRepository.save(paymentOrder);
 
             String schoolName = schoolRepository.findById(schoolId != null ? schoolId : -1L)

@@ -230,6 +230,7 @@ public class PaymentSettlementService {
         payment.setGatewayRecoveryFeePaise(paymentOrder.getGatewayRecoveryFeePaise());
         payment.setEdunexifyTransactionFeePaise(paymentOrder.getEdunexifyTransactionFeePaise());
         payment.setPricingVersion(paymentOrder.getPricingVersion());
+        payment.setPaymentPricingConfigId(paymentOrder.getPaymentPricingConfigId());
         payment.setSchoolId(schoolId);
         return payment;
     }

@@ -583,6 +583,14 @@ class PaymentSettlementServicePostgresIT {
                         "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
                         "0, false, 0, 10000, 0, 0, 'COMPUTED') RETURNING id",
                 Long.class, SCHOOL, studentId, sessionId);
+        // Task 47 provenance: a real payment_pricing_config row this order's snapshot was
+        // produced from — never joined back to for calculation, only carried through as an
+        // audit-trail id onto both PaymentOrder and, after settlement, Payment.
+        Long pricingConfigId = jdbc.queryForObject(
+                "INSERT INTO payment_pricing_config (gateway_provider, gateway_rate_bps, gateway_tax_rate_bps, " +
+                        "edunexify_transaction_fee_paise, effective_from, created_at, created_by) " +
+                        "VALUES ('RAZORPAY', 200, 1800, 2000, now() - interval '1 hour', now(), 'it-test') RETURNING id",
+                Long.class);
         // Pricing snapshot matches OnlinePaymentPricingCalculatorTest's own worked example:
         // principal 1,000,000 + rateBps 200 + taxRateBps 1800 + edunexifyFee 2,000 => gross
         // 1,026,219, gatewayRecoveryFeePaise 24,219 (see grossUpRecoversGatewayChargeOnFinalCapturedAmount).
@@ -590,16 +598,20 @@ class PaymentSettlementServicePostgresIT {
                         "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
                         "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, " +
                         "school_liability_principal_paise, gateway_rate_bps, gateway_tax_rate_bps, " +
-                        "gateway_recovery_fee_paise, edunexify_transaction_fee_paise, pricing_version, created_at) " +
+                        "gateway_recovery_fee_paise, edunexify_transaction_fee_paise, pricing_version, " +
+                        "payment_pricing_config_id, created_at) " +
                         "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 1026219, 0, 0, 0, 0, 0, 0, 0, 0, 0, " +
-                        "false, 1000000, 200, 1800, 24219, 2000, 'ONLINE_CONVENIENCE_FEE_V1', ?)",
-                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+                        "false, 1000000, 200, 1800, 24219, 2000, 'ONLINE_CONVENIENCE_FEE_V1', ?, ?)",
+                orderId, SCHOOL, studentId, sessionId, pricingConfigId, LocalDateTime.now());
 
         PaymentSettlementService.SettlementResult result = settlementService.settle(
                 orderId, paymentId, "sig", SCHOOL, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
 
         assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
         Long paymentDbId = result.payment().getId();
+        // Provenance FK carried through settlement unchanged — never recalculated from it.
+        assertThat(jdbc.queryForObject("SELECT payment_pricing_config_id FROM payment WHERE id=?", Long.class, paymentDbId))
+                .isEqualTo(pricingConfigId);
 
         // 1. Gross provider amount is preserved unchanged.
         assertThat(jdbc.queryForObject("SELECT amount FROM payment WHERE id=?", Long.class, paymentDbId))

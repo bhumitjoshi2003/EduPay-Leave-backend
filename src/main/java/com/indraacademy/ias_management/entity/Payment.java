@@ -137,6 +137,11 @@ public class Payment {
     @Column(name = "pricing_version", length = 40)
     private String pricingVersion;
 
+    /** Provenance only — which payment_pricing_config version produced the snapshot fields
+     * above. Never joined back to for calculation; NULL for manual/legacy payments. */
+    @JsonIgnore @Column(name = "payment_pricing_config_id")
+    private Long paymentPricingConfigId;
+
     /** Set only for manually-recorded payments (cash/cheque/UPI/bank transfer); NULL for
      * Razorpay-path rows. */
     @Column(name = "manual_payment_mode")

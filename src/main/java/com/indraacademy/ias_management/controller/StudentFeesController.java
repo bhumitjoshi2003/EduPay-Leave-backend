@@ -19,6 +19,7 @@ import com.indraacademy.ias_management.service.FeeReminderService;
 import com.indraacademy.ias_management.service.StudentFeesService;
 import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.service.OnlinePaymentPricingCalculator;
+import com.indraacademy.ias_management.service.PaymentPricingService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -45,7 +46,7 @@ public class StudentFeesController {
     @Autowired private FeeReminderService feeReminderService;
     @Autowired private StudentFeesRecalculationService recalculationService;
     @Autowired private ParentPortalService parentPortalService;
-    @Autowired private OnlinePaymentPricingCalculator paymentPricingCalculator;
+    @Autowired private PaymentPricingService paymentPricingService;
 
     @PreAuthorize("hasAnyRole('" + Role.ADMIN +  "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/{studentId}/{year}")
@@ -247,8 +248,15 @@ public class StudentFeesController {
             quote.setOnlineConvenienceFeePaise(0L);
             quote.setTotalPayablePaise(schoolSidePaise);
         } else {
-            var pricing = paymentPricingCalculator.calculate(
-                    quote.getSchoolLiabilityPrincipalPaise(), additionalChargesPaise);
+            // Resolved fresh every time — never cached, never env-var-backed. If no pricing
+            // version is currently active, PricingUnavailableException (an IllegalStateException)
+            // propagates to GlobalExceptionHandler as a clean 409, never a crash, never a
+            // silent fallback rate.
+            var activeConfig = paymentPricingService.resolveActive(PaymentPricingService.GatewayProvider.RAZORPAY);
+            var pricing = OnlinePaymentPricingCalculator.calculate(
+                    quote.getSchoolLiabilityPrincipalPaise(), additionalChargesPaise,
+                    activeConfig.getGatewayRateBps(), activeConfig.getGatewayTaxRateBps(),
+                    activeConfig.getEdunexifyTransactionFeePaise());
             quote.setOnlineConvenienceFeePaise(pricing.onlineConvenienceFeePaise());
             quote.setTotalPayablePaise(pricing.totalPayablePaise());
         }

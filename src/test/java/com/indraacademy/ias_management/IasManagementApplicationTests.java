@@ -21,10 +21,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 		"razorpay.key.id=test",
 		"razorpay.key.secret=test",
 		"app.demo.notify.email=test@example.com",
-		"app.tenant.subdomain-validation=false",
-		"payment.gateway.rate-bps=200",
-		"payment.gateway.tax-rate-bps=1800",
-		"payment.edunexify-transaction-fee-paise=2000"
+		"app.tenant.subdomain-validation=false"
 })
 class IasManagementApplicationTests {
 

@@ -87,7 +87,7 @@ class RazorpayServiceTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.createOrder(
                         100000, "S1", "Student One", "6A", "2099-2100", "000000000000",
-                        0, 0, 0, 0, 0, 0, 0, 0, null))
+                        0, 0, 0, 0, 0, 0, 0, 0, null, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("AcademicSession not found");
     }

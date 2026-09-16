@@ -100,6 +100,11 @@ public class PaymentOrder {
     @Column(name = "pricing_version", length = 40)
     private String pricingVersion;
 
+    /** Provenance only — which payment_pricing_config version produced the snapshot fields
+     * above. Never joined back to for calculation; NULL for manual/legacy payments. */
+    @JsonIgnore @Column(name = "payment_pricing_config_id")
+    private Long paymentPricingConfigId;
+
     public long getOnlineConvenienceFeePaise() {
         return Math.addExact(gatewayRecoveryFeePaise != null ? gatewayRecoveryFeePaise : 0L,
                 edunexifyTransactionFeePaise != null ? edunexifyTransactionFeePaise : 0L);
