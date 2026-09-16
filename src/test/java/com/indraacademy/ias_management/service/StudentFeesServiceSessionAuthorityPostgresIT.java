@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.indraacademy.ias_management.dto.ManualPaymentRequest;
 import com.indraacademy.ias_management.entity.Payment;
+import com.indraacademy.ias_management.repository.PaymentRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -66,6 +67,7 @@ class StudentFeesServiceSessionAuthorityPostgresIT {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private StudentFeesService service;
+    @Autowired private PaymentRepository paymentRepository;
 
     private long sessionAId;
     private long sessionBId;
@@ -228,5 +230,96 @@ class StudentFeesServiceSessionAuthorityPostgresIT {
         request.setAmountReceived(amount);
         request.setPaymentMode("CASH");
         return request;
+    }
+
+    // ── Webhook settlement correctness fix: markFeesAsPaid must trust Payment.schoolId,     ──
+    // ── never an ambient SchoolContext (which is never populated for /api/webhooks/*)       ──
+
+    /** The exact ambient state a real Razorpay webhook request runs under — JwtAuthFilter never
+     * touches /api/webhooks/*, so SchoolContext is never populated for it. Before this fix,
+     * markFeesAsPaid derived schoolId from securityUtil.getSchoolId() (== SchoolContext.get()),
+     * which would be null here, causing every StudentFees lookup to match nothing and the whole
+     * method to throw. This proves the fix: tenant identity now comes from payment.getSchoolId()
+     * alone, so settlement succeeds with zero ambient context. */
+    @Test
+    void markFeesAsPaid_succeedsWithNoAmbientSchoolContext_usingOnlyPaymentSchoolId() {
+        seed();
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+        insertStudentFeesWithLabelAndSessionId(SCHOOL_A, "STU-NO-CONTEXT", 1, LABEL, sessionAId);
+
+        Payment payment = persistPayment(SCHOOL_A, "STU-NO-CONTEXT", LABEL, sessionAId, "100000000000", 200000);
+
+        service.markFeesAsPaid(payment);
+
+        assertThat(jdbc.queryForObject("SELECT paid FROM student_fees WHERE student_id='STU-NO-CONTEXT'", Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment_student_fees_allocation WHERE payment_id=?", Integer.class, payment.getId()))
+                .isGreaterThan(0);
+    }
+
+    /** Defense-in-depth: a stale/wrong ambient SchoolContext must never redirect a financial
+     * allocation — Payment.schoolId is authoritative regardless of whatever the current thread
+     * happens to have set. School B's own identically-shaped row must remain completely
+     * untouched. */
+    @Test
+    void markFeesAsPaid_ignoresWrongAmbientSchoolContext_usesOnlyPaymentSchoolId() {
+        seed();
+        insertStudentFeesWithLabelAndSessionId(SCHOOL_A, "STU-WRONG-CONTEXT", 1, LABEL, sessionAId);
+        insertStudentFeesWithLabelAndSessionId(SCHOOL_B, "STU-WRONG-CONTEXT", 1, LABEL, sessionBId);
+
+        Payment payment = persistPayment(SCHOOL_A, "STU-WRONG-CONTEXT", LABEL, sessionAId, "100000000000", 200000);
+
+        // Deliberately wrong ambient context — School B — while the Payment itself belongs to School A.
+        com.indraacademy.ias_management.util.SchoolContext.set(SCHOOL_B);
+        service.markFeesAsPaid(payment);
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+
+        assertThat(jdbc.queryForObject(
+                "SELECT paid FROM student_fees WHERE school_id=? AND student_id='STU-WRONG-CONTEXT'", Boolean.class, SCHOOL_A))
+                .isTrue();
+        assertThat(jdbc.queryForObject(
+                "SELECT paid FROM student_fees WHERE school_id=? AND student_id='STU-WRONG-CONTEXT'", Boolean.class, SCHOOL_B))
+                .isFalse();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payment_student_fees_allocation WHERE payment_id=? AND school_id=?",
+                Integer.class, payment.getId(), SCHOOL_B))
+                .isZero();
+    }
+
+    /** Missing-school-id Payment must fail closed rather than silently falling back to ambient
+     * SchoolContext. */
+    @Test
+    void markFeesAsPaid_missingPaymentSchoolId_failsClosed_neverFallsBackToAmbientContext() {
+        seed();
+        actingAsSchool(SCHOOL_A);
+        insertStudentFeesWithLabelAndSessionId(SCHOOL_A, "STU-NULL-SCHOOL", 1, LABEL, sessionAId);
+        Payment payment = persistPayment(SCHOOL_A, "STU-NULL-SCHOOL", LABEL, sessionAId, "100000000000", 200000);
+        payment.setSchoolId(null);
+        paymentRepository.save(payment);
+
+        assertThatThrownBy(() -> service.markFeesAsPaid(payment))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("schoolId");
+
+        assertThat(jdbc.queryForObject("SELECT paid FROM student_fees WHERE student_id='STU-NULL-SCHOOL'", Boolean.class)).isFalse();
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+
+        // This row's school_id is deliberately null, so @AfterEach's cleanUp() (which filters
+        // on school_id IN (SCHOOL_A, SCHOOL_B)) can never find it — delete it explicitly here.
+        jdbc.update("DELETE FROM payment WHERE id = ?", payment.getId());
+    }
+
+    private Payment persistPayment(long schoolId, String studentId, String sessionLabel, long academicSessionId,
+                                    String monthSelectionBitmask, int amountPaise) {
+        // manualPaymentMode deliberately left null — mirrors an online/webhook-settled payment
+        // (recordManualPayment always sets it; this simulates the RazorpayService-built shape,
+        // which is the exact caller class this fix is about).
+        Payment payment = new Payment(studentId, "IT Student", "6A", sessionLabel, monthSelectionBitmask, amountPaise,
+                "PAY-" + studentId, "ORDER-" + studentId, java.time.LocalDateTime.now(), "success",
+                0, 0, 0, 0, 0, 0, false, amountPaise, 0, 0);
+        payment.setSchoolId(schoolId);
+        payment.setAcademicSessionId(academicSessionId);
+        payment.setRazorpaySignature("TEST-SIGNATURE");
+        return paymentRepository.save(payment);
     }
 }

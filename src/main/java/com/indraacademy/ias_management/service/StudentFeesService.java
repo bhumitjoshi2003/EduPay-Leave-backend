@@ -203,11 +203,25 @@ public class StudentFeesService {
             log.error("markFeesAsPaid called with an unpersisted Payment (no id) for student {}.", payment.getStudentId());
             throw new IllegalStateException("Payment must be persisted (have an id) before fees can be allocated against it.");
         }
+        if (payment.getSchoolId() == null) {
+            // Tenant identity for every StudentFees/allocation lookup and write below comes from
+            // the trusted Payment row itself — never from securityUtil.getSchoolId()/SchoolContext,
+            // which is an authenticated-request-thread ambient value that is never populated for
+            // /api/webhooks/* requests (JwtAuthFilter deliberately excludes that path). Both
+            // PaymentSettlementService.settle (client-verify AND webhook recovery) and
+            // recordManualPayment already set payment.schoolId explicitly before ever calling this
+            // method, so a null here means the Payment object itself is invalid/incomplete — fail
+            // loudly rather than silently falling back to ambient request state that may not even
+            // exist, or may belong to a different tenant than this Payment.
+            log.error("markFeesAsPaid called with a Payment (id={}) that has no schoolId — refusing to guess tenant identity.",
+                    payment.getId());
+            throw new IllegalStateException("Payment must carry a schoolId before fees can be allocated against it.");
+        }
 
         String studentId = payment.getStudentId();
         String session = payment.getSession();
         String selectedMonths = payment.getMonth();
-        Long schoolId = securityUtil.getSchoolId();
+        Long schoolId = payment.getSchoolId();
         log.info("Allocating payment {} to fees for student ID: {} for session: {}", payment.getId(), studentId, session);
 
         // Pass 1: for each selected month, lock its StudentFees row (serializes against any
@@ -248,7 +262,7 @@ public class StudentFeesService {
                         }
 
                         double totalAmount = schoolFeeDue.get().doubleValue();
-                        totalAmount += calculateLateFees(monthNumber);
+                        totalAmount += calculateLateFees(monthNumber, schoolId);
                         long dueForMonthPaise = Math.round(totalAmount * 100.0);
 
                         long alreadyAllocated = paymentAllocationRepository.sumAmountPaiseByStudentFeesId(studentFees.getId());
@@ -473,7 +487,7 @@ public class StudentFeesService {
                     BigDecimal discount = fee.getDiscountAmount() != null ? fee.getDiscountAmount() : BigDecimal.ZERO;
                     schoolFeeBucket = schoolFeeBucket.add(fee.getBaseAmountDue().subtract(discount));
                 }
-                lateFeeBucket += calculateLateFees(monthNumber);
+                lateFeeBucket += calculateLateFees(monthNumber, schoolId);
             }
         }
         if (!monthsWithNoRow.isEmpty()) {
@@ -572,7 +586,15 @@ public class StudentFeesService {
         return payment;
     }
 
-    private int calculateLateFees(int academicFeeMonth) {
+    /** Required-Correctness-Fix-1 follow-on: {@code schoolId} is now an explicit parameter
+     * rather than re-derived ambiently — this method is on markFeesAsPaid's own call path
+     * (via calculateLateFees), which must work for a webhook-sourced settlement where
+     * SecurityUtil.getSchoolId()/SchoolContext is never populated. Every caller already has
+     * its own correctly-scoped schoolId in hand (either payment.getSchoolId() inside
+     * markFeesAsPaid, or an authenticated request's own securityUtil.getSchoolId() elsewhere)
+     * — nothing here changes which school's academicYearStartMonth is looked up for any
+     * existing authenticated caller. */
+    private int calculateLateFees(int academicFeeMonth, Long schoolId) {
         if (academicFeeMonth < 1 || academicFeeMonth > 12) {
             log.warn("Invalid academicFeeMonth: {}. Returning 0 late fees.", academicFeeMonth);
             return 0;
@@ -580,7 +602,7 @@ public class StudentFeesService {
 
         LocalDate today = LocalDate.now();
         int currentCalendarMonth = today.getMonthValue();
-        int academicCurrentMonth = getAcademicMonth(currentCalendarMonth);
+        int academicCurrentMonth = getAcademicMonth(currentCalendarMonth, schoolId);
 
         int monthDifference = academicCurrentMonth - academicFeeMonth;
 
@@ -600,8 +622,8 @@ public class StudentFeesService {
         }
     }
 
-    private int getAcademicMonth(int calendarMonth) {
-        int startMonth = schoolRepository.findById(securityUtil.getSchoolId())
+    private int getAcademicMonth(int calendarMonth, Long schoolId) {
+        int startMonth = schoolRepository.findById(schoolId)
                 .map(s -> s.getAcademicYearStartMonth()).orElse(4);
         return ((calendarMonth - startMonth + 12) % 12) + 1;
     }
@@ -668,7 +690,7 @@ public class StudentFeesService {
             BigDecimal remainingSchoolFee = grossDue.subtract(netPaid).max(BigDecimal.ZERO);
             BigDecimal excessBeyondSchoolFee = netPaid.subtract(grossDue).max(BigDecimal.ZERO);
 
-            BigDecimal grossLateFee = BigDecimal.valueOf(calculateLateFees(month));
+            BigDecimal grossLateFee = BigDecimal.valueOf(calculateLateFees(month, schoolId));
             BigDecimal remainingLateFee = grossLateFee.subtract(excessBeyondSchoolFee).max(BigDecimal.ZERO);
 
             schoolFeeDue = schoolFeeDue.add(remainingSchoolFee);

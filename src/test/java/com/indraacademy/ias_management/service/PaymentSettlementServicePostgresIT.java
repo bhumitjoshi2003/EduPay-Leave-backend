@@ -412,6 +412,70 @@ class PaymentSettlementServicePostgresIT {
         assertThat(paymentCount).isEqualTo(1);
     }
 
+    /** Required-Correctness-Fix-1, Task 8 — the single most important proof in this fix: a
+     * genuine Razorpay webhook-recovery settlement (RAZORPAY_WEBHOOK source, no client signature)
+     * must succeed end-to-end with SchoolContext completely absent, exactly as it runs in
+     * production (JwtAuthFilter never touches /api/webhooks/*, so SchoolContext.get() is null
+     * for the entire request). Before this fix, StudentFeesService.markFeesAsPaid derived
+     * schoolId from securityUtil.getSchoolId() instead of payment.getSchoolId(), so this exact
+     * scenario threw IllegalStateException and rolled back the whole settlement. The existing
+     * concurrent-webhook test in this class sets SchoolContext before calling settle() and only
+     * proves lock/rejection behavior for the LOSING attempt — it never reaches markFeesAsPaid,
+     * so it does NOT prove webhook safety. This test does: SchoolContext is cleared before the
+     * settle() call and never repopulated. */
+    @Test
+    void webhookRecoverySettlement_succeedsWithNoAmbientSchoolContext_studentFeesAllocatedAndOrderConsumed() {
+        Long sessionId = jdbc.queryForObject(
+                "INSERT INTO academic_session (school_id, label, start_date, end_date, is_current, created_at) " +
+                        "VALUES (?, '2025-2026', DATE '2025-04-01', DATE '2026-03-31', false, CURRENT_TIMESTAMP) RETURNING id",
+                Long.class, SCHOOL);
+        String orderId = "psi-it-order-webhook-nocontext";
+        String paymentId = "psi-it-pay-webhook-nocontext";
+        String studentId = "psi-it-student-webhook-nocontext";
+        Long studentFeesId = jdbc.queryForObject(
+                "INSERT INTO student_fees (school_id, student_id, class_name, month, paid, takes_bus, year, " +
+                        "academic_session_id, distance, manually_paid, amount_paid, base_amount_due, bus_fee_due, " +
+                        "discount_amount, snapshot_status) VALUES (?, ?, '6A', 1, false, false, '2025-2026', ?, " +
+                        "0, false, 0, 1000, 0, 0, 'COMPUTED') RETURNING id",
+                Long.class, SCHOOL, studentId, sessionId);
+        // amount is in paise (PaymentSettlementService.buildPayment reads paymentOrder.getAmount()
+        // directly as amountInPaise) and deliberately overpays the ₹1000 (=100000 paise) base
+        // due — markFeesAsPaid computes a today-relative late fee (up to ₹630 per the
+        // calculateLateFees tiers) inside the same allocation call, so an exact-due order would
+        // flakily under-pay depending on the current date. 200000 paise (₹2000) comfortably
+        // covers base due + worst-case late fee regardless of when this test runs (same overpay
+        // pattern used in StudentFeesServiceSessionAuthorityPostgresIT's persistPayment helper).
+        jdbc.update("INSERT INTO payment_order (order_id, school_id, student_id, class_name, session, " +
+                        "academic_session_id, month, amount, bus_fee, tuition_fee, annual_charges, lab_charges, " +
+                        "eca_project, examination_fee, additional_charges, late_fees, platform_fee, consumed, created_at) " +
+                        "VALUES (?, ?, ?, '6A', '2025-2026', ?, '100000000000', 200000, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, ?)",
+                orderId, SCHOOL, studentId, sessionId, LocalDateTime.now());
+
+        // The crux of the test: no code below this point ever calls SchoolContext.set(...)
+        // again — settle() runs exactly as it would for a real, unauthenticated /api/webhooks/*
+        // request.
+        com.indraacademy.ias_management.util.SchoolContext.clear();
+
+        PaymentSettlementService.SettlementResult result = settlementService.settle(
+                orderId, paymentId, null, SCHOOL, PaymentSettlementService.SettlementSource.RAZORPAY_WEBHOOK);
+
+        assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.SETTLED);
+        assertThat(result.payment()).isNotNull();
+        assertThat(result.payment().getSchoolId()).isEqualTo(SCHOOL);
+
+        assertThat(jdbc.queryForObject("SELECT consumed FROM payment_order WHERE order_id = ?", Boolean.class, orderId))
+                .isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM payment WHERE payment_id = ? AND school_id = ?",
+                        Integer.class, paymentId, SCHOOL))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT paid FROM student_fees WHERE id = ?", Boolean.class, studentFeesId))
+                .isTrue();
+        assertThat(jdbc.queryForObject(
+                        "SELECT COUNT(*) FROM payment_student_fees_allocation WHERE payment_id = ? AND academic_session_id = ?",
+                        Integer.class, result.payment().getId(), sessionId))
+                .isGreaterThan(0);
+    }
+
     private static String normalizeJdbcUrl(String url) {
         return url.startsWith("jdbc:") ? url : "jdbc:" + url;
     }

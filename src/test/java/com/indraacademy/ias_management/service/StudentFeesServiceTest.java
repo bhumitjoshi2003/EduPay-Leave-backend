@@ -408,6 +408,11 @@ class StudentFeesServiceTest {
         p.setClassName("6A");
         p.setAmount(amountPaise);
         p.setAdditionalCharges(0);
+        // Required-Correctness-Fix-1: markFeesAsPaid now derives tenant identity from
+        // payment.getSchoolId() alone (never ambient SecurityUtil/SchoolContext), so every
+        // Payment fixture must carry it explicitly, matching what both real callers
+        // (PaymentSettlementService.settle and recordManualPayment) always set.
+        p.setSchoolId(SCHOOL_ID);
         ReflectionTestUtils.setField(p, "id", nextPaymentId++);
         return p;
     }
