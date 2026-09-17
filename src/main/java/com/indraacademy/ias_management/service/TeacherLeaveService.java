@@ -56,6 +56,7 @@ import java.util.stream.Collectors;
  */
 @Service
 public class TeacherLeaveService {
+    static final String TEACHER_LEAVE_ROUTE = "/dashboard/apply-teacher-leave";
 
     private static final Logger log = LoggerFactory.getLogger(TeacherLeaveService.class);
 
@@ -128,7 +129,7 @@ public class TeacherLeaveService {
         businessNotifications.direct(schoolId, teacherId, NotificationEventCode.LEAVE_SUBMITTED,
                 NotificationCategory.LEAVE, "Leave Applied",
                 String.format("Your leave application for %s to %s has been submitted.", saved.getStartDate(), saved.getEndDate()),
-                "TeacherLeave", String.valueOf(saved.getId()), "/dashboard/my-leave", teacherId,
+                "TeacherLeave", String.valueOf(saved.getId()), TEACHER_LEAVE_ROUTE, teacherId,
                 "teacher-leave:" + saved.getId() + ":submitted", Set.of(ExternalDeliveryChannel.PUSH));
 
         return TeacherLeaveResponse.from(saved, workingLeaveDays);
@@ -172,7 +173,7 @@ public class TeacherLeaveService {
         businessNotifications.direct(schoolId, saved.getTeacherId(), eventCode, NotificationCategory.LEAVE,
                 "Leave Status Updated", String.format("Your leave application for %s to %s has been %s.",
                         saved.getStartDate(), saved.getEndDate(), status.name().toLowerCase()),
-                "TeacherLeave", String.valueOf(saved.getId()), "/dashboard/my-leave", adminUser,
+                "TeacherLeave", String.valueOf(saved.getId()), TEACHER_LEAVE_ROUTE, adminUser,
                 "teacher-leave:" + saved.getId() + ":decision:" + oldStatus + ":" + status,
                 Set.of(ExternalDeliveryChannel.PUSH));
 
@@ -231,7 +232,7 @@ public class TeacherLeaveService {
                 NotificationCategory.LEAVE, "Leave Cancelled",
                 String.format("Your leave application for %s to %s has been cancelled.",
                         leave.getStartDate(), leave.getEndDate()), "TeacherLeave", String.valueOf(leaveId),
-                "/dashboard/my-leave", userId, "teacher-leave:" + leaveId + ":cancelled",
+                TEACHER_LEAVE_ROUTE, userId, "teacher-leave:" + leaveId + ":cancelled",
                 Set.of(ExternalDeliveryChannel.PUSH));
     }
 

@@ -237,7 +237,8 @@ class TeacherLeaveServiceTest {
         assertThat(updated.getStatus()).isEqualTo(LeaveStatus.APPROVED);
         verify(businessNotifications).direct(eq(SCHOOL_ID), eq(TEACHER_ID),
                 eq(com.indraacademy.ias_management.notification.NotificationEventCode.LEAVE_APPROVED),
-                any(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anySet());
+                any(), anyString(), anyString(), anyString(), anyString(), eq(TeacherLeaveService.TEACHER_LEAVE_ROUTE),
+                anyString(), anyString(), anySet());
     }
 
     /** Same "block only true repeats" policy as student Leave — a double-approve is a no-op error. */
@@ -261,6 +262,10 @@ class TeacherLeaveServiceTest {
         TeacherLeaveResponse updated = service.updateStatus(LEAVE_ID, LeaveStatus.REJECTED, request);
 
         assertThat(updated.getStatus()).isEqualTo(LeaveStatus.REJECTED);
+        verify(businessNotifications).direct(eq(SCHOOL_ID), eq(TEACHER_ID),
+                eq(com.indraacademy.ias_management.notification.NotificationEventCode.LEAVE_REJECTED),
+                any(), anyString(), anyString(), anyString(), anyString(), eq(TeacherLeaveService.TEACHER_LEAVE_ROUTE),
+                anyString(), anyString(), anySet());
     }
 
     @Test
