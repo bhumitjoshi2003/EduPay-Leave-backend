@@ -112,12 +112,18 @@ public class JwtUtil {
         return extractClaim(token, claims -> claims.get("role", String.class));
     }
 
-    public String generateAccessToken(String userId, String role, Long schoolId) {
+    /** sessionId is the stable user_session.id this access token is bound to — required for
+     * every session-backed access token (see JwtAuthFilter). Callers issuing a token that is
+     * NOT backed by any user_session row (there are none left after this change; even the
+     * restricted first-login token now creates one) would have to pass null, which
+     * JwtAuthFilter treats as an automatic 401 — there is no "sessionless" authenticated path. */
+    public String generateAccessToken(String userId, String role, Long schoolId, Long sessionId) {
         return Jwts.builder()
                 .setSubject(userId)
                 .claim("role", role)
                 .claim("userId", userId)
                 .claim("schoolId", schoolId)
+                .claim("sessionId", sessionId)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes)))
                 .signWith(getPrivateKey(), SignatureAlgorithm.RS256)
@@ -126,6 +132,18 @@ public class JwtUtil {
 
     public Long extractSchoolId(String token) {
         Object raw = extractClaim(token, claims -> claims.get("schoolId"));
+        if (raw == null) return null;
+        if (raw instanceof Long) return (Long) raw;
+        if (raw instanceof Integer) return ((Integer) raw).longValue();
+        if (raw instanceof Number) return ((Number) raw).longValue();
+        return null;
+    }
+
+    /** Returns null for a pre-migration access token that predates this claim — JwtAuthFilter
+     * treats a null sessionId as "not session-backed" and rejects it (401), which is exactly
+     * what forces that token through a silent refresh rather than accepting it indefinitely. */
+    public Long extractSessionId(String token) {
+        Object raw = extractClaim(token, claims -> claims.get("sessionId"));
         if (raw == null) return null;
         if (raw instanceof Long) return (Long) raw;
         if (raw instanceof Integer) return ((Integer) raw).longValue();

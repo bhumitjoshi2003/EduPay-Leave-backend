@@ -214,4 +214,115 @@ class UserSessionServicePostgresIT {
         assertThat(userSessionService.resolveActive("raw-other-1")).isEmpty();
         assertThat(userSessionService.resolveActive("raw-other-2")).isEmpty();
     }
+
+    // ─── isActiveForUser: immediate session revocation (access-token validity) ────
+    // This is what JwtAuthFilter calls on every authenticated request — these prove
+    // the exact scenarios from the "revoked session still usable" bug report and
+    // fix, against a genuinely persisted, real-Postgres user_session table.
+
+    @Test
+    void isActiveForUser_true_forAGenuinelyPersistedActiveSession() {
+        UserSession session = userSessionService.createSession(
+                USER_A, "raw-active", Instant.now().plusSeconds(3600), null, null);
+
+        assertThat(userSessionService.isActiveForUser(session.getId(), USER_A)).isTrue();
+    }
+
+    @Test
+    void isActiveForUser_false_immediatelyAfterRevokeByRawToken_ordinaryLogout() {
+        // "Chrome = A, Safari = B" scenario's B-side: an ordinary /logout revokes only
+        // the one session — its access token's sessionId must stop validating right away.
+        UserSession sessionB = userSessionService.createSession(
+                USER_A, "raw-B", Instant.now().plusSeconds(3600), null, null);
+        UserSession sessionA = userSessionService.createSession(
+                USER_A, "raw-A", Instant.now().plusSeconds(3600), null, null);
+
+        userSessionService.revokeByRawToken("raw-B");
+
+        assertThat(userSessionService.isActiveForUser(sessionB.getId(), USER_A)).isFalse();
+        assertThat(userSessionService.isActiveForUser(sessionA.getId(), USER_A)).isTrue();
+    }
+
+    @Test
+    void isActiveForUser_false_immediatelyAfterRevokeOwnSession_revokeOneFromAnotherBrowser() {
+        // The exact reported bug: Chrome (A) revokes Safari's (B) session via
+        // revokeOwnSession — B's already-issued access token must be rejected on its
+        // very next request, not merely once it naturally expires.
+        UserSession sessionA = userSessionService.createSession(
+                USER_A, "raw-chrome", Instant.now().plusSeconds(3600), null, null);
+        UserSession sessionB = userSessionService.createSession(
+                USER_A, "raw-safari", Instant.now().plusSeconds(3600), null, null);
+
+        boolean revoked = userSessionService.revokeOwnSession(sessionB.getId(), USER_A);
+
+        assertThat(revoked).isTrue();
+        assertThat(userSessionService.isActiveForUser(sessionB.getId(), USER_A)).isFalse();
+        assertThat(userSessionService.isActiveForUser(sessionA.getId(), USER_A)).isTrue();
+    }
+
+    @Test
+    void isActiveForUser_revokeOthers_onlyTheCurrentSessionStaysActive() {
+        UserSession current = userSessionService.createSession(
+                USER_A, "raw-current-2", Instant.now().plusSeconds(3600), null, null);
+        UserSession other1 = userSessionService.createSession(
+                USER_A, "raw-other-3", Instant.now().plusSeconds(3600), null, null);
+        UserSession other2 = userSessionService.createSession(
+                USER_A, "raw-other-4", Instant.now().plusSeconds(3600), null, null);
+
+        userSessionService.revokeAllOthers(USER_A, userSessionService.hash("raw-current-2"));
+
+        assertThat(userSessionService.isActiveForUser(current.getId(), USER_A)).isTrue();
+        assertThat(userSessionService.isActiveForUser(other1.getId(), USER_A)).isFalse();
+        assertThat(userSessionService.isActiveForUser(other2.getId(), USER_A)).isFalse();
+    }
+
+    @Test
+    void isActiveForUser_logoutAll_everySessionIncludingTheCallerBecomesInactive() {
+        UserSession a = userSessionService.createSession(USER_A, "raw-logout-a", Instant.now().plusSeconds(3600), null, null);
+        UserSession b = userSessionService.createSession(USER_A, "raw-logout-b", Instant.now().plusSeconds(3600), null, null);
+        UserSession c = userSessionService.createSession(USER_A, "raw-logout-c", Instant.now().plusSeconds(3600), null, null);
+
+        userSessionService.revokeAllForUser(USER_A);
+
+        assertThat(userSessionService.isActiveForUser(a.getId(), USER_A)).isFalse();
+        assertThat(userSessionService.isActiveForUser(b.getId(), USER_A)).isFalse();
+        assertThat(userSessionService.isActiveForUser(c.getId(), USER_A)).isFalse();
+    }
+
+    @Test
+    void isActiveForUser_sessionIdSurvivesRefreshRotation_andRemainsActiveUnderThatSameId() {
+        UserSession session = userSessionService.createSession(
+                USER_A, "raw-before-rotate", Instant.now().plusSeconds(3600), null, null);
+        Long sessionIdBeforeRotate = session.getId();
+
+        boolean rotated = userSessionService.rotate(session, "raw-after-rotate", Instant.now().plusSeconds(7200), null, null);
+
+        assertThat(rotated).isTrue();
+        assertThat(session.getId()).isEqualTo(sessionIdBeforeRotate); // same row, same id
+        assertThat(userSessionService.isActiveForUser(sessionIdBeforeRotate, USER_A)).isTrue();
+    }
+
+    @Test
+    void isActiveForUser_false_whenExpired_evenThoughNeverRevoked() {
+        UserSession session = userSessionService.createSession(
+                USER_A, "raw-expiring", Instant.now().minusSeconds(5), null, null);
+
+        assertThat(userSessionService.isActiveForUser(session.getId(), USER_A)).isFalse();
+    }
+
+    @Test
+    void isActiveForUser_false_whenSessionGenuinelyBelongsToADifferentUser() {
+        // Real cross-user proof: a session persisted for USER_B must never be reported
+        // active for USER_A, even though the row itself is perfectly valid.
+        UserSession sessionForB = userSessionService.createSession(
+                USER_B, "raw-belongs-to-b", Instant.now().plusSeconds(3600), null, null);
+
+        assertThat(userSessionService.isActiveForUser(sessionForB.getId(), USER_A)).isFalse();
+        assertThat(userSessionService.isActiveForUser(sessionForB.getId(), USER_B)).isTrue();
+    }
+
+    @Test
+    void isActiveForUser_false_forANonexistentSessionId() {
+        assertThat(userSessionService.isActiveForUser(9_999_999L, USER_A)).isFalse();
+    }
 }

@@ -234,4 +234,71 @@ class UserSessionServiceTest {
                 eq(9L), eq("exact-current-hash"), eq(service.hash("new-raw-jti")),
                 eq(NOW.plusSeconds(3600)), eq(NOW), isNull(), isNull());
     }
+
+    // ─── isActiveForUser: the access-token session-validity check (JwtAuthFilter) ──
+
+    @Test
+    void isActiveForUser_true_whenSessionExists_belongsToUser_notRevoked_notExpired() {
+        UserSession session = new UserSession();
+        session.setId(5L);
+        session.setUserId("U1");
+        session.setRevokedAt(null);
+        session.setExpiresAt(NOW.plusSeconds(60));
+        when(repository.findById(5L)).thenReturn(java.util.Optional.of(session));
+
+        assertThat(service.isActiveForUser(5L, "U1")).isTrue();
+    }
+
+    @Test
+    void isActiveForUser_false_whenSessionBelongsToADifferentUser() {
+        // The exact cross-user defense-in-depth case: a real session that genuinely
+        // belongs to "OTHER_USER" must never be reported active for "U1", even though
+        // the row itself is otherwise perfectly valid (not revoked, not expired).
+        UserSession session = new UserSession();
+        session.setId(5L);
+        session.setUserId("OTHER_USER");
+        session.setRevokedAt(null);
+        session.setExpiresAt(NOW.plusSeconds(60));
+        when(repository.findById(5L)).thenReturn(java.util.Optional.of(session));
+
+        assertThat(service.isActiveForUser(5L, "U1")).isFalse();
+    }
+
+    @Test
+    void isActiveForUser_false_whenSessionDoesNotExist() {
+        when(repository.findById(99L)).thenReturn(java.util.Optional.empty());
+
+        assertThat(service.isActiveForUser(99L, "U1")).isFalse();
+    }
+
+    @Test
+    void isActiveForUser_false_whenRevoked() {
+        UserSession session = new UserSession();
+        session.setId(5L);
+        session.setUserId("U1");
+        session.setRevokedAt(NOW.minusSeconds(1));
+        session.setExpiresAt(NOW.plusSeconds(60));
+        when(repository.findById(5L)).thenReturn(java.util.Optional.of(session));
+
+        assertThat(service.isActiveForUser(5L, "U1")).isFalse();
+    }
+
+    @Test
+    void isActiveForUser_false_whenExpired() {
+        UserSession session = new UserSession();
+        session.setId(5L);
+        session.setUserId("U1");
+        session.setRevokedAt(null);
+        session.setExpiresAt(NOW.minusSeconds(1));
+        when(repository.findById(5L)).thenReturn(java.util.Optional.of(session));
+
+        assertThat(service.isActiveForUser(5L, "U1")).isFalse();
+    }
+
+    @Test
+    void isActiveForUser_false_whenSessionIdOrUserIdIsNull_neverThrows() {
+        assertThat(service.isActiveForUser(null, "U1")).isFalse();
+        assertThat(service.isActiveForUser(5L, null)).isFalse();
+        verifyNoInteractions(repository);
+    }
 }

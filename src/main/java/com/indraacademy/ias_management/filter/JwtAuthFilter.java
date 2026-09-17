@@ -13,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.indraacademy.ias_management.repository.RolePermissionRepository;
+import com.indraacademy.ias_management.service.UserSessionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -53,6 +54,9 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     @Autowired
     private RolePermissionRepository rolePermissionRepository;
 
+    @Autowired
+    private UserSessionService userSessionService;
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
@@ -92,6 +96,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String  userId            = null;
         String  role              = null;
         Long    schoolId          = null;
+        Long    sessionId         = null;
         boolean pwdChangeRequired = false;
         long    bestIat           = Long.MIN_VALUE;
 
@@ -103,6 +108,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 String  candidateUserId             = jwtUtil.extractUserId(candidateToken);
                 String  candidateRole               = jwtUtil.extractUserRole(candidateToken);
                 Long    candidateSchoolId           = jwtUtil.extractSchoolId(candidateToken);
+                Long    candidateSessionId          = jwtUtil.extractSessionId(candidateToken);
                 boolean candidatePwdChangeRequired  = jwtUtil.extractPasswordChangeRequired(candidateToken);
 
                 if (candidateIat > bestIat) {
@@ -111,6 +117,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     userId            = candidateUserId;
                     role              = candidateRole;
                     schoolId          = candidateSchoolId;
+                    sessionId         = candidateSessionId;
                     pwdChangeRequired = candidatePwdChangeRequired;
                 }
             } catch (ExpiredJwtException e) {
@@ -145,6 +152,33 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
 
                 if (jwtUtil.validateToken(token, userDetails)) {
+                    // Session-aware authentication: an access token is no longer sufficient
+                    // on its own — the user_session it was issued for must still be active.
+                    // This is what makes revoking a session (logout, revoke-one,
+                    // revoke-others, logout-all, or any account-lifecycle revocation) take
+                    // effect on the VERY NEXT request, instead of only once the access
+                    // token's own short-lived exp eventually elapses. A missing sessionId
+                    // (a pre-migration token) is treated exactly like a revoked one — there
+                    // is no indefinite fallback to the old sessionless validation; the
+                    // interceptor's existing silent-refresh path is what carries a legacy
+                    // token forward onto a fresh, session-backed one (see AuthController).
+                    boolean sessionActive;
+                    try {
+                        sessionActive = sessionId != null && userSessionService.isActiveForUser(sessionId, userId);
+                    } catch (Exception e) {
+                        // Fail closed: if session validity cannot be established, the
+                        // request is rejected — never treated as authenticated.
+                        log.error("Session validation error for userId={}, sessionId={}: {}", userId, sessionId, e.getMessage());
+                        sessionActive = false;
+                    }
+                    if (!sessionActive) {
+                        log.warn("Access token rejected for userId={}: session {} is missing, revoked, or expired", userId, sessionId);
+                        response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                        response.setContentType("application/json");
+                        response.getWriter().write("{\"message\": \"Session has been revoked\"}");
+                        return;
+                    }
+
                     // Build authorities: ROLE_ + permission keys
                     List<GrantedAuthority> authorities = new ArrayList<>();
                     authorities.add(new SimpleGrantedAuthority("ROLE_" + role));

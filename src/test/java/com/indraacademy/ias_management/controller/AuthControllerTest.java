@@ -27,6 +27,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -48,6 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -114,6 +116,12 @@ class AuthControllerTest {
         School activeSchool = new School();
         activeSchool.setActive(true);
         lenient().when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(activeSchool));
+
+        // login() (both the normal and restricted branches) now needs the created
+        // session's id to embed as the access token's sessionId claim.
+        UserSession defaultSession = new UserSession();
+        defaultSession.setId(999L);
+        lenient().when(userSessionService.createSession(any(), any(), any(), any(), any())).thenReturn(defaultSession);
 
         SchoolContext.set(SCHOOL_ID);
     }
@@ -264,9 +272,13 @@ class AuthControllerTest {
         assertThat(httpResponse.getHeaders("Set-Cookie"))
                 .anyMatch(h -> h.startsWith("accessToken=") && !h.startsWith("accessToken=;"));
 
-        // Precaution: any earlier, unrestricted sessions for this account are revoked.
-        verify(userSessionService).revokeAllForUser("S1");
-        verify(userSessionService, never()).createSession(any(), any(), any(), any(), any());
+        // Precaution: any earlier, unrestricted sessions for this account are revoked
+        // FIRST, then a session-of-its-own is created so this restricted access token
+        // is also session-backed (see JwtAuthFilter) — its "refresh token" is never
+        // exposed to the client (no refreshToken cookie is set, asserted above).
+        InOrder order = inOrder(userSessionService);
+        order.verify(userSessionService).revokeAllForUser("S1");
+        order.verify(userSessionService).createSession(eq("S1"), anyString(), any(), any(), any());
     }
 
     @Test
@@ -516,7 +528,7 @@ class AuthControllerTest {
     void refreshToken_rotatesOnlyTheResolvedSession_neverTouchesAnyOtherSession() {
         User user = adminUser("A1");
         when(userRepository.findByUserId("A1")).thenReturn(Optional.of(user));
-        when(jwtUtil.generateAccessToken(eq("A1"), any(), any())).thenReturn("new-access-token");
+        when(jwtUtil.generateAccessToken(eq("A1"), any(), any(), any())).thenReturn("new-access-token");
 
         UserSession sessionA = new UserSession();
         sessionA.setUserId("A1");
@@ -588,7 +600,7 @@ class AuthControllerTest {
         ResponseEntity<?> response = controller.refreshToken(httpRequest, httpResponse);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
-        verify(jwtUtil, never()).generateAccessToken(any(), any(), any());
+        verify(jwtUtil, never()).generateAccessToken(any(), any(), any(), any());
         assertThat(httpResponse.getHeaders("Set-Cookie")).isEmpty();
     }
 

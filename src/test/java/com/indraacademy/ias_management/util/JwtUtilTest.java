@@ -62,4 +62,35 @@ class JwtUtilTest {
         // A normal (non-restricted) session's access token never carries this claim.
         assertThat(jwtUtil.extractPasswordChangeRequired(tokenWithClaim(null))).isFalse();
     }
+
+    // ─── sessionId — the claim that makes an access token session-aware ────────
+
+    @Test
+    void generateAccessToken_embedsSessionId_andExtractSessionIdRoundTrips() {
+        String token = jwtUtil.generateAccessToken("U1", "TEACHER", 1L, 42L);
+
+        assertThat(jwtUtil.extractSessionId(token)).isEqualTo(42L);
+    }
+
+    @Test
+    void extractSessionId_absentClaim_returnsNull() {
+        // A pre-migration access token — must be treated as "not session-backed",
+        // never coerced into some default/zero session id.
+        assertThat(jwtUtil.extractSessionId(tokenWithClaim(null))).isNull();
+    }
+
+    @Test
+    void extractSessionId_handlesIntegerAndLongClaimRepresentations() throws Exception {
+        // Mirrors extractSchoolId's own defensive Integer/Long coercion — JJWT/Jackson
+        // may deserialize a JSON number as either depending on its magnitude.
+        String tokenWithIntClaim = Jwts.builder()
+                .setSubject("U1")
+                .claim("sessionId", 42) // int, not long
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + 60000))
+                .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
+                .compact();
+
+        assertThat(jwtUtil.extractSessionId(tokenWithIntClaim)).isEqualTo(42L);
+    }
 }

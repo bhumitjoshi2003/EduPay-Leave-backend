@@ -74,6 +74,24 @@ public class UserSessionService {
         return updated == 1;
     }
 
+    /** Access-token session validation for JwtAuthFilter — the ONLY place that decides
+     * whether an already-issued access token still corresponds to a live session. Uses
+     * the existing PK index on user_session.id (JpaRepository#findById); no new query,
+     * no new index, no caching. Returns false (never throws) for every case that must
+     * reject the request: no such session, session belongs to a different user (defense
+     * in depth — a forged sessionId/userId combination could never actually be signed
+     * without the private key, but this is checked regardless), revoked, or expired. */
+    @Transactional(readOnly = true)
+    public boolean isActiveForUser(Long sessionId, String userId) {
+        if (sessionId == null || userId == null) return false;
+        Instant now = clock.instant();
+        return repository.findById(sessionId)
+                .filter(s -> userId.equals(s.getUserId()))
+                .filter(s -> s.getRevokedAt() == null)
+                .filter(s -> s.getExpiresAt().isAfter(now))
+                .isPresent();
+    }
+
     /** Revokes exactly the one session a raw refresh token belongs to (logout) —
      * never any other session for the same user. A no-op (not an error) if the token
      * is unknown/already revoked, matching logout's existing best-effort behavior. */

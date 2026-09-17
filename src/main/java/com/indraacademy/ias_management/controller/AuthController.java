@@ -293,22 +293,32 @@ public class AuthController {
             // Restricted first-login session: issue only a short-lived access token carrying
             // pwdChangeRequired=true (enforced by JwtAuthFilter's allowlist) and NO refresh
             // token, so the session cannot be silently extended and cannot reach any business
-            // API. Any previously-issued refresh token is also revoked as a precaution.
+            // API. Precaution: revoke any still-active sessions from earlier, unrestricted
+            // logins on this account FIRST — before creating this one — so the row created
+            // below survives and this restricted access token remains usable.
+            userSessionService.revokeAllForUser(loggedIn.getUserId());
+
+            // Every access token is now session-backed (see JwtAuthFilter) — including this
+            // restricted one. Its "session" secret is generated and hashed exactly like a
+            // normal refresh JTI, but is never placed in any cookie or response: no refresh
+            // token is ever handed to this client, so this session can only ever be used by
+            // the access token issued right here, until it naturally expires alongside it.
+            String restrictedSessionSecret = UUID.randomUUID().toString();
+            Date restrictedExpiry = new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes));
+            var restrictedSession = userSessionService.createSession(loggedIn.getUserId(), restrictedSessionSecret,
+                    restrictedExpiry.toInstant(), request.getHeader("User-Agent"), request.getRemoteAddr());
+
             String restrictedAccessToken = Jwts.builder()
                     .setSubject(loggedIn.getUserId())
                     .claim("role", loggedIn.getRole())
                     .claim("userId", loggedIn.getUserId())
                     .claim("schoolId", loggedIn.getSchoolId())
                     .claim("pwdChangeRequired", true)
+                    .claim("sessionId", restrictedSession.getId())
                     .setIssuedAt(new Date())
-                    .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes)))
+                    .setExpiration(restrictedExpiry)
                     .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                     .compact();
-
-            // Precaution: a restricted (must-change-password) login issues no refresh
-            // token of its own, but revoke any still-active sessions from earlier,
-            // unrestricted logins on this account too.
-            userSessionService.revokeAllForUser(loggedIn.getUserId());
 
             response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", restrictedAccessToken, Duration.ofMinutes(accessTokenExpiryMinutes)).toString());
 
@@ -327,24 +337,27 @@ public class AuthController {
             return ResponseEntity.ok(body);
         }
 
+        // Every login creates its own independent session row — logging in on another
+        // browser/device never touches this one. jti is a cryptographically random
+        // (UUID v4, SecureRandom-backed) session secret; only its SHA-256 hash is
+        // ever persisted (see UserSessionService), never the raw value. The session
+        // must exist BEFORE the access token is built, since the access token now
+        // carries this session's stable id (see JwtAuthFilter).
+        String jti = UUID.randomUUID().toString();
+        Date refreshExpiry = new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays));
+        var session = userSessionService.createSession(loggedIn.getUserId(), jti, refreshExpiry.toInstant(),
+                request.getHeader("User-Agent"), request.getRemoteAddr());
+
         String accessToken = Jwts.builder()
                 .setSubject(loggedIn.getUserId())
                 .claim("role", loggedIn.getRole())
                 .claim("userId", loggedIn.getUserId())
                 .claim("schoolId", loggedIn.getSchoolId())
+                .claim("sessionId", session.getId())
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * accessTokenExpiryMinutes)))
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
-
-        // Every login creates its own independent session row — logging in on another
-        // browser/device never touches this one. jti is a cryptographically random
-        // (UUID v4, SecureRandom-backed) session secret; only its SHA-256 hash is
-        // ever persisted (see UserSessionService), never the raw value.
-        String jti = UUID.randomUUID().toString();
-        Date refreshExpiry = new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays));
-        userSessionService.createSession(loggedIn.getUserId(), jti, refreshExpiry.toInstant(),
-                request.getHeader("User-Agent"), request.getRemoteAddr());
 
         String refreshToken = Jwts.builder()
                 .setSubject(loggedIn.getUserId())
@@ -602,7 +615,7 @@ public class AuthController {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token has been revoked.");
             }
 
-            String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole(), loggedIn.getSchoolId());
+            String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole(), loggedIn.getSchoolId(), session.getId());
 
             String newRefreshToken = Jwts.builder()
                     .setSubject(userId)
