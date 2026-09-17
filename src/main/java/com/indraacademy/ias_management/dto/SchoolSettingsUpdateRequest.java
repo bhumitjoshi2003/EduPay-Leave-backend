@@ -39,6 +39,11 @@ public class SchoolSettingsUpdateRequest {
     private LocalDate staffAttendanceTrackingStartDate;
     private String timezone;              // IANA zone id, e.g. "Asia/Kolkata"
 
+    // Teacher attendance reminder — null on either field means "leave as-is"; an empty
+    // string for teacherAttendanceReminderTime explicitly clears a previously-set time.
+    private Boolean teacherAttendanceReminderEnabled;
+    private String teacherAttendanceReminderTime; // "HH:mm" format
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
@@ -118,4 +123,14 @@ public class SchoolSettingsUpdateRequest {
 
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
+
+    public Boolean getTeacherAttendanceReminderEnabled() { return teacherAttendanceReminderEnabled; }
+    public void setTeacherAttendanceReminderEnabled(Boolean teacherAttendanceReminderEnabled) {
+        this.teacherAttendanceReminderEnabled = teacherAttendanceReminderEnabled;
+    }
+
+    public String getTeacherAttendanceReminderTime() { return teacherAttendanceReminderTime; }
+    public void setTeacherAttendanceReminderTime(String teacherAttendanceReminderTime) {
+        this.teacherAttendanceReminderTime = teacherAttendanceReminderTime;
+    }
 }

@@ -631,15 +631,11 @@ public class TeacherAttendanceService {
 
     /** A working day is a configured weekday that is not covered by any holiday. */
     private boolean isWorkingDay(LocalDate date, String workingDaysPattern, List<SchoolHoliday> holidays) {
-        return isWorkingDayOfWeek(date, workingDaysPattern) && !isHolidayDate(date, holidays);
+        return com.indraacademy.ias_management.util.TeacherWorkingDayUtil.isWorkingDay(date, workingDaysPattern, holidays);
     }
 
     private boolean isWorkingDayOfWeek(LocalDate date, String workingDays) {
-        if (workingDays == null || workingDays.isBlank()) return false;
-        String dayName = date.getDayOfWeek().name();
-        return Arrays.stream(workingDays.split(","))
-                .map(String::trim)
-                .anyMatch(dayName::equalsIgnoreCase);
+        return com.indraacademy.ias_management.util.TeacherWorkingDayUtil.isWorkingDayOfWeek(date, workingDays);
     }
 
     /**
@@ -650,18 +646,11 @@ public class TeacherAttendanceService {
      * approves it.
      */
     private boolean isCoveredByApprovedLeave(String teacherId, LocalDate date, List<TeacherLeave> approvedLeaves) {
-        for (TeacherLeave leave : approvedLeaves) {
-            if (!teacherId.equals(leave.getTeacherId())) continue;
-            if (!date.isBefore(leave.getStartDate()) && !date.isAfter(leave.getEndDate())) return true;
-        }
-        return false;
+        return com.indraacademy.ias_management.util.TeacherWorkingDayUtil.isCoveredByApprovedLeave(teacherId, date, approvedLeaves);
     }
 
     private boolean isHolidayDate(LocalDate date, List<SchoolHoliday> holidays) {
-        for (SchoolHoliday h : holidays) {
-            if (!date.isBefore(h.getStartDate()) && !date.isAfter(h.getEndDate())) return true;
-        }
-        return false;
+        return com.indraacademy.ias_management.util.TeacherWorkingDayUtil.isHolidayDate(date, holidays);
     }
 
     private String formatDistance(double meters) {

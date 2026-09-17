@@ -332,6 +332,18 @@ public class SchoolService {
             school.setTimezone(req.getTimezone());
         }
 
+        if (req.getTeacherAttendanceReminderEnabled() != null) {
+            school.setTeacherAttendanceReminderEnabled(req.getTeacherAttendanceReminderEnabled());
+        }
+        if (req.getTeacherAttendanceReminderTime() != null) {
+            String t = req.getTeacherAttendanceReminderTime().trim();
+            school.setTeacherAttendanceReminderTime(t.isEmpty() ? null : LocalTime.parse(t));
+        }
+        if (school.isTeacherAttendanceReminderEnabled() && school.getTeacherAttendanceReminderTime() == null) {
+            throw new IllegalArgumentException(
+                    "Reminder time is required when the teacher attendance reminder is enabled.");
+        }
+
         School updated = schoolRepository.save(school);
         log.info("School settings updated for schoolId={}", schoolId);
 

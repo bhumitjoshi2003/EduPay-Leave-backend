@@ -166,6 +166,145 @@ class SchoolServiceTest {
         assertThat(response.getTimezone()).isEqualTo("Asia/Kolkata");
     }
 
+    // ─── Teacher attendance reminder settings ───────────────────────────────────
+
+    @Test
+    void updateSettings_reminderDisabledByDefault_onABrandNewSchool() {
+        School existing = existingSchool(); // never touched the reminder fields
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existing));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setName("Unrelated update"); // reminder fields never sent
+
+        SchoolSettingsResponse response = service.updateSettings(req, request);
+
+        assertThat(response.isTeacherAttendanceReminderEnabled()).isFalse();
+        assertThat(response.getTeacherAttendanceReminderTime()).isNull();
+    }
+
+    @Test
+    void updateSettings_enablingTheReminderWithoutATime_isRejected() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existingSchool()));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(true);
+        // no reminder time supplied, and none previously set
+
+        assertThatThrownBy(() -> service.updateSettings(req, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Reminder time is required");
+        verify(schoolRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void updateSettings_enablingTheReminderWithATime_succeeds() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existingSchool()));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(true);
+        req.setTeacherAttendanceReminderTime("07:45");
+
+        SchoolSettingsResponse response = service.updateSettings(req, request);
+
+        assertThat(response.isTeacherAttendanceReminderEnabled()).isTrue();
+        assertThat(response.getTeacherAttendanceReminderTime()).isEqualTo("07:45");
+    }
+
+    @Test
+    void updateSettings_disablingTheReminder_acceptsANullTime_leavingItUnset() {
+        School existing = existingSchool();
+        existing.setTeacherAttendanceReminderEnabled(true);
+        existing.setTeacherAttendanceReminderTime(java.time.LocalTime.of(7, 45));
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existing));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(false);
+        req.setTeacherAttendanceReminderTime(""); // explicit clear
+
+        SchoolSettingsResponse response = service.updateSettings(req, request);
+
+        assertThat(response.isTeacherAttendanceReminderEnabled()).isFalse();
+        assertThat(response.getTeacherAttendanceReminderTime()).isNull();
+    }
+
+    @Test
+    void updateSettings_disablingWithoutClearingTheTime_isAllowed_timeSurvivesForNextEnable() {
+        School existing = existingSchool();
+        existing.setTeacherAttendanceReminderEnabled(true);
+        existing.setTeacherAttendanceReminderTime(java.time.LocalTime.of(7, 45));
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existing));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(false); // time field simply not sent
+
+        SchoolSettingsResponse response = service.updateSettings(req, request);
+
+        assertThat(response.isTeacherAttendanceReminderEnabled()).isFalse();
+        assertThat(response.getTeacherAttendanceReminderTime()).isEqualTo("07:45");
+    }
+
+    @Test
+    void updateSettings_reminderSettingsRoundTripThroughTheApi() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existingSchool()));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(true);
+        req.setTeacherAttendanceReminderTime("08:15");
+
+        SchoolSettingsResponse response = service.updateSettings(req, request);
+
+        assertThat(response.isTeacherAttendanceReminderEnabled()).isTrue();
+        assertThat(response.getTeacherAttendanceReminderTime()).isEqualTo("08:15");
+        // Untouched fields round-trip unchanged alongside the new ones.
+        assertThat(response.getTimezone()).isEqualTo("Asia/Kolkata");
+    }
+
+    @Test
+    void updateSettings_reminderChange_leavesSchoolTimezoneUnchanged() {
+        School existing = existingSchool(); // "Asia/Kolkata"
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existing));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(true);
+        req.setTeacherAttendanceReminderTime("06:30");
+
+        SchoolSettingsResponse response = service.updateSettings(req, request);
+
+        assertThat(response.getTimezone()).isEqualTo("Asia/Kolkata");
+    }
+
+    @Test
+    void updateSettings_reminderChange_leavesUnrelatedSettingsUnchanged() {
+        School existing = existingSchool();
+        existing.setWorkingDays("MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY");
+        existing.setLateThresholdMinutes(10);
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existing));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(true);
+        req.setTeacherAttendanceReminderTime("07:00");
+
+        SchoolSettingsResponse response = service.updateSettings(req, request);
+
+        assertThat(response.getWorkingDays()).isEqualTo("MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY");
+        assertThat(response.getLateThresholdMinutes()).isEqualTo(10);
+    }
+
     // ─── Legacy fields are display-only now (subscription reset) ───────────────
     //
     // SchoolService.updateSubscription() (the old PATCH endpoint) has been removed entirely — it

@@ -58,6 +58,8 @@ public class SchoolSettingsResponse {
     private String checkinWindowEnd;
     private LocalDate staffAttendanceTrackingStartDate;
     private String timezone;
+    private boolean teacherAttendanceReminderEnabled;
+    private String teacherAttendanceReminderTime;
 
     public static SchoolSettingsResponse from(School school) {
         SchoolSettingsResponse r = new SchoolSettingsResponse();
@@ -97,6 +99,8 @@ public class SchoolSettingsResponse {
         r.checkinWindowEnd = formatTime(school.getCheckinWindowEnd());
         r.staffAttendanceTrackingStartDate = school.getStaffAttendanceTrackingStartDate();
         r.timezone = school.getTimezone();
+        r.teacherAttendanceReminderEnabled = school.isTeacherAttendanceReminderEnabled();
+        r.teacherAttendanceReminderTime = formatTime(school.getTeacherAttendanceReminderTime());
         return r;
     }
 
@@ -140,6 +144,8 @@ public class SchoolSettingsResponse {
     public String getCheckinWindowEnd() { return checkinWindowEnd; }
     public LocalDate getStaffAttendanceTrackingStartDate() { return staffAttendanceTrackingStartDate; }
     public String getTimezone() { return timezone; }
+    public boolean isTeacherAttendanceReminderEnabled() { return teacherAttendanceReminderEnabled; }
+    public String getTeacherAttendanceReminderTime() { return teacherAttendanceReminderTime; }
 
     private static String formatTime(LocalTime time) {
         return time != null ? time.format(DateTimeFormatter.ofPattern("HH:mm")) : null;

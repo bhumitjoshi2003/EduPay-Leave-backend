@@ -164,6 +164,17 @@ public class School {
     @Column(name = "timezone", nullable = false, length = 64)
     private String timezone = "Asia/Kolkata";
 
+    /**
+     * Whether the school wants a same-morning nudge sent to teachers who haven't marked
+     * attendance by {@link #teacherAttendanceReminderTime}. See V68__teacher_attendance_reminder_settings.sql.
+     */
+    @Column(name = "teacher_attendance_reminder_enabled", nullable = false)
+    private boolean teacherAttendanceReminderEnabled = false;
+
+    /** Required when {@link #teacherAttendanceReminderEnabled} is true; null while disabled. */
+    @Column(name = "teacher_attendance_reminder_time")
+    private LocalTime teacherAttendanceReminderTime;
+
     public School() {}
 
     public Long getId() { return id; }
@@ -281,4 +292,14 @@ public class School {
 
     public String getTimezone() { return timezone; }
     public void setTimezone(String timezone) { this.timezone = timezone; }
+
+    public boolean isTeacherAttendanceReminderEnabled() { return teacherAttendanceReminderEnabled; }
+    public void setTeacherAttendanceReminderEnabled(boolean teacherAttendanceReminderEnabled) {
+        this.teacherAttendanceReminderEnabled = teacherAttendanceReminderEnabled;
+    }
+
+    public LocalTime getTeacherAttendanceReminderTime() { return teacherAttendanceReminderTime; }
+    public void setTeacherAttendanceReminderTime(LocalTime teacherAttendanceReminderTime) {
+        this.teacherAttendanceReminderTime = teacherAttendanceReminderTime;
+    }
 }
