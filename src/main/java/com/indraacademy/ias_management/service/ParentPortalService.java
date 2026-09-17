@@ -43,6 +43,7 @@ public class ParentPortalService {
     private final IdGeneratorService idGeneratorService;
     private final PasswordResetService passwordResetService;
     private final com.indraacademy.ias_management.repository.SchoolRepository schoolRepository;
+    private final UserSessionService userSessionService;
 
     public ParentPortalService(ParentRepository parentRepository,
                                ParentStudentRelationshipRepository relationshipRepository,
@@ -53,7 +54,8 @@ public class ParentPortalService {
                                EntitlementService entitlementService,
                                IdGeneratorService idGeneratorService,
                                PasswordResetService passwordResetService,
-                               com.indraacademy.ias_management.repository.SchoolRepository schoolRepository) {
+                               com.indraacademy.ias_management.repository.SchoolRepository schoolRepository,
+                               UserSessionService userSessionService) {
         this.parentRepository = parentRepository;
         this.relationshipRepository = relationshipRepository;
         this.studentRepository = studentRepository;
@@ -64,6 +66,7 @@ public class ParentPortalService {
         this.idGeneratorService = idGeneratorService;
         this.passwordResetService = passwordResetService;
         this.schoolRepository = schoolRepository;
+        this.userSessionService = userSessionService;
     }
 
     /**
@@ -262,7 +265,7 @@ public class ParentPortalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Parent login does not belong to this school");
         }
         user.setActive(active);
-        if (!active) user.setRefreshTokenId(null);
+        if (!active) userSessionService.revokeAllForUser(user.getUserId());
         userRepository.save(user);
     }
 
@@ -286,7 +289,7 @@ public class ParentPortalService {
         }
         user.setPassword(passwordEncoder.encode(temporaryPassword));
         user.setMustChangePassword(true);
-        user.setRefreshTokenId(null);
+        userSessionService.revokeAllForUser(user.getUserId());
         userRepository.save(user);
     }
 

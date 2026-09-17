@@ -34,14 +34,6 @@ public class User {
     private Long schoolId;
 
     /**
-     * Stores the current valid refresh token JTI (JWT ID).
-     * Set on login/refresh, cleared on logout.
-     * A refresh token whose JTI does not match this value is considered revoked.
-     */
-    @Column(name = "refresh_token_id")
-    private String refreshTokenId;
-
-    /**
      * True when the user must change their password before accessing any
      * business API. Set true for every newly-created STUDENT/TEACHER account
      * (initial password is DOB-derived); false for existing accounts and
@@ -103,9 +95,6 @@ public class User {
 
     public Long getSchoolId() { return schoolId; }
     public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
-
-    public String getRefreshTokenId() { return refreshTokenId; }
-    public void setRefreshTokenId(String refreshTokenId) { this.refreshTokenId = refreshTokenId; }
 
     public boolean isMustChangePassword() { return mustChangePassword; }
     public void setMustChangePassword(boolean mustChangePassword) { this.mustChangePassword = mustChangePassword; }

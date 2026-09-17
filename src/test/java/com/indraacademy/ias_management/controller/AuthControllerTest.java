@@ -16,9 +16,12 @@ import com.indraacademy.ias_management.service.AuditService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.PermissionService;
 import com.indraacademy.ias_management.service.WelcomeEmailService;
+import com.indraacademy.ias_management.entity.UserSession;
 import com.indraacademy.ias_management.util.JwtUtil;
 import com.indraacademy.ias_management.util.SchoolContext;
 import com.indraacademy.ias_management.config.RateLimiter;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +31,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -35,12 +39,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.time.LocalDate;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -69,8 +76,10 @@ class AuthControllerTest {
     @Mock private AuditService auditService;
     @Mock private WelcomeEmailService welcomeEmailService;
     @Mock private com.indraacademy.ias_management.service.PasswordResetService passwordResetService;
+    @Mock private com.indraacademy.ias_management.service.UserSessionService userSessionService;
 
     private AuthController controller;
+    private KeyPair keyPair;
     private static final Long SCHOOL_ID = 1L;
 
     @BeforeEach
@@ -89,6 +98,7 @@ class AuthControllerTest {
         ReflectionTestUtils.setField(controller, "auditService", auditService);
         ReflectionTestUtils.setField(controller, "welcomeEmailService", welcomeEmailService);
         ReflectionTestUtils.setField(controller, "passwordResetService", passwordResetService);
+        ReflectionTestUtils.setField(controller, "userSessionService", userSessionService);
         ReflectionTestUtils.setField(controller, "isSecure", false);
         ReflectionTestUtils.setField(controller, "sameSite", "Lax");
         ReflectionTestUtils.setField(controller, "accessTokenExpiryMinutes", 15L);
@@ -97,8 +107,9 @@ class AuthControllerTest {
 
         KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
         gen.initialize(2048);
-        KeyPair keyPair = gen.generateKeyPair();
+        keyPair = gen.generateKeyPair();
         lenient().when(jwtUtil.getPrivateKey()).thenReturn(keyPair.getPrivate());
+        lenient().when(jwtUtil.getPublicKey()).thenReturn(keyPair.getPublic());
 
         School activeSchool = new School();
         activeSchool.setActive(true);
@@ -242,7 +253,7 @@ class AuthControllerTest {
         req.setPassword("19900523");
 
         MockHttpServletResponse httpResponse = new MockHttpServletResponse();
-        ResponseEntity<?> response = controller.login(req, httpResponse);
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletRequest(), httpResponse);
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(response.getBody().toString()).contains("mustChangePassword=true");
@@ -253,9 +264,9 @@ class AuthControllerTest {
         assertThat(httpResponse.getHeaders("Set-Cookie"))
                 .anyMatch(h -> h.startsWith("accessToken=") && !h.startsWith("accessToken=;"));
 
-        ArgumentCaptor<User> savedCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(savedCaptor.capture());
-        assertThat(savedCaptor.getValue().getRefreshTokenId()).isNull();
+        // Precaution: any earlier, unrestricted sessions for this account are revoked.
+        verify(userSessionService).revokeAllForUser("S1");
+        verify(userSessionService, never()).createSession(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -275,16 +286,16 @@ class AuthControllerTest {
         req.setPassword("MyRealPassword1");
 
         MockHttpServletResponse httpResponse = new MockHttpServletResponse();
-        ResponseEntity<?> response = controller.login(req, httpResponse);
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletRequest(), httpResponse);
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(response.getBody().toString()).contains("mustChangePassword=false");
         assertThat(httpResponse.getHeaders("Set-Cookie"))
                 .anyMatch(h -> h.startsWith("refreshToken=") && !h.startsWith("refreshToken=;"));
 
-        ArgumentCaptor<User> savedCaptor = ArgumentCaptor.forClass(User.class);
-        verify(userRepository).save(savedCaptor.capture());
-        assertThat(savedCaptor.getValue().getRefreshTokenId()).isNotNull();
+        // A brand-new independent session row is created for this login — never a
+        // shared/global field that a second login would silently overwrite.
+        verify(userSessionService).createSession(eq("T1"), anyString(), any(), any(), any());
     }
 
     // ─── Generated-ID / legacy-ID login — format-agnostic by design ────────
@@ -305,7 +316,7 @@ class AuthControllerTest {
         req.setUserId("stu_26010001");
         req.setPassword("MyRealPassword1");
 
-        ResponseEntity<?> response = controller.login(req, new MockHttpServletResponse());
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletRequest(), new MockHttpServletResponse());
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
     }
@@ -326,7 +337,7 @@ class AuthControllerTest {
         req.setUserId("par_26010001");
         req.setPassword("MyRealPassword1");
 
-        ResponseEntity<?> response = controller.login(req, new MockHttpServletResponse());
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletRequest(), new MockHttpServletResponse());
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
     }
@@ -349,7 +360,7 @@ class AuthControllerTest {
         req.setUserId("EMP123");
         req.setPassword("MyRealPassword1");
 
-        ResponseEntity<?> response = controller.login(req, new MockHttpServletResponse());
+        ResponseEntity<?> response = controller.login(req, new MockHttpServletRequest(), new MockHttpServletResponse());
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
     }
@@ -453,7 +464,6 @@ class AuthControllerTest {
     void changeInitialPassword_success_clearsFlagAndInvalidatesSession() {
         when(authService.getUserId()).thenReturn("S1");
         User user = restrictedUser();
-        user.setRefreshTokenId("some-jti");
         when(userRepository.findByUserId("S1")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("NewStrong1", "HASHED_TEMP")).thenReturn(false);
         when(passwordEncoder.encode("NewStrong1")).thenReturn("NEW_ENCODED");
@@ -474,9 +484,185 @@ class AuthControllerTest {
         User saved = savedCaptor.getValue();
         assertThat(saved.getPassword()).isEqualTo("NEW_ENCODED");
         assertThat(saved.isMustChangePassword()).isFalse();
-        assertThat(saved.getRefreshTokenId()).isNull();
+        verify(userSessionService).revokeAllForUser("S1");
 
         // The restricted access token cookie must be cleared — no new session is granted.
+        assertThat(httpResponse.getHeaders("Set-Cookie"))
+                .anyMatch(h -> h.startsWith("accessToken=;") || h.contains("Max-Age=0"));
+    }
+
+    // ─── multi-session: refresh-token rotates only the resolved session ───────
+
+    private String signRefreshToken(String userId, String jti) {
+        return Jwts.builder()
+                .setSubject(userId)
+                .setId(jti)
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + 60000))
+                .signWith(keyPair.getPrivate(), SignatureAlgorithm.RS256)
+                .compact();
+    }
+
+    private User adminUser(String userId) {
+        User user = new User();
+        user.setUserId(userId);
+        user.setRole(Role.ADMIN);
+        user.setSchoolId(SCHOOL_ID);
+        user.setActive(true);
+        return user;
+    }
+
+    @Test
+    void refreshToken_rotatesOnlyTheResolvedSession_neverTouchesAnyOtherSession() {
+        User user = adminUser("A1");
+        when(userRepository.findByUserId("A1")).thenReturn(Optional.of(user));
+        when(jwtUtil.generateAccessToken(eq("A1"), any(), any())).thenReturn("new-access-token");
+
+        UserSession sessionA = new UserSession();
+        sessionA.setUserId("A1");
+        when(userSessionService.resolveActive("jti-A")).thenReturn(Optional.of(sessionA));
+        when(userSessionService.rotate(eq(sessionA), anyString(), any(), any(), any())).thenReturn(true);
+
+        MockHttpServletRequest httpRequest = new MockHttpServletRequest();
+        httpRequest.setCookies(new jakarta.servlet.http.Cookie("refreshToken", signRefreshToken("A1", "jti-A")));
+        MockHttpServletResponse httpResponse = new MockHttpServletResponse();
+
+        ResponseEntity<?> response = controller.refreshToken(httpRequest, httpResponse);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        // Exactly the resolved session (A) is rotated — no bulk/user-wide operation is used.
+        verify(userSessionService).rotate(eq(sessionA), anyString(), any(), any(), any());
+        verify(userSessionService, never()).revokeAllForUser(any());
+        assertThat(httpResponse.getHeaders("Set-Cookie"))
+                .anyMatch(h -> h.startsWith("refreshToken=") && !h.startsWith("refreshToken=;"));
+    }
+
+    @Test
+    void refreshToken_revokedSession_isRejectedWithUnauthorized() {
+        when(jwtUtil.getPublicKey()).thenReturn(keyPair.getPublic());
+        when(userSessionService.resolveActive("jti-revoked")).thenReturn(Optional.empty());
+        when(userRepository.findByUserId("A1")).thenReturn(Optional.of(adminUser("A1")));
+
+        MockHttpServletRequest httpRequest = new MockHttpServletRequest();
+        httpRequest.setCookies(new jakarta.servlet.http.Cookie("refreshToken", signRefreshToken("A1", "jti-revoked")));
+
+        ResponseEntity<?> response = controller.refreshToken(httpRequest, new MockHttpServletResponse());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        verify(userSessionService, never()).rotate(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void refreshToken_sessionBelongingToAnotherUser_isRejected() {
+        // Defense in depth: even if a resolved session's own userId somehow didn't match
+        // the JWT subject, the refresh must still be rejected rather than trusted.
+        when(userRepository.findByUserId("A1")).thenReturn(Optional.of(adminUser("A1")));
+        UserSession mismatchedSession = new UserSession();
+        mismatchedSession.setUserId("SOMEONE_ELSE");
+        when(userSessionService.resolveActive("jti-A")).thenReturn(Optional.of(mismatchedSession));
+
+        MockHttpServletRequest httpRequest = new MockHttpServletRequest();
+        httpRequest.setCookies(new jakarta.servlet.http.Cookie("refreshToken", signRefreshToken("A1", "jti-A")));
+
+        ResponseEntity<?> response = controller.refreshToken(httpRequest, new MockHttpServletResponse());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        verify(userSessionService, never()).rotate(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void refreshToken_losingAConcurrentRotationRace_isRejected_neverIssuesTokens() {
+        // rotate() returning false means another concurrent refresh using the same token
+        // already won the race and rotated this session first — this caller must be
+        // rejected outright, never handed a "partially successful" access token.
+        when(userRepository.findByUserId("A1")).thenReturn(Optional.of(adminUser("A1")));
+        UserSession sessionA = new UserSession();
+        sessionA.setUserId("A1");
+        when(userSessionService.resolveActive("jti-A")).thenReturn(Optional.of(sessionA));
+        when(userSessionService.rotate(eq(sessionA), anyString(), any(), any(), any())).thenReturn(false);
+
+        MockHttpServletRequest httpRequest = new MockHttpServletRequest();
+        httpRequest.setCookies(new jakarta.servlet.http.Cookie("refreshToken", signRefreshToken("A1", "jti-A")));
+        MockHttpServletResponse httpResponse = new MockHttpServletResponse();
+
+        ResponseEntity<?> response = controller.refreshToken(httpRequest, httpResponse);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        verify(jwtUtil, never()).generateAccessToken(any(), any(), any());
+        assertThat(httpResponse.getHeaders("Set-Cookie")).isEmpty();
+    }
+
+    // ─── multi-session: logout revokes only the current session ───────────────
+
+    @Test
+    void logout_revokesOnlyItsOwnSession_neverAllSessionsForTheUser() {
+        MockHttpServletRequest httpRequest = new MockHttpServletRequest();
+        httpRequest.setCookies(new jakarta.servlet.http.Cookie("refreshToken", signRefreshToken("A1", "jti-A")));
+
+        ResponseEntity<?> response = controller.logout(httpRequest, new MockHttpServletResponse());
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        verify(userSessionService).revokeByRawToken("jti-A");
+        verify(userSessionService, never()).revokeAllForUser(any());
+    }
+
+    // ─── session management endpoints ──────────────────────────────────────────
+
+    @Test
+    void listSessions_returnsOnlyTheCallingUsersOwnSessions() {
+        when(authService.getUserId()).thenReturn("A1");
+        when(userSessionService.listActiveSessions(eq("A1"), any())).thenReturn(List.of());
+
+        ResponseEntity<?> response = controller.listSessions(new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        verify(userSessionService).listActiveSessions(eq("A1"), any());
+    }
+
+    @Test
+    void revokeSession_returnsNotFound_whenTheSessionDoesNotBelongToTheCaller() {
+        when(authService.getUserId()).thenReturn("A1");
+        when(userSessionService.revokeOwnSession(99L, "A1")).thenReturn(false);
+
+        ResponseEntity<?> response = controller.revokeSession(99L);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void revokeSession_succeeds_whenTheCallerOwnsTheSession() {
+        when(authService.getUserId()).thenReturn("A1");
+        when(userSessionService.revokeOwnSession(5L, "A1")).thenReturn(true);
+
+        ResponseEntity<?> response = controller.revokeSession(5L);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    @Test
+    void revokeOtherSessions_keepsCurrentSession_revokesTheRest() {
+        when(authService.getUserId()).thenReturn("A1");
+        when(userSessionService.revokeAllOthers(eq("A1"), any())).thenReturn(2);
+
+        MockHttpServletRequest httpRequest = new MockHttpServletRequest();
+        httpRequest.setCookies(new jakarta.servlet.http.Cookie("refreshToken", signRefreshToken("A1", "jti-A")));
+
+        ResponseEntity<?> response = controller.revokeOtherSessions(httpRequest);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        verify(userSessionService).revokeAllOthers(eq("A1"), any());
+    }
+
+    @Test
+    void logoutAll_revokesEverySessionForTheCaller_andClearsCookies() {
+        when(authService.getUserId()).thenReturn("A1");
+        when(userSessionService.revokeAllForUser("A1")).thenReturn(3);
+
+        MockHttpServletResponse httpResponse = new MockHttpServletResponse();
+        ResponseEntity<?> response = controller.logoutAll(httpResponse);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        verify(userSessionService).revokeAllForUser("A1");
         assertThat(httpResponse.getHeaders("Set-Cookie"))
                 .anyMatch(h -> h.startsWith("accessToken=;") || h.contains("Max-Age=0"));
     }

@@ -48,6 +48,7 @@ class TeacherServiceTest {
     @Mock private SchoolClassRepository schoolClassRepository;
     @Mock private SectionRepository sectionRepository;
     @Mock private UserRepository userRepository;
+    @Mock private UserSessionService userSessionService;
     @Mock private HttpServletRequest request;
 
     private TeacherService service;
@@ -66,6 +67,7 @@ class TeacherServiceTest {
         ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
         ReflectionTestUtils.setField(service, "sectionRepository", sectionRepository);
         ReflectionTestUtils.setField(service, "userRepository", userRepository);
+        ReflectionTestUtils.setField(service, "userSessionService", userSessionService);
 
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         lenient().when(securityUtil.getUsername()).thenReturn("admin");

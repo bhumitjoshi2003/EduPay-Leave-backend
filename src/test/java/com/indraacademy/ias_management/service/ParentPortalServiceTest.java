@@ -50,6 +50,7 @@ class ParentPortalServiceTest {
     @Mock private IdGeneratorService idGeneratorService;
     @Mock private PasswordResetService passwordResetService;
     @Mock private SchoolRepository schoolRepository;
+    @Mock private UserSessionService userSessionService;
 
     private ParentPortalService service;
 
@@ -57,7 +58,7 @@ class ParentPortalServiceTest {
     void setUp() {
         service = new ParentPortalService(parentRepository, relationshipRepository, studentRepository,
                 userRepository, passwordEncoder, securityUtil, entitlementService,
-                idGeneratorService, passwordResetService, schoolRepository);
+                idGeneratorService, passwordResetService, schoolRepository, userSessionService);
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
     }
 

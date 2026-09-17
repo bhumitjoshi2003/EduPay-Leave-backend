@@ -81,6 +81,7 @@ public class AuthController {
     @Autowired private RateLimiter rateLimiter;
     @Autowired private PermissionService permissionService;
     @Autowired private AuditService auditService;
+    @Autowired private com.indraacademy.ias_management.service.UserSessionService userSessionService;
 
     @Value("${auth.cookie.secure}")
     private boolean isSecure;
@@ -227,7 +228,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletResponse response) {
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest req, HttpServletRequest request, HttpServletResponse response) {
         if (rateLimiter.isRateLimited("login:" + req.getUserId(), 5, 300000)) {
             return ResponseEntity.status(429).body("Too many login attempts. Try again in 5 minutes.");
         }
@@ -304,8 +305,10 @@ public class AuthController {
                     .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                     .compact();
 
-            loggedIn.setRefreshTokenId(null);
-            userRepository.save(loggedIn);
+            // Precaution: a restricted (must-change-password) login issues no refresh
+            // token of its own, but revoke any still-active sessions from earlier,
+            // unrestricted logins on this account too.
+            userSessionService.revokeAllForUser(loggedIn.getUserId());
 
             response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("accessToken", restrictedAccessToken, Duration.ofMinutes(accessTokenExpiryMinutes)).toString());
 
@@ -334,16 +337,20 @@ public class AuthController {
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
-        // Generate a unique JTI and persist it so we can revoke this refresh token on logout
+        // Every login creates its own independent session row — logging in on another
+        // browser/device never touches this one. jti is a cryptographically random
+        // (UUID v4, SecureRandom-backed) session secret; only its SHA-256 hash is
+        // ever persisted (see UserSessionService), never the raw value.
         String jti = UUID.randomUUID().toString();
-        loggedIn.setRefreshTokenId(jti);
-        userRepository.save(loggedIn);
+        Date refreshExpiry = new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays));
+        userSessionService.createSession(loggedIn.getUserId(), jti, refreshExpiry.toInstant(),
+                request.getHeader("User-Agent"), request.getRemoteAddr());
 
         String refreshToken = Jwts.builder()
                 .setSubject(loggedIn.getUserId())
                 .setId(jti)
                 .setIssuedAt(new Date())
-                .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays)))
+                .setExpiration(refreshExpiry)
                 .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                 .compact();
 
@@ -539,11 +546,19 @@ public class AuthController {
                         .body("Your account is inactive. Please contact your school administrator.");
             }
 
-            // Verify the JTI matches the stored value — rejects any token issued before the last logout
-            if (tokenJti == null || !tokenJti.equals(loggedIn.getRefreshTokenId())) {
-                log.warn("Refresh token JTI mismatch for userId={} — token has been revoked.", userId);
+            // Resolve THIS specific session (never any other session belonging to the
+            // same user) — rejects a revoked, expired, or never-issued refresh token
+            // exactly as the old single-column JTI check did, but without invalidating
+            // every other concurrently logged-in session for this account.
+            if (tokenJti == null) {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token has been revoked.");
             }
+            var sessionOptional = userSessionService.resolveActive(tokenJti);
+            if (sessionOptional.isEmpty() || !sessionOptional.get().getUserId().equals(userId)) {
+                log.warn("Refresh token session not found/revoked for userId={}", userId);
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token has been revoked.");
+            }
+            var session = sessionOptional.get();
 
             // Reject token refresh if the school has been deactivated
             if (loggedIn.getSchoolId() != null) {
@@ -573,18 +588,27 @@ public class AuthController {
                 }
             }
 
-            String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole(), loggedIn.getSchoolId());
-
-            // Rotate the JTI so the old refresh token cannot be reused
+            // Rotate this SAME session onto a new refresh token — atomically, via a
+            // compare-and-swap UPDATE keyed on the session still having the exact hash
+            // this request read. If a concurrent refresh using the same token already
+            // won that race, this returns false and the row is left completely
+            // untouched — exactly one of two simultaneous refreshes may ever succeed.
             String newJti = UUID.randomUUID().toString();
-            loggedIn.setRefreshTokenId(newJti);
-            userRepository.save(loggedIn);
+            Date newRefreshExpiry = new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays));
+            boolean rotated = userSessionService.rotate(session, newJti, newRefreshExpiry.toInstant(),
+                    request.getHeader("User-Agent"), request.getRemoteAddr());
+            if (!rotated) {
+                log.warn("Refresh token rotation lost a concurrent race for userId={} — rejecting.", userId);
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Refresh token has been revoked.");
+            }
+
+            String newAccessToken = jwtUtil.generateAccessToken(userId, loggedIn.getRole(), loggedIn.getSchoolId());
 
             String newRefreshToken = Jwts.builder()
                     .setSubject(userId)
                     .setId(newJti)
                     .setIssuedAt(new Date())
-                    .setExpiration(new Date(System.currentTimeMillis() + (1000L * 60 * 60 * 24 * refreshTokenExpiryDays)))
+                    .setExpiration(newRefreshExpiry)
                     .signWith(jwtUtil.getPrivateKey(), SignatureAlgorithm.RS256)
                     .compact();
 
@@ -608,8 +632,9 @@ public class AuthController {
 
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletRequest request, HttpServletResponse response) {
-        // Revoke the refresh token server-side by clearing the stored JTI.
-        // This ensures the token cannot be reused even if someone captured its raw value.
+        // Revoke ONLY this session server-side — never any other session belonging to
+        // the same user. This ensures the token cannot be reused even if someone
+        // captured its raw value, without logging the user out on their other devices.
         jakarta.servlet.http.Cookie refreshCookieRaw = WebUtils.getCookie(request, "refreshToken");
         if (refreshCookieRaw != null) {
             try {
@@ -618,12 +643,11 @@ public class AuthController {
                         .build()
                         .parseClaimsJws(refreshCookieRaw.getValue())
                         .getBody();
-                String userId = claims.getSubject();
-                userRepository.findByUserId(userId).ifPresent(user -> {
-                    user.setRefreshTokenId(null);
-                    userRepository.save(user);
-                });
-                log.info("Refresh token revoked server-side for userId={}", userId);
+                String tokenJti = claims.getId();
+                if (tokenJti != null) {
+                    userSessionService.revokeByRawToken(tokenJti);
+                }
+                log.info("Session revoked server-side for userId={}", claims.getSubject());
             } catch (Exception e) {
                 // Token may already be expired or malformed — still clear cookies
                 log.debug("Could not parse refresh token during logout: {}", e.getMessage());
@@ -634,6 +658,70 @@ public class AuthController {
         response.addHeader(HttpHeaders.SET_COOKIE, buildCookie("refreshToken", "", Duration.ZERO).toString());
 
         return ResponseEntity.ok("Logged out successfully");
+    }
+
+    /** Lists the CALLING user's own active sessions only — never another user's (the
+     * userId comes from the SecurityContext, never a request parameter). */
+    @GetMapping("/sessions")
+    public ResponseEntity<?> listSessions(HttpServletRequest request) {
+        String userId = authService.getUserId();
+        String currentHash = currentSessionHash(request);
+        return ResponseEntity.ok(userSessionService.listActiveSessions(userId, currentHash));
+    }
+
+    /** Revokes one of the CALLING user's own sessions. Ownership is enforced inside
+     * UserSessionService#revokeOwnSession — a session id belonging to another user
+     * returns the same 404 as one that doesn't exist, so this endpoint can never be
+     * used to probe for or revoke another user's session. */
+    @PostMapping("/sessions/{id}/revoke")
+    public ResponseEntity<?> revokeSession(@PathVariable Long id) {
+        String userId = authService.getUserId();
+        boolean revoked = userSessionService.revokeOwnSession(id, userId);
+        if (!revoked) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Session not found.");
+        }
+        return ResponseEntity.ok("Session revoked.");
+    }
+
+    /** "Log out all other sessions" — keeps the session making this very request
+     * alive, revokes every other active session for the calling user. */
+    @PostMapping("/sessions/revoke-others")
+    public ResponseEntity<?> revokeOtherSessions(HttpServletRequest request) {
+        String userId = authService.getUserId();
+        String currentHash = currentSessionHash(request);
+        int count = userSessionService.revokeAllOthers(userId, currentHash);
+        return ResponseEntity.ok(Map.of("revokedCount", count));
+    }
+
+    /** "Log out everywhere" — revokes every session for the calling user, including
+     * the one making this request, and clears this browser's cookies too. */
+    @PostMapping("/logout-all")
+    public ResponseEntity<?> logoutAll(HttpServletResponse response) {
+        String userId = authService.getUserId();
+        int count = userSessionService.revokeAllForUser(userId);
+        clearCookies(response);
+        return ResponseEntity.ok(Map.of("revokedCount", count));
+    }
+
+    /** Best-effort: resolves the SHA-256 hash of the current request's own refresh
+     * token, so the caller's own session can be identified as "current" / excluded
+     * from "revoke others". Returns null (never throws) if the cookie is missing,
+     * expired, or malformed — callers must treat null as "current session unknown"
+     * rather than an error. */
+    private String currentSessionHash(HttpServletRequest request) {
+        jakarta.servlet.http.Cookie refreshCookieRaw = WebUtils.getCookie(request, "refreshToken");
+        if (refreshCookieRaw == null) return null;
+        try {
+            Claims claims = Jwts.parserBuilder()
+                    .setSigningKey(jwtUtil.getPublicKey())
+                    .build()
+                    .parseClaimsJws(refreshCookieRaw.getValue())
+                    .getBody();
+            String tokenJti = claims.getId();
+            return tokenJti != null ? userSessionService.hash(tokenJti) : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @PostMapping("/change-password")
@@ -753,7 +841,7 @@ public class AuthController {
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         user.setMustChangePassword(false);
-        user.setRefreshTokenId(null); // invalidate any lingering sessions/refresh tokens
+        userSessionService.revokeAllForUser(userId); // invalidate any lingering sessions/refresh tokens
         userRepository.save(user);
 
         // Invalidate the restricted access token cookie — the client must sign in again.
@@ -809,7 +897,7 @@ public class AuthController {
 
         target.setPassword(passwordEncoder.encode(dob.format(DateTimeFormatter.BASIC_ISO_DATE)));
         target.setMustChangePassword(true);
-        target.setRefreshTokenId(null);
+        userSessionService.revokeAllForUser(target.getUserId());
         userRepository.save(target);
 
         auditService.log(callingUserId, callingRole, "RESET_PASSWORD_TO_DEFAULT", "User", targetUserId,
@@ -906,6 +994,11 @@ public class AuthController {
             // login, immediately after having just set a real password.
             user.setMustChangePassword(false);
             userRepository.save(user);
+            // A forgotten-password reset is the classic "my account may be compromised"
+            // scenario — unlike a self-service change-password (which already re-proved
+            // the old password in the same request), there is no way to know whether an
+            // attacker holds a live session on this account. Revoke all of them.
+            userSessionService.revokeAllForUser(user.getUserId());
             log.info("Password reset successfully for user: {}", user.getUserId());
 
             return ResponseEntity.ok("Password reset successfully.");

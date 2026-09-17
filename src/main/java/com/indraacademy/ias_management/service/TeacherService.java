@@ -65,6 +65,9 @@ public class TeacherService {
     private IdGeneratorService idGeneratorService;
 
     @Autowired
+    private UserSessionService userSessionService;
+
+    @Autowired
     private SchoolClassRepository schoolClassRepository;
 
     @Autowired
@@ -236,7 +239,7 @@ public class TeacherService {
         teacher.setClassTeacherSectionId(null);
         userRepository.findByUserId(teacherId).ifPresent(user -> {
             user.setActive(false);
-            user.setRefreshTokenId(null);
+            userSessionService.revokeAllForUser(user.getUserId());
             userRepository.save(user);
         });
         Teacher saved = teacherRepository.save(teacher);
@@ -258,7 +261,7 @@ public class TeacherService {
         teacher.setExitRemarks(null);
         userRepository.findByUserId(teacherId).ifPresent(user -> {
             user.setActive(true);
-            user.setRefreshTokenId(null);
+            userSessionService.revokeAllForUser(user.getUserId());
             userRepository.save(user);
         });
         Teacher saved = teacherRepository.save(teacher);
