@@ -23,6 +23,7 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -78,8 +79,20 @@ public class TeacherAttendanceReminderScheduler {
     @Autowired private BusinessNotificationService businessNotifications;
     @Autowired private Clock clock;
 
+    /**
+     * Safe-rollout switch for {@link TeacherAttendanceReminderDynamicScheduler} (default off).
+     * When true, this legacy 5-minute PostgreSQL scan must return before touching the database at
+     * all — the dynamic per-school scheduler owns reminder delivery instead. Mirrors
+     * NotificationDeliveryWorker.poll()'s existing redisEnabled early-return gate.
+     */
+    @Value("${teacher.attendance.reminder.dynamic-scheduling.enabled:false}")
+    private boolean dynamicSchedulingEnabled;
+
     @Scheduled(cron = "0 */5 * * * *")
     public void sendTeacherAttendanceReminders() {
+        if (dynamicSchedulingEnabled) {
+            return;
+        }
         List<School> candidateSchools = schoolRepository.findAll().stream()
                 .filter(School::isActive)
                 .filter(School::isTeacherAttendanceReminderEnabled)
@@ -103,9 +116,16 @@ public class TeacherAttendanceReminderScheduler {
         }
     }
 
-    /** Returns true iff the school's reminder time was due this tick (regardless of how many,
-     * if any, teachers actually ended up eligible) — used only for the summary log above. */
-    private boolean processSchool(School school) {
+    /**
+     * Returns true iff the school's reminder time was due this tick (regardless of how many,
+     * if any, teachers actually ended up eligible) — used for the summary log above.
+     *
+     * <p>Package-private so {@link TeacherAttendanceReminderDynamicScheduler} can reuse the exact
+     * same eligibility/catch-up-window logic for its single scheduled school, instead of
+     * duplicating it. Its own internal {@link #isDueNow} check doubles as the execution-time
+     * catch-up/lateness tolerance for the dynamic scheduler too — see that class's javadoc.
+     */
+    boolean processSchool(School school) {
         LocalTime reminderTime = school.getTeacherAttendanceReminderTime();
         if (reminderTime == null) {
             log.warn("School {} has the teacher attendance reminder enabled but no reminder time configured — skipping.",

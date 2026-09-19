@@ -132,6 +132,7 @@ jobs:
                 -e FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json \
                 -e REDIS_URL='${{ secrets.REDIS_URL }}' \
                 -e NOTIFICATION_DELIVERY_REDIS_ENABLED=true \
+                -e TEACHER_ATTENDANCE_REMINDER_DYNAMIC_SCHEDULING_ENABLED=true \
                 -e DEMO_NOTIFY_EMAIL='${{ secrets.DEMO_NOTIFY_EMAIL }}' \
                 -e AI_SERVICE_URL='${{ secrets.AI_SERVICE_URL }}' \
                 -e AI_INTERNAL_SECRET='${{ secrets.AI_INTERNAL_SECRET }}' \

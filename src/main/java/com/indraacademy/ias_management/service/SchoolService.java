@@ -30,6 +30,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -79,6 +80,7 @@ public class SchoolService {
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private AcademicSessionService academicSessionService;
     @Autowired private SlugResolutionService slugResolutionService;
+    @Autowired private ApplicationEventPublisher eventPublisher;
 
     /**
      * Creates a new school and its first ADMIN user account.
@@ -357,6 +359,13 @@ public class SchoolService {
                 "name=" + updated.getName(),
                 request.getRemoteAddr()
         );
+
+        // Published unconditionally (not just when the reminder fields actually changed) since a
+        // timezone change can co-occur with a reminder enable/time change in this same save, and
+        // the listener always reloads authoritative settings itself rather than diffing this
+        // event's payload. Only takes effect AFTER this transaction commits — see
+        // TeacherAttendanceReminderScheduleChangedEvent's javadoc.
+        eventPublisher.publishEvent(new TeacherAttendanceReminderScheduleChangedEvent(schoolId));
 
         return SchoolSettingsResponse.from(updated);
     }

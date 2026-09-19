@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
@@ -49,6 +50,7 @@ class SchoolServiceTest {
     @Mock private AuditService auditService;
     @Mock private SecurityUtil securityUtil;
     @Mock private EntitlementRefreshService entitlementRefreshService;
+    @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private HttpServletRequest request;
 
     private SchoolService service;
@@ -67,6 +69,7 @@ class SchoolServiceTest {
         ReflectionTestUtils.setField(service, "auditService", auditService);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "entitlementRefreshService", entitlementRefreshService);
+        ReflectionTestUtils.setField(service, "eventPublisher", eventPublisher);
 
         lenient().when(schoolRepository.count()).thenReturn(5L);
         lenient().when(schoolRepository.countByActiveTrue()).thenReturn(4L);
@@ -213,6 +216,37 @@ class SchoolServiceTest {
 
         assertThat(response.isTeacherAttendanceReminderEnabled()).isTrue();
         assertThat(response.getTeacherAttendanceReminderTime()).isEqualTo("07:45");
+    }
+
+    // Every settings save publishes the reschedule event unconditionally — the
+    // TeacherAttendanceReminderDynamicScheduler listener (AFTER_COMMIT-gated) decides for itself
+    // whether anything actually needs rescheduling by reloading current settings, so this method
+    // never needs to diff which field changed.
+    @Test
+    void updateSettings_publishesTheScheduleChangedEventUnconditionally_evenForAnUnrelatedFieldChange() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existingSchool()));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setName("Unrelated update"); // reminder fields never sent
+
+        service.updateSettings(req, request);
+
+        verify(eventPublisher).publishEvent(new TeacherAttendanceReminderScheduleChangedEvent(SCHOOL_ID));
+    }
+
+    @Test
+    void updateSettings_rejectedUpdate_neverPublishesTheScheduleChangedEvent() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(existingSchool()));
+
+        SchoolSettingsUpdateRequest req = new SchoolSettingsUpdateRequest();
+        req.setTeacherAttendanceReminderEnabled(true);
+        // no reminder time supplied — updateSettings throws before ever saving or publishing
+
+        assertThatThrownBy(() -> service.updateSettings(req, request)).isInstanceOf(IllegalArgumentException.class);
+        verify(eventPublisher, org.mockito.Mockito.never()).publishEvent(any());
     }
 
     @Test

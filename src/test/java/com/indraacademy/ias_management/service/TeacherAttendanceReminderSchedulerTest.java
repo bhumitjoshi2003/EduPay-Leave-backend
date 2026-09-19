@@ -43,6 +43,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -441,6 +442,36 @@ class TeacherAttendanceReminderSchedulerTest {
     }
 
     // ─── isDueNow — the catch-up window boundary itself ─────────────────────────
+
+    // ─── Dynamic-scheduling rollout flag (scenario 30 — mandatory zero-DB-interaction check) ────
+
+    // Q — when dynamic scheduling is enabled, the legacy 5-minute poll must return before any DB
+    // access at all, mirroring NotificationDeliveryWorker.poll()'s redisEnabled gate.
+    @Test
+    void dynamicSchedulingEnabled_legacyPollReturnsWithoutTouchingAnyRepository() {
+        ReflectionTestUtils.setField(scheduler, "dynamicSchedulingEnabled", true);
+
+        scheduler.sendTeacherAttendanceReminders();
+
+        verifyNoInteractions(schoolRepository, schoolHolidayRepository, teacherRepository, userRepository,
+                teacherAttendanceRepository, teacherLeaveRepository, teacherAttendanceScheduleService,
+                businessNotifications);
+    }
+
+    @Test
+    void dynamicSchedulingDisabled_legacyPollStillScansAsBefore() {
+        ReflectionTestUtils.setField(scheduler, "dynamicSchedulingEnabled", false);
+        School school = school(LocalTime.of(7, 45), true);
+        Teacher t = teacher(TEACHER_ID);
+        when(schoolRepository.findAll()).thenReturn(List.of(school));
+        wireHappyPathDefaults(school, t);
+
+        scheduler.sendTeacherAttendanceReminders();
+
+        verify(schoolRepository).findAll();
+        verify(businessNotifications).direct(eq(SCHOOL_ID), eq(TEACHER_ID), any(), any(), any(), any(),
+                any(), any(), any(), any(), eq(expectedKey()), anySet());
+    }
 
     @Test
     void isDueNow_boundaryChecks() {
