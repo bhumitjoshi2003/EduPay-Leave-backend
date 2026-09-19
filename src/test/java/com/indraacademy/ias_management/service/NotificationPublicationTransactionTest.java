@@ -9,12 +9,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -25,13 +28,14 @@ class NotificationPublicationTransactionTest {
     @Mock UserRepository userRepository;
     @Mock NotificationRecipientResolver recipientResolver;
     @Mock NotificationChannelPolicyResolver channelPolicy;
+    @Mock ApplicationEventPublisher eventPublisher;
 
     private NotificationPublicationTransaction transaction;
 
     @BeforeEach
     void setUp() {
         transaction = new NotificationPublicationTransaction(notificationRepository, inboxRepository,
-                deliveryRepository, userRepository, recipientResolver, channelPolicy);
+                deliveryRepository, userRepository, recipientResolver, channelPolicy, eventPublisher);
         when(recipientResolver.resolve(2L, new NotificationAudience(NotificationAudienceType.CLASS, "9-A")))
                 .thenReturn(Set.of("student-1", "parent-1"));
         when(notificationRepository.saveAndFlush(any())).thenAnswer(invocation -> {
@@ -81,6 +85,8 @@ class NotificationPublicationTransactionTest {
                 });
         assertThat(publication.deliveries()).filteredOn(d -> d.getChannel() == ExternalDeliveryChannel.PUSH)
                 .allSatisfy(d -> assertThat(d.getDestination()).isEqualTo(d.getRecipientUserId()));
+
+        verify(eventPublisher).publishEvent(new NotificationDeliveryWorkAvailableEvent(2L));
     }
 
     @Test
@@ -92,6 +98,25 @@ class NotificationPublicationTransactionTest {
 
         assertThat(publication.recipients()).hasSize(2);
         assertThat(publication.deliveries()).isEmpty();
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void noWorkAvailableEventWhenEveryCreatedDeliveryIsAlreadyTerminal() {
+        // EMAIL-only channel, both recipients lack an email address — every created delivery row
+        // is SKIPPED at creation time, so there is genuinely nothing for a worker to wake up for.
+        when(channelPolicy.resolve(2L, NotificationEventCode.NOTICE_PUBLISHED,
+                NotificationCategory.NOTICE_ANNOUNCEMENT, Set.of(ExternalDeliveryChannel.EMAIL)))
+                .thenReturn(Set.of(ExternalDeliveryChannel.EMAIL));
+        when(userRepository.findBySchoolIdAndActiveTrueAndUserIdIn(any(), any()))
+                .thenReturn(List.of(user("student-1", null), user("parent-1", null)));
+        when(deliveryRepository.saveAllAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        NotificationPublication publication = transaction.publishNew(request(Set.of(ExternalDeliveryChannel.EMAIL)));
+
+        assertThat(publication.deliveries()).hasSize(2)
+                .allSatisfy(d -> assertThat(d.getStatus()).isEqualTo(NotificationDeliveryStatus.SKIPPED));
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     private NotificationPublishRequest request(Set<ExternalDeliveryChannel> channels) {

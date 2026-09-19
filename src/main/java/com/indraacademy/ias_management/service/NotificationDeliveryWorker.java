@@ -33,6 +33,7 @@ public class NotificationDeliveryWorker {
     private final UserRepository userRepository;
     private final SchoolRepository schoolRepository;
     private final NotificationWorkerHeartbeat heartbeat;
+    private final NotificationDeliveryRetryCoordinator retryCoordinator;
     private final AtomicBoolean running = new AtomicBoolean();
     private final String workerInstance = UUID.randomUUID().toString();
 
@@ -42,6 +43,8 @@ public class NotificationDeliveryWorker {
     private long leaseSeconds;
     @Value("${notification.delivery.retention-days:90}")
     private long retentionDays;
+    @Value("${notification.delivery.redis.enabled:false}")
+    private boolean redisEnabled;
 
     public NotificationDeliveryWorker(NotificationDeliveryClaimService claimService,
                                       NotificationDeliveryStateService stateService,
@@ -49,7 +52,8 @@ public class NotificationDeliveryWorker {
                                       NotificationDeliveryFailureClassifier failureClassifier,
                                       FcmService fcmService, EmailService emailService,
                                       UserRepository userRepository, SchoolRepository schoolRepository,
-                                      NotificationWorkerHeartbeat heartbeat) {
+                                      NotificationWorkerHeartbeat heartbeat,
+                                      NotificationDeliveryRetryCoordinator retryCoordinator) {
         this.claimService = claimService;
         this.stateService = stateService;
         this.retryPolicy = retryPolicy;
@@ -59,13 +63,40 @@ public class NotificationDeliveryWorker {
         this.userRepository = userRepository;
         this.schoolRepository = schoolRepository;
         this.heartbeat = heartbeat;
+        this.retryCoordinator = retryCoordinator;
+    }
+
+    /** Stable per-JVM identity, reused as the Redis Stream consumer name so a restarted or
+     * horizontally-scaled instance never collides with another instance's identity. */
+    public String instanceId() {
+        return workerInstance;
     }
 
     @Scheduled(fixedDelayString = "${notification.delivery.poll-interval-ms:30000}",
             initialDelayString = "${notification.delivery.initial-delay-ms:15000}")
     public void poll() {
+        if (redisEnabled) {
+            // Redis fast path owns wake-up duties in this mode (stream signal + retry-due check +
+            // startup/hourly reconciliation, see NotificationDeliveryRedisMaintenanceScheduler).
+            // This legacy scheduled method must return before opening a transaction or acquiring
+            // a PostgreSQL connection — the whole point of Redis mode is that idle polling like
+            // this must not keep waking Neon every 30 seconds.
+            log.debug("Notification delivery Redis mode enabled — skipping legacy DB poll");
+            return;
+        }
+        runOnce();
+    }
+
+    /**
+     * The actual claim-and-process pass, callable from any wake-up source: the legacy scheduled
+     * poll (Redis mode off), the Redis Stream consumer, the Redis retry-due check, reclaimed
+     * stream pending entries, startup recovery, and hourly reconciliation. Safe to call
+     * concurrently from multiple sources — {@link #running} ensures only one pass executes at a
+     * time regardless of which caller invoked it.
+     */
+    public void runOnce() {
         if (!running.compareAndSet(false, true)) {
-            log.debug("Notification delivery poll skipped because this instance is still running");
+            log.debug("Notification delivery claim pass skipped because this instance is still running");
             return;
         }
         String leaseOwner = workerInstance + ":" + UUID.randomUUID();
@@ -129,17 +160,32 @@ public class NotificationDeliveryWorker {
     private void complete(ClaimedNotificationDelivery delivery, ExternalDeliveryResult result, LocalDateTime now) {
         boolean updated;
         switch (result.outcome()) {
-            case SENT -> updated = stateService.markSent(delivery.id(), delivery.leaseOwner(),
-                    result.providerMessageId(), now);
-            case SKIPPED -> updated = stateService.markSkipped(delivery.id(), delivery.leaseOwner(), result.detail());
-            case PERMANENT_FAILURE -> updated = stateService.markFinal(delivery.id(), delivery.leaseOwner(), result.detail());
+            case SENT -> {
+                updated = stateService.markSent(delivery.id(), delivery.leaseOwner(),
+                        result.providerMessageId(), now);
+                if (updated) retryCoordinator.clearRetry(delivery.id());
+            }
+            case SKIPPED -> {
+                updated = stateService.markSkipped(delivery.id(), delivery.leaseOwner(), result.detail());
+                if (updated) retryCoordinator.clearRetry(delivery.id());
+            }
+            case PERMANENT_FAILURE -> {
+                updated = stateService.markFinal(delivery.id(), delivery.leaseOwner(), result.detail());
+                if (updated) retryCoordinator.clearRetry(delivery.id());
+            }
             case RETRYABLE_FAILURE -> {
                 if (retryPolicy.mayRetry(delivery.attemptCount())) {
-                    updated = stateService.markRetryable(delivery.id(), delivery.leaseOwner(), result.detail(),
-                            now.plus(retryPolicy.delayAfterFailure(delivery.attemptCount())));
+                    LocalDateTime retryAt = now.plus(retryPolicy.delayAfterFailure(delivery.attemptCount()));
+                    updated = stateService.markRetryable(delivery.id(), delivery.leaseOwner(), result.detail(), retryAt);
+                    // PostgreSQL's own next_attempt_at is authoritative regardless of this call's
+                    // outcome — Redis only shortens how long it takes to notice the retry is due.
+                    if (updated) retryCoordinator.scheduleRetry(delivery.id(), retryAt);
                 } else {
                     updated = stateService.markFinal(delivery.id(), delivery.leaseOwner(),
                             "Retry limit reached: " + result.detail());
+                    // FAILED_FINAL must never keep being scheduled — remove any stale entry so a
+                    // delivery that just exhausted its attempts stops surfacing as "due".
+                    if (updated) retryCoordinator.clearRetry(delivery.id());
                 }
             }
             default -> throw new IllegalStateException("Unsupported delivery result " + result.outcome());

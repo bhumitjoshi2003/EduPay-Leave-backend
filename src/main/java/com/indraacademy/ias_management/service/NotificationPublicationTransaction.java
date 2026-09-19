@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.entity.UserNotification;
 import com.indraacademy.ias_management.notification.ExternalDeliveryChannel;
 import com.indraacademy.ias_management.notification.NotificationDeliveryStatus;
+import com.indraacademy.ias_management.notification.NotificationDeliveryWorkAvailableEvent;
 import com.indraacademy.ias_management.notification.NotificationPriority;
 import com.indraacademy.ias_management.notification.NotificationPublication;
 import com.indraacademy.ias_management.notification.NotificationPublishRequest;
@@ -13,6 +14,7 @@ import com.indraacademy.ias_management.repository.NotificationDeliveryRepository
 import com.indraacademy.ias_management.repository.NotificationRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,19 +35,22 @@ public class NotificationPublicationTransaction {
     private final UserRepository userRepository;
     private final NotificationRecipientResolver recipientResolver;
     private final NotificationChannelPolicyResolver channelPolicy;
+    private final ApplicationEventPublisher eventPublisher;
 
     public NotificationPublicationTransaction(NotificationRepository notificationRepository,
                                               UserNotificationRepository inboxRepository,
                                               NotificationDeliveryRepository deliveryRepository,
                                               UserRepository userRepository,
                                               NotificationRecipientResolver recipientResolver,
-                                              NotificationChannelPolicyResolver channelPolicy) {
+                                              NotificationChannelPolicyResolver channelPolicy,
+                                              ApplicationEventPublisher eventPublisher) {
         this.notificationRepository = notificationRepository;
         this.inboxRepository = inboxRepository;
         this.deliveryRepository = deliveryRepository;
         this.userRepository = userRepository;
         this.recipientResolver = recipientResolver;
         this.channelPolicy = channelPolicy;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -59,6 +64,14 @@ public class NotificationPublicationTransaction {
                 request.schoolId(), request.eventCode(), request.category(), request.requestedChannels());
         List<NotificationDelivery> deliveries = createDeliveries(notification, inboxRows, channels);
         if (!deliveries.isEmpty()) deliveries = deliveryRepository.saveAllAndFlush(deliveries);
+
+        // Only worth waking a worker for rows that actually need sending — a delivery created
+        // already-SKIPPED (e.g. EMAIL channel, no address on file) is terminal on arrival.
+        boolean hasPendingWork = deliveries.stream().anyMatch(d -> d.getStatus() == NotificationDeliveryStatus.PENDING);
+        if (hasPendingWork) {
+            eventPublisher.publishEvent(new NotificationDeliveryWorkAvailableEvent(request.schoolId()));
+        }
+
         return new NotificationPublication(notification, List.copyOf(inboxRows), List.copyOf(deliveries), false);
     }
 

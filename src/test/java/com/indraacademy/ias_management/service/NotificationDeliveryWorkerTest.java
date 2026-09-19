@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -31,12 +32,47 @@ class NotificationDeliveryWorkerTest {
     @Mock UserRepository users;
     @Mock SchoolRepository schools;
     @Mock NotificationWorkerHeartbeat heartbeat;
+    @Mock NotificationDeliveryRetryCoordinator retryCoordinator;
     NotificationDeliveryWorker worker;
 
     @BeforeEach
     void setUp() {
         worker = new NotificationDeliveryWorker(claims, states, new NotificationRetryPolicy(5),
-                classifier, fcm, email, users, schools, heartbeat);
+                classifier, fcm, email, users, schools, heartbeat, retryCoordinator);
+    }
+
+    // ─── Redis mode gating on the legacy scheduled poll (scenarios A/B) ───
+
+    @Test
+    void redisModeDisabled_legacyThirtySecondPollStillClaims() {
+        ReflectionTestUtils.setField(worker, "redisEnabled", false);
+        when(claims.claim(any(), anyInt(), any(), anyString())).thenReturn(List.of());
+
+        worker.poll();
+
+        verify(claims).claim(any(), anyInt(), any(), anyString());
+    }
+
+    @Test
+    void redisModeEnabled_legacyPollReturnsWithoutTouchingPostgres() {
+        ReflectionTestUtils.setField(worker, "redisEnabled", true);
+
+        worker.poll();
+
+        verifyNoInteractions(claims);
+    }
+
+    @Test
+    void runOnceStillClaimsRegardlessOfRedisModeFlag() {
+        // runOnce() is the method every wake-up source (Redis consumer, retry tick, startup,
+        // hourly reconciliation) calls directly — it must never itself check the flag, only the
+        // legacy scheduled poll() does that.
+        ReflectionTestUtils.setField(worker, "redisEnabled", true);
+        when(claims.claim(any(), anyInt(), any(), anyString())).thenReturn(List.of());
+
+        worker.runOnce();
+
+        verify(claims).claim(any(), anyInt(), any(), anyString());
     }
 
     @Test
@@ -91,6 +127,65 @@ class NotificationDeliveryWorkerTest {
 
         worker.processDelivery(delivery(ExternalDeliveryChannel.PUSH, 5));
         verify(states).markFinal(10L, "lease", "Retry limit reached: unavailable");
+    }
+
+    // ─── Retry coordinator hooks (scenarios G/I) ───
+
+    @Test
+    void retryableFailureSchedulesTheRedisRetrySignalWhenTheDbTransitionSucceeds() {
+        when(users.findByUserIdAndSchoolIdAndActiveTrue("student-1", 2L)).thenReturn(Optional.of(user(null)));
+        when(fcm.deliverToUser(anyString(), anyLong(), anyString(), anyString(), anyLong(),
+                nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class)))
+                .thenReturn(ExternalDeliveryResult.retryable("unavailable"));
+        when(states.markRetryable(eq(10L), eq("lease"), eq("unavailable"), any(LocalDateTime.class))).thenReturn(true);
+
+        worker.processDelivery(delivery(ExternalDeliveryChannel.PUSH, 1));
+
+        verify(retryCoordinator).scheduleRetry(eq(10L), any(LocalDateTime.class));
+        verify(retryCoordinator, never()).clearRetry(anyLong());
+    }
+
+    @Test
+    void exhaustedRetriesClearAnyRedisRetrySignal_noEndlessRetryScheduling() {
+        when(users.findByUserIdAndSchoolIdAndActiveTrue("student-1", 2L)).thenReturn(Optional.of(user(null)));
+        when(fcm.deliverToUser(anyString(), anyLong(), anyString(), anyString(), anyLong(),
+                nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class)))
+                .thenReturn(ExternalDeliveryResult.retryable("unavailable"));
+        when(states.markFinal(10L, "lease", "Retry limit reached: unavailable")).thenReturn(true);
+
+        worker.processDelivery(delivery(ExternalDeliveryChannel.PUSH, 5)); // already at max attempts
+
+        verify(retryCoordinator).clearRetry(10L);
+        verify(retryCoordinator, never()).scheduleRetry(anyLong(), any());
+    }
+
+    @Test
+    void sentDeliveryClearsAnyPriorRedisRetrySignal() {
+        var delivery = delivery(ExternalDeliveryChannel.PUSH, 2);
+        when(users.findByUserIdAndSchoolIdAndActiveTrue("student-1", 2L)).thenReturn(Optional.of(user(null)));
+        when(fcm.deliverToUser(eq("student-1"), eq(2L), eq("Title"), eq("Message"), anyLong(),
+                nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class)))
+                .thenReturn(ExternalDeliveryResult.sent("fcm-id"));
+        when(states.markSent(eq(10L), eq("lease"), eq("fcm-id"), any())).thenReturn(true);
+
+        worker.processDelivery(delivery);
+
+        verify(retryCoordinator).clearRetry(10L);
+    }
+
+    @Test
+    void aStaleCompletionNeverTouchesTheRetryCoordinator() {
+        // markRetryable returns false when the lease was already reclaimed by another worker —
+        // there is nothing this instance's completion should do to Redis in that case.
+        when(users.findByUserIdAndSchoolIdAndActiveTrue("student-1", 2L)).thenReturn(Optional.of(user(null)));
+        when(fcm.deliverToUser(anyString(), anyLong(), anyString(), anyString(), anyLong(),
+                nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class), nullable(String.class)))
+                .thenReturn(ExternalDeliveryResult.retryable("unavailable"));
+        when(states.markRetryable(eq(10L), eq("lease"), eq("unavailable"), any(LocalDateTime.class))).thenReturn(false);
+
+        worker.processDelivery(delivery(ExternalDeliveryChannel.PUSH, 1));
+
+        verifyNoInteractions(retryCoordinator);
     }
 
     @Test
