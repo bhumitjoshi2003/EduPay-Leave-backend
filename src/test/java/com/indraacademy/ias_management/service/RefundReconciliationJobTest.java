@@ -65,6 +65,30 @@ class RefundReconciliationJobTest {
         verifyNoInteractions(refundRepository, razorpayService);
     }
 
+    // Mandatory per the redesign spec: when RefundReconciliationDynamicScheduler owns
+    // reconciliation, this legacy poll must return before touching PostgreSQL at all — mirrors
+    // NotificationDeliveryWorker.poll()'s and TeacherAttendanceReminderScheduler's own gate.
+    @Test
+    void dynamicModeEnabled_legacyPollReturnsWithoutTouchingAnyRepositoryOrRazorpay() {
+        ReflectionTestUtils.setField(job, "dynamicEnabled", true);
+
+        job.poll();
+
+        verifyNoInteractions(refundRepository, razorpayService);
+    }
+
+    @Test
+    void dynamicModeDisabled_legacyPollStillScansAsBefore() {
+        ReflectionTestUtils.setField(job, "dynamicEnabled", false);
+        Refund refund = refund(1L, "rfnd_1");
+        when(refundRepository.findStalePendingRefundsWithProviderId(any(), any())).thenReturn(List.of(refund));
+
+        job.poll();
+
+        verify(refundRepository).findStalePendingRefundsWithProviderId(any(), any());
+        verify(razorpayService).reconcileRefund(1L);
+    }
+
     @Test
     void reconcileBatch_noCandidates_doesNothing() {
         when(refundRepository.findStalePendingRefundsWithProviderId(any(), any())).thenReturn(List.of());

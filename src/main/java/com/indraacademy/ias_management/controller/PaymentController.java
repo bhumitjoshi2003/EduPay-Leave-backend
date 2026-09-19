@@ -20,6 +20,7 @@ import com.indraacademy.ias_management.service.OnlinePaymentPricingCalculator;
 import com.indraacademy.ias_management.service.PaymentPricingService;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -52,6 +53,18 @@ public class PaymentController {
     @Autowired private ParentPortalService parentPortalService;
     @Autowired private AttendanceService attendanceService;
     @Autowired private PaymentPricingService paymentPricingService;
+
+    /**
+     * Kill switch for refund initiation, independent of the ADMIN role check below — code
+     * default true (unchanged current behavior). There is currently no stronger existing role
+     * that is also school-scoped the way this endpoint needs (SUPER_ADMIN's JWT carries no
+     * schoolId, so it cannot be substituted here without deeper changes to how the school context
+     * is resolved). Until a proper privileged refund workflow exists, this flag is the safe way
+     * to lock the endpoint down operationally without touching authorization semantics or
+     * removing any refund business logic.
+     */
+    @Value("${refund.initiation.enabled:true}")
+    private boolean refundInitiationEnabled;
 
     /** Tight tolerance for the client-displayed vs. server-computed core checkout amount
      * (school fee + late fee + platform fee) — absorbs last-cent rounding differences, not
@@ -369,6 +382,13 @@ public class PaymentController {
             @PathVariable Long paymentId,
             @Valid @RequestBody RefundRequest request,
             HttpServletRequest httpRequest) {
+
+        if (!refundInitiationEnabled) {
+            log.warn("Refund initiation is currently disabled by configuration — rejecting request for paymentId={}.",
+                    paymentId);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Refund initiation is currently disabled. Contact platform support to process this refund."));
+        }
 
         log.info("Refund request for payment ID: {} amount: {} paise", paymentId, request.getAmount());
 

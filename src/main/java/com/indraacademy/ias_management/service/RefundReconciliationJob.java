@@ -57,6 +57,16 @@ public class RefundReconciliationJob {
     @Value("${refund.reconciliation.enabled:true}")
     private boolean enabled;
 
+    /**
+     * Safe-rollout switch for {@link RefundReconciliationDynamicScheduler} (default off). When
+     * true, this legacy unconditional 5-minute PostgreSQL poll must return before touching the
+     * database at all — the dynamic per-refund scheduler owns reconciliation instead. Mirrors
+     * NotificationDeliveryWorker.poll()'s and TeacherAttendanceReminderScheduler's existing
+     * early-return gate pattern.
+     */
+    @Value("${refund.reconciliation.dynamic.enabled:false}")
+    private boolean dynamicEnabled;
+
     @Value("${refund.reconciliation.pending-min-age-minutes:5}")
     private long pendingMinAgeMinutes;
 
@@ -79,6 +89,9 @@ public class RefundReconciliationJob {
     @Scheduled(fixedDelayString = "${refund.reconciliation.fixed-delay-ms:300000}",
             initialDelayString = "${refund.reconciliation.initial-delay-ms:60000}")
     public void poll() {
+        if (dynamicEnabled) {
+            return;
+        }
         if (!enabled) {
             return;
         }

@@ -133,6 +133,8 @@ jobs:
                 -e REDIS_URL='${{ secrets.REDIS_URL }}' \
                 -e NOTIFICATION_DELIVERY_REDIS_ENABLED=true \
                 -e TEACHER_ATTENDANCE_REMINDER_DYNAMIC_SCHEDULING_ENABLED=true \
+                -e REFUND_RECONCILIATION_DYNAMIC_ENABLED=true \
+                -e REFUND_INITIATION_ENABLED=false \
                 -e DEMO_NOTIFY_EMAIL='${{ secrets.DEMO_NOTIFY_EMAIL }}' \
                 -e AI_SERVICE_URL='${{ secrets.AI_SERVICE_URL }}' \
                 -e AI_INTERNAL_SECRET='${{ secrets.AI_INTERNAL_SECRET }}' \

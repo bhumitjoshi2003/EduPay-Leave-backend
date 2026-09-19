@@ -17,6 +17,7 @@ import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -69,6 +70,7 @@ public class RefundSettlementService {
     @Autowired private BusinessNotificationService businessNotifications;
     @Autowired private AuditService auditService;
     @Autowired private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    @Autowired private ApplicationEventPublisher eventPublisher;
     @PersistenceContext private EntityManager entityManager;
 
     public enum ReservationOutcome { RESERVED, ALREADY_RESERVED, REJECTED }
@@ -274,6 +276,10 @@ public class RefundSettlementService {
         payment.setStatus(payment.getRefundedAmountPaise() >= refundableBasisPaise ? "refunded" : "partially_refunded");
         paymentRepository.save(payment);
 
+        // Refund just became terminal (success) — any active dynamic follow-up for it must stop,
+        // whether it came from this synchronous call, a webhook, or a prior reconciliation pass.
+        eventPublisher.publishEvent(new RefundReconciliationScheduleChangedEvent(savedRefund.getId()));
+
         businessNotifications.studentAndParents(schoolId, payment.getStudentId(),
                 NotificationAudienceType.STUDENT_WITH_FEE_PARENTS,
                 NotificationEventCode.PAYMENT_REFUNDED, NotificationCategory.FEES_PAYMENTS,
@@ -347,6 +353,9 @@ public class RefundSettlementService {
         payment.setRefundedAmountPaise(released);
         paymentRepository.save(payment);
 
+        // Refund just became terminal (failed) — any active dynamic follow-up for it must stop.
+        eventPublisher.publishEvent(new RefundReconciliationScheduleChangedEvent(refundId));
+
         log.info("Refund capacity released: paymentId={} refundId={} amount={} paise, refundedAmountPaise now {}.",
                 paymentId, refundId, refund.getAmountPaise(), released);
     }
@@ -373,6 +382,13 @@ public class RefundSettlementService {
         }
         refund.setProviderRefundId(providerRefundId);
         refundRepository.save(refund);
+
+        // A provider refund id is now known for a still-PENDING refund — it may need a dynamic
+        // follow-up scheduled (harmless if this refund is about to be finalized synchronously
+        // moments later in the same request: the listener reloads fresh state and no-ops on an
+        // already-terminal refund).
+        eventPublisher.publishEvent(new RefundReconciliationScheduleChangedEvent(refundId));
+
         log.info("Provider refund id persisted early: paymentId={} refundId={} providerRefundId={}.",
                 paymentId, refundId, providerRefundId);
     }

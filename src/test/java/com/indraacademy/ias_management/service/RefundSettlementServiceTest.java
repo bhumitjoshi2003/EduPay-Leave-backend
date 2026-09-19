@@ -17,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
@@ -51,6 +52,7 @@ class RefundSettlementServiceTest {
     @Mock private BusinessNotificationService businessNotifications;
     @Mock private AuditService auditService;
     @Mock private jakarta.persistence.EntityManager entityManager;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     private RefundSettlementService service;
 
@@ -74,6 +76,7 @@ class RefundSettlementServiceTest {
         // re-reads from the database lives in RefundReconciliationJobPostgresIT.
         ReflectionTestUtils.setField(service, "entityManager", entityManager);
         ReflectionTestUtils.setField(service, "objectMapper", new com.fasterxml.jackson.databind.ObjectMapper());
+        ReflectionTestUtils.setField(service, "eventPublisher", eventPublisher);
 
         lenient().when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(paymentAllocationRepository.findByPaymentIdOrderByMonthAsc(any())).thenReturn(List.of());
@@ -521,6 +524,42 @@ class RefundSettlementServiceTest {
         assertThat(refund.getStatus()).isEqualTo(RefundSettlementService.STATUS_PENDING);
     }
 
+    // Refund reconciliation dynamic scheduling — a genuine PENDING→SUCCESS transition must
+    // publish the schedule-changed event so any active per-refund follow-up gets cancelled.
+    @Test
+    void finalizeSuccessfulRefund_publishesScheduleChangedEvent() {
+        Payment payment = razorpayPayment();
+        payment.setMonth("100000000000");
+        payment.setAmountPaid(200000);
+        payment.setRefundedAmountPaise(200000L);
+        when(paymentRepository.findByIdForUpdate(PAYMENT_ID)).thenReturn(Optional.of(payment));
+        Refund refund = pendingRefund(707L, PAYMENT_ID, 200000L, "full");
+        when(refundRepository.findById(707L)).thenReturn(Optional.of(refund));
+        StudentFees month1 = paidRow(1, BigDecimal.valueOf(2000), false);
+        PaymentStudentFeesAllocation alloc = allocation(15L, PAYMENT_ID, month1.getId(), 1, 200000L);
+        when(paymentAllocationRepository.findByPaymentIdOrderByMonthAsc(PAYMENT_ID)).thenReturn(List.of(alloc));
+        when(paymentAllocationRepository.sumAmountPaiseByStudentFeesId(month1.getId())).thenReturn(200000L);
+        when(allocationRefundRepository.sumAmountPaiseByStudentFeesId(month1.getId())).thenReturn(200000L);
+
+        service.finalizeSuccessfulRefund(PAYMENT_ID, 707L, "rfnd_707", "admin", "ADMIN", "127.0.0.1");
+
+        verify(eventPublisher).publishEvent(new RefundReconciliationScheduleChangedEvent(707L));
+    }
+
+    @Test
+    void finalizeSuccessfulRefund_alreadyFinalized_neverPublishesAgain() {
+        Payment payment = razorpayPayment();
+        when(paymentRepository.findByIdForUpdate(PAYMENT_ID)).thenReturn(Optional.of(payment));
+        Refund refund = pendingRefund(708L, PAYMENT_ID, 100000L, "already done");
+        refund.setStatus(RefundSettlementService.STATUS_SUCCESS);
+        refund.setProviderRefundId("rfnd_already");
+        when(refundRepository.findById(708L)).thenReturn(Optional.of(refund));
+
+        service.finalizeSuccessfulRefund(PAYMENT_ID, 708L, "rfnd_new_attempt", "admin", "ADMIN", "127.0.0.1");
+
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
     // ═══════════════════════════ markFailedAndRelease() ═══════════════════════════
 
     @Test
@@ -569,6 +608,32 @@ class RefundSettlementServiceTest {
         verify(refundRepository, never()).save(any());
     }
 
+    @Test
+    void markFailedAndRelease_pendingRefund_publishesScheduleChangedEvent() {
+        Payment payment = razorpayPayment();
+        payment.setRefundedAmountPaise(100000L);
+        when(paymentRepository.findByIdForUpdate(PAYMENT_ID)).thenReturn(Optional.of(payment));
+        Refund refund = pendingRefund(803L, PAYMENT_ID, 100000L, "will fail");
+        when(refundRepository.findById(803L)).thenReturn(Optional.of(refund));
+
+        service.markFailedAndRelease(PAYMENT_ID, 803L);
+
+        verify(eventPublisher).publishEvent(new RefundReconciliationScheduleChangedEvent(803L));
+    }
+
+    @Test
+    void markFailedAndRelease_alreadyFailed_neverPublishesAgain() {
+        Payment payment = razorpayPayment();
+        when(paymentRepository.findByIdForUpdate(PAYMENT_ID)).thenReturn(Optional.of(payment));
+        Refund refund = pendingRefund(804L, PAYMENT_ID, 100000L, "already failed");
+        refund.setStatus(RefundSettlementService.STATUS_FAILED);
+        when(refundRepository.findById(804L)).thenReturn(Optional.of(refund));
+
+        service.markFailedAndRelease(PAYMENT_ID, 804L);
+
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
     // ═══════════════════════════ Refund-Integrity Hardening, Phase C ═══════════════════════════
     // ── recordProviderRefundId() ─────────────────────────────────────────────────────────────
 
@@ -582,6 +647,7 @@ class RefundSettlementServiceTest {
         service.recordProviderRefundId(PAYMENT_ID, 900L, "rfnd_early");
 
         assertThat(refund.getProviderRefundId()).isEqualTo("rfnd_early");
+        verify(eventPublisher).publishEvent(new RefundReconciliationScheduleChangedEvent(900L));
     }
 
     @Test
@@ -595,6 +661,7 @@ class RefundSettlementServiceTest {
         service.recordProviderRefundId(PAYMENT_ID, 901L, "rfnd_different");
 
         assertThat(refund.getProviderRefundId()).isEqualTo("rfnd_original");
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
@@ -608,6 +675,7 @@ class RefundSettlementServiceTest {
         service.recordProviderRefundId(PAYMENT_ID, 902L, "rfnd_late");
 
         assertThat(refund.getProviderRefundId()).isNull();
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     // ── resolveFromProviderState() ───────────────────────────────────────────────────────────

@@ -209,4 +209,37 @@ class PaymentControllerTest {
                 any(), anyInt(), anyInt(), anyInt(), anyInt(), anyInt(), eq(2_500), anyInt(),
                 any(OnlinePaymentPricingCalculator.Pricing.class), eq(1L));
     }
+
+    // ─── Refund initiation kill switch ─────────────────────────────────────────────
+
+    @Test
+    void refundPayment_disabledByConfig_returns403WithoutCallingPaymentService() {
+        ReflectionTestUtils.setField(controller, "refundInitiationEnabled", false);
+        com.indraacademy.ias_management.dto.RefundRequest req = new com.indraacademy.ias_management.dto.RefundRequest();
+        req.setAmount(1000L);
+        jakarta.servlet.http.HttpServletRequest httpRequest = org.mockito.Mockito.mock(jakarta.servlet.http.HttpServletRequest.class);
+
+        ResponseEntity<Map<String, Object>> response = controller.refundPayment(1L, req, httpRequest);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(403);
+        org.mockito.Mockito.verifyNoInteractions(paymentService);
+    }
+
+    @Test
+    void refundPayment_enabledByConfig_delegatesToPaymentService() {
+        ReflectionTestUtils.setField(controller, "refundInitiationEnabled", true);
+        com.indraacademy.ias_management.dto.RefundRequest req = new com.indraacademy.ias_management.dto.RefundRequest();
+        req.setAmount(1000L);
+        jakarta.servlet.http.HttpServletRequest httpRequest = org.mockito.Mockito.mock(jakarta.servlet.http.HttpServletRequest.class);
+        when(httpRequest.getRemoteAddr()).thenReturn("127.0.0.1");
+        when(securityUtil.getUsername()).thenReturn("admin");
+        when(securityUtil.getRole()).thenReturn("ADMIN");
+        when(paymentService.processRefund(eq(1L), eq(req), eq("admin"), eq("ADMIN"), eq("127.0.0.1")))
+                .thenReturn(Map.of("status", "pending"));
+
+        ResponseEntity<Map<String, Object>> response = controller.refundPayment(1L, req, httpRequest);
+
+        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+        verify(paymentService).processRefund(1L, req, "admin", "ADMIN", "127.0.0.1");
+    }
 }

@@ -6,6 +6,7 @@ import com.indraacademy.ias_management.util.SchoolTimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -69,7 +70,11 @@ public class TeacherAttendanceReminderDynamicScheduler {
     @Autowired private TeacherAttendanceReminderScheduler legacyScheduler;
     @Autowired private TeacherAttendanceReminderScheduleRegistry registry;
     @Autowired private TeacherAttendanceReminderExecutionLock executionLock;
-    @Autowired private TaskScheduler taskScheduler;
+    // Explicit qualifier since a second TaskScheduler bean (refundReconciliationTaskScheduler)
+    // now also exists in the context — @Autowired-by-type alone would be ambiguous.
+    @Autowired
+    @Qualifier("teacherAttendanceReminderTaskScheduler")
+    private TaskScheduler taskScheduler;
     @Autowired private DataSource dataSource;
     @Autowired private Clock clock;
 
