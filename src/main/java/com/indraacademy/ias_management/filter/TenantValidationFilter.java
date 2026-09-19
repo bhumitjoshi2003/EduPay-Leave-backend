@@ -158,7 +158,8 @@ public class TenantValidationFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/uploads/events/images/")
                 || path.startsWith("/api/uploads/school-logos/")
                 || path.startsWith("/api/files/")
-                || path.equals("/actuator/health");
+                || path.equals("/api/actuator/health")
+                || path.startsWith("/api/actuator/health/");
     }
 
     private void writeError(HttpServletResponse response, HttpStatus status, String message)

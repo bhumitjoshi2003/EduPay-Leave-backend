@@ -107,8 +107,8 @@ jobs:
                 --log-driver json-file \
                 --log-opt max-size=10m \
                 --log-opt max-file=3 \
-                --health-cmd="curl --fail http://localhost:8080/api/actuator/health || exit 1" \
-                --health-interval=5s \
+                --health-cmd="curl --fail --silent --show-error --max-time 3 http://localhost:8080/api/actuator/health/liveness || exit 1" \
+                --health-interval=30s \
                 --health-timeout=5s \
                 --health-retries=3 \
                 --health-start-period=180s \

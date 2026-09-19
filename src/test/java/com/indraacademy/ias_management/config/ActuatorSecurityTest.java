@@ -2,6 +2,10 @@ package com.indraacademy.ias_management.config;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthContributor;
+import org.springframework.boot.actuate.health.HealthContributorRegistry;
+import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
@@ -42,6 +46,9 @@ class ActuatorSecurityTest {
 	@Autowired
 	private MockMvc mockMvc;
 
+	@Autowired
+	private HealthContributorRegistry healthContributors;
+
 	@Test
 	void healthEndpointIsPubliclyAccessibleWithMinimalBody() throws Exception {
 		// show-details=never means no per-component (db/redis/mail/etc.) breakdown is
@@ -52,6 +59,38 @@ class ActuatorSecurityTest {
 				.andExpect(jsonPath("$.status").value("UP"))
 				.andExpect(jsonPath("$.components").doesNotExist())
 				.andExpect(jsonPath("$.details").doesNotExist());
+	}
+
+	@Test
+	void livenessIsPublicAndIndependentOfDatabaseAndRedis() throws Exception {
+		withContributor("db", () -> Health.down().build(), () ->
+				withContributor("redis", () -> Health.down().build(), () ->
+						mockMvc.perform(get("/api/actuator/health/liveness"))
+								.andExpect(status().isOk())
+								.andExpect(jsonPath("$.status").value("UP"))
+								.andExpect(jsonPath("$.components").doesNotExist())));
+	}
+
+	@Test
+	void readinessIsDownWithDatabaseButIgnoresBestEffortRedis() throws Exception {
+		withContributor("db", () -> Health.down().build(), () ->
+				mockMvc.perform(get("/api/actuator/health/readiness"))
+						.andExpect(status().isServiceUnavailable())
+						.andExpect(jsonPath("$.status").value("DOWN")));
+
+		withContributor("redis", () -> Health.down().build(), () ->
+				mockMvc.perform(get("/api/actuator/health/readiness"))
+						.andExpect(status().isOk())
+						.andExpect(jsonPath("$.status").value("UP")));
+	}
+
+	@Test
+	void aggregateHealthRemainsAvailableAndDependencyAware() throws Exception {
+		withContributor("redis", () -> Health.down().build(), () ->
+				mockMvc.perform(get("/api/actuator/health"))
+						.andExpect(status().isServiceUnavailable())
+						.andExpect(jsonPath("$.status").value("DOWN"))
+						.andExpect(jsonPath("$.components").doesNotExist()));
 	}
 
 	@Test
@@ -68,5 +107,22 @@ class ActuatorSecurityTest {
 	void protectedApiStillRequiresAuthentication() throws Exception {
 		mockMvc.perform(get("/api/students"))
 				.andExpect(status().isUnauthorized());
+	}
+
+	private void withContributor(String name, HealthIndicator replacement, ThrowingAssertion assertion)
+			throws Exception {
+		HealthContributor original = healthContributors.unregisterContributor(name);
+		healthContributors.registerContributor(name, replacement);
+		try {
+			assertion.run();
+		} finally {
+			healthContributors.unregisterContributor(name);
+			if (original != null) healthContributors.registerContributor(name, original);
+		}
+	}
+
+	@FunctionalInterface
+	private interface ThrowingAssertion {
+		void run() throws Exception;
 	}
 }
