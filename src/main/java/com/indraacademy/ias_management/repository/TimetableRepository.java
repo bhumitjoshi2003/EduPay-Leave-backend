@@ -55,6 +55,7 @@ public interface TimetableRepository extends JpaRepository<TimetableEntry, Long>
             Long academicSessionId, Long classId, Day day, Integer periodNumber, Long schoolId);
 
     List<TimetableEntry> findByAcademicSessionIdAndSchoolId(Long academicSessionId, Long schoolId);
+    boolean existsByAcademicSessionIdAndSchoolId(Long academicSessionId, Long schoolId);
 
     /** Phase F5B.1: backs {@code SectionService#deleteSection}'s explicit pre-check — V55's
      *  {@code fk_timetable_entry_section} (ON DELETE RESTRICT) would otherwise reject the delete

@@ -47,4 +47,10 @@ public interface ParentStudentRelationshipRepository extends JpaRepository<Paren
     @Query("select count(distinct r.parentId) from ParentStudentRelationship r " +
            "where r.schoolId = :schoolId and r.active = true")
     long countDistinctActiveParents(@Param("schoolId") Long schoolId);
+
+    @Query("select count(distinct r.studentId) from ParentStudentRelationship r, Parent p " +
+           "where r.schoolId = :schoolId and r.active = true " +
+           "and p.schoolId = r.schoolId and p.parentId = r.parentId and p.active = true " +
+           "and p.phoneNumber is not null and trim(p.phoneNumber) <> ''")
+    long countStudentsWithActiveParentContact(@Param("schoolId") Long schoolId);
 }

@@ -45,4 +45,5 @@ public interface FeeStructureRuleRepository extends JpaRepository<FeeStructureRu
     void deleteBySchoolIdAndAcademicSessionId(@Param("schoolId") Long schoolId, @Param("sessionId") Long sessionId);
 
     boolean existsBySchoolIdAndFeeHeadId(Long schoolId, Long feeHeadId);
+    boolean existsBySchoolIdAndAcademicSessionId(Long schoolId, Long academicSessionId);
 }

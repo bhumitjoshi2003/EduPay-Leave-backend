@@ -9,6 +9,7 @@ import com.indraacademy.ias_management.dto.SuperAdminDashboardDto;
 import com.indraacademy.ias_management.dto.SuperAdminSchoolUpdateRequest;
 import com.indraacademy.ias_management.entity.SchoolClass;
 import com.indraacademy.ias_management.service.SchoolService;
+import com.indraacademy.ias_management.service.SchoolSetupHealthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -28,6 +29,7 @@ public class SchoolController {
     private static final Logger log = LoggerFactory.getLogger(SchoolController.class);
 
     @Autowired private SchoolService schoolService;
+    @Autowired private SchoolSetupHealthService schoolSetupHealthService;
 
     // ─── SUPER_ADMIN endpoints ────────────────────────────────────────────────
 
@@ -113,6 +115,12 @@ public class SchoolController {
     }
 
     // ─── ADMIN / school-scoped endpoints ─────────────────────────────────────
+
+    @GetMapping("/api/school/setup-health")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    public ResponseEntity<?> getSetupHealth() {
+        return ResponseEntity.ok(schoolSetupHealthService.getSetupHealth());
+    }
 
     /**
      * GET /api/school/settings
