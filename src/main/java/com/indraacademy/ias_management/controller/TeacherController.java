@@ -8,6 +8,7 @@ import com.indraacademy.ias_management.dto.TeacherExitRequest;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.ObjectStorageService;
 import com.indraacademy.ias_management.service.TeacherBulkImportService;
 import com.indraacademy.ias_management.service.TeacherAttendanceScheduleService;
 import com.indraacademy.ias_management.service.TeacherService;
@@ -42,6 +43,7 @@ public class TeacherController {
     @Autowired private TeacherAttendanceScheduleService teacherAttendanceScheduleService;
     @Autowired private UserDetailsServiceImpl userDetailsService;
     @Autowired private AuthService authService;
+    @Autowired private ObjectStorageService objectStorageService;
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
@@ -77,11 +79,29 @@ public class TeacherController {
         final String finalTeacherId = teacherId;
         log.info("Request to get teacher with ID: {}", finalTeacherId);
         Optional<Teacher> teacher = teacherService.getTeacher(finalTeacherId);
+        teacher.ifPresent(this::resolvePhotoUrlForDisplay);
         return teacher.map(ResponseEntity::ok)
                 .orElseGet(() -> {
                     log.warn("Teacher with ID {} not found.", finalTeacherId);
                     return ResponseEntity.notFound().build();
                 });
+    }
+
+    /**
+     * Legacy /uploads/teacher-photos/... paths are left completely untouched (served as before
+     * by PersonalMediaController). A new-style object-storage key (schools/...) is swapped
+     * in-memory for a freshly-presigned, short-lived GET URL — never persisted back, never the
+     * same URL twice — so the frontend's existing "use photoUrl as-is if it already looks like
+     * an absolute URL" logic picks it up with no frontend changes needed for display. See
+     * ObjectStorageService.isObjectStorageKey and the Phase 1 report's private-download-flow
+     * section for why this lives at the read side rather than a dedicated access-url endpoint:
+     * Phase 1 has no generic "file" entity to address by id, only this one entity's own field.
+     */
+    private void resolvePhotoUrlForDisplay(Teacher teacher) {
+        String stored = teacher.getPhotoUrl();
+        if (ObjectStorageService.isObjectStorageKey(stored)) {
+            teacher.setPhotoUrl(objectStorageService.createPresignedDownloadUrl(stored).toString());
+        }
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")

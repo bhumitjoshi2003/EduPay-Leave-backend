@@ -27,7 +27,23 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+		<aws-sdk.version>2.29.52</aws-sdk.version>
 	</properties>
+	<dependencyManagement>
+		<dependencies>
+			<!-- AWS SDK v2 BOM keeps the s3 and s3-presigner artifact versions in lockstep —
+			     used here purely as an S3-API-compatible client for Neon Object Storage (or
+			     whatever S3-compatible endpoint is configured), never for actual AWS services.
+			     See ObjectStorageConfig. -->
+			<dependency>
+				<groupId>software.amazon.awssdk</groupId>
+				<artifactId>bom</artifactId>
+				<version>${aws-sdk.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
 	<dependencies>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -204,6 +220,15 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-cache</artifactId>
+		</dependency>
+
+		<!-- S3-API-compatible client for direct-to-object-storage presigned uploads/downloads
+		     (Neon Object Storage or equivalent) — see ObjectStorageService. S3Presigner ships
+		     inside this same artifact (software.amazon.awssdk.services.s3.presigner package) —
+		     no separate s3-presigner artifact exists in this SDK version's BOM. -->
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
 		</dependency>
 	</dependencies>
 

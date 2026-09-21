@@ -65,7 +65,15 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // Bypass auth for public endpoints and static uploads (permitAll in SecurityConfig)
+        // Bypass auth for public endpoints and static uploads (permitAll in SecurityConfig).
+        // IMPORTANT: match each /api/files/* path individually here, exactly as SecurityConfig's
+        // own requestMatchers("/api/files/uploadEventImage") does — never path.startsWith("/api/files/"),
+        // which would also silently exempt any *other* controller under that prefix (e.g.
+        // FileUploadRequestController's upload-request/complete, which require real
+        // authentication) from ever having their JWT parsed at all. Discovered live: with the
+        // broad prefix match, those endpoints always evaluated @PreAuthorize against Spring
+        // Security's anonymous principal — deterministically 401 for every caller, authenticated
+        // or not, since the anonymous principal is not considered "authenticated" by isAuthenticated().
         if (path.startsWith("/api/auth/login")
                 || path.startsWith("/api/auth/logout")
                 || path.startsWith("/api/auth/refresh-token")
@@ -77,7 +85,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/actuator/health/")
                 || path.startsWith("/api/uploads/events/images/")
                 || path.startsWith("/api/uploads/school-logos/")
-                || path.startsWith("/api/files/")) {
+                || path.equals("/api/files/uploadEventImage")) {
 
             filterChain.doFilter(request, response);
             return;

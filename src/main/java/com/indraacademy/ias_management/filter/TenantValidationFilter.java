@@ -148,6 +148,13 @@ public class TenantValidationFilter extends OncePerRequestFilter {
         // cannot fire anyway. Explicitly listed so that /auth/me and /auth/change-password
         // (which DO carry a JWT) go through validation like any other protected endpoint.
         // /auth/logout is included so a user stuck on the wrong subdomain can still log out.
+        //
+        // IMPORTANT: /api/files/uploadEventImage is matched exactly, never via
+        // path.startsWith("/api/files/") — see JwtAuthFilter's identical fix for why a prefix
+        // match here would silently (and incorrectly) skip tenant validation for any other
+        // controller under that prefix too, e.g. FileUploadRequestController's
+        // upload-request/complete endpoints, which must be tenant-validated like any other
+        // authenticated request.
         return path.equals("/api/auth/login")
                 || path.equals("/api/auth/logout")
                 || path.equals("/api/auth/refresh-token")
@@ -157,7 +164,7 @@ public class TenantValidationFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/webhooks/")
                 || path.startsWith("/api/uploads/events/images/")
                 || path.startsWith("/api/uploads/school-logos/")
-                || path.startsWith("/api/files/")
+                || path.equals("/api/files/uploadEventImage")
                 || path.equals("/api/actuator/health")
                 || path.startsWith("/api/actuator/health/");
     }

@@ -198,4 +198,102 @@ class JwtAuthFilterTest {
         assertThat(chain.getRequest()).isNotNull();
         verifyNoInteractions(userSessionService);
     }
+
+    // ─── Regression: "object storage upload auth bug" ──────────────────────────────
+    // Root cause was path.startsWith("/api/files/") in the bypass block above, which silently
+    // skipped JWT parsing for FileUploadRequestController's upload-request/complete endpoints
+    // too (they only share a URL prefix with the one legacy endpoint the bypass was meant for,
+    // /api/files/uploadEventImage). SecurityContextHolder's authentication was NEVER set for
+    // these paths, so every caller — including a genuinely valid, active session — fell through
+    // to Spring Security's anonymous principal and was denied 401 by @PreAuthorize("isAuthenticated()"),
+    // regardless of whether the token presented was fresh (post-refresh) or stale. Fixed by
+    // matching only the exact legacy path, mirroring SecurityConfig's own requestMatchers(...).
+
+    @Test
+    void uploadRequestPath_withValidActiveSession_authenticatesAndProceeds() throws Exception {
+        when(userSessionService.isActiveForUser(SESSION_ID, USER_ID)).thenReturn(true);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/files/upload-request");
+        request.setCookies(new jakarta.servlet.http.Cookie("accessToken", accessToken(USER_ID, SESSION_ID)));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(chain.getRequest()).isNotNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getName()).isEqualTo(USER_ID);
+        assertThat(response.getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void completePath_withValidActiveSession_authenticatesAndProceeds() throws Exception {
+        when(userSessionService.isActiveForUser(SESSION_ID, USER_ID)).thenReturn(true);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/files/complete");
+        request.setCookies(new jakarta.servlet.http.Cookie("accessToken", accessToken(USER_ID, SESSION_ID)));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(chain.getRequest()).isNotNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+    }
+
+    @Test
+    void uploadRequestPath_revokedSession_isRejectedWithUnauthorized() throws Exception {
+        // Proves the endpoint is genuinely subject to the same session-revocation enforcement as
+        // any other authenticated route now — not merely "reached", but actually validated.
+        when(userSessionService.isActiveForUser(SESSION_ID, USER_ID)).thenReturn(false);
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/files/upload-request");
+        request.setCookies(new jakarta.servlet.http.Cookie("accessToken", accessToken(USER_ID, SESSION_ID)));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(chain.getRequest()).isNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void uploadRequestPath_noAccessTokenCookieAtAll_reachesChainWithNoAuthentication() throws Exception {
+        // No cookies at all: this filter defers entirely (same as it always has for any path) —
+        // it's Spring Security's own anonymous-principal handling plus
+        // @PreAuthorize("isAuthenticated()") downstream that produces the eventual 401 for a
+        // genuinely unauthenticated caller, proven separately at the full-stack level in
+        // FileUploadRequestSecurityTest. This test only proves THIS filter never fabricates an
+        // authentication for a request that presents no credentials whatsoever.
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/files/upload-request");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(chain.getRequest()).isNotNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        verifyNoInteractions(userSessionService);
+    }
+
+    @Test
+    void legacyUploadEventImagePath_stillBypassesAuthFilterEntirely() throws Exception {
+        // The ONE legacy endpoint the /api/files/ prefix exemption was ever meant to cover
+        // (SecurityConfig's own exact-match permitAll) must remain untouched by the fix.
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setRequestURI("/api/files/uploadEventImage");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(chain.getRequest()).isNotNull();
+        verifyNoInteractions(userSessionService);
+    }
 }
