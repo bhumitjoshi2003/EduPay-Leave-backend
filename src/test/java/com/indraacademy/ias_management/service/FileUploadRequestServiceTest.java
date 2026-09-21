@@ -379,8 +379,10 @@ class FileUploadRequestServiceTest {
 
         service.completeUpload(completeRequestFor(intent.getObjectKey()));
 
-        // The legacy local file is never touched by object-storage delete — it stays on disk,
-        // served as before by PersonalMediaController, until a future migration phase.
+        // The legacy local-disk value is never touched by object-storage delete — this backend
+        // no longer serves it at all (Phase 3 removed PersonalMediaController and the local
+        // write paths), but completeUpload must still never mistake it for an object-storage
+        // key it should try to clean up.
         verify(objectStorageService, never()).deleteObjectQuietly(anyString());
     }
 

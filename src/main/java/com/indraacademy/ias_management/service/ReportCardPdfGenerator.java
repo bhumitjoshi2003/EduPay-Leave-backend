@@ -46,23 +46,6 @@ public class ReportCardPdfGenerator {
     @Value("${frontend.url:https://edunexify.co.in}")
     private String frontendUrl;
 
-    /**
-     * Same directory SchoolService writes logos to.
-     * Relative paths like /uploads/school-logos/1.png are resolved against this.
-     */
-    @Value("${school.logo.directory:./uploads/school-logos}")
-    private String logoDirectory;
-
-    @Value("${school.report-card-header.directory:./uploads/report-card-headers}")
-    private String headerDirectory;
-
-    /**
-     * Same directory StudentService writes student photos to.
-     * Relative paths like /uploads/student-photos/abc.jpg are resolved against this.
-     */
-    @Value("${student.photo.directory:./uploads/student-photos}")
-    private String studentPhotoDirectory;
-
     // ── Document palette ───────────────────────────────────────────────────
     private static final Color WHITE       = Color.WHITE;
     private static final Color TEXT_DARK   = new Color(82, 100,  94);   // softened grey-green ink
@@ -714,45 +697,29 @@ public class ReportCardPdfGenerator {
     /**
      * Loads the school logo for embedding in the PDF.
      *
-     * Two cases:
-     *  1. Full HTTP/HTTPS URL  — fetched over the network (e.g. external CDN).
-     *  2. Relative path        — e.g. "/uploads/school-logos/1.png" as stored by SchoolService.
-     *                            Resolved against the logoDirectory on the local filesystem;
-     *                            this is the same directory SchoolService writes to, so the
-     *                            file is always present if the path is non-null.
+     * Phase 3: the local-disk fallback branch (resolving a relative /uploads/school-logos/...
+     * path against logoDirectory) was removed — ReportCardDataAssembler now always resolves
+     * School.logoUrl through ObjectStorageService.resolveDisplayUrl before it ever reaches this
+     * class, so a real value is either null or an absolute presigned/http(s) URL. No production
+     * school still has a legacy relative path (the one that did, Indra Academy, was re-uploaded
+     * through Object Storage).
      *
      * Returns null silently on any error so the header degrades gracefully (2-column layout).
      */
     private Image loadLogoImage(String logoUrl) {
-        if (logoUrl == null || logoUrl.isBlank()) return null;
+        if (logoUrl == null || logoUrl.isBlank() || !(logoUrl.startsWith("http://") || logoUrl.startsWith("https://"))) {
+            return null;
+        }
         try {
-            if (logoUrl.startsWith("http://") || logoUrl.startsWith("https://")) {
-                // ── Remote URL ────────────────────────────────────────────────
-                java.net.URL url = new java.net.URL(logoUrl);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(3000);
-                conn.setReadTimeout(5000);
-                conn.connect();
-                if (conn.getResponseCode() == 200) {
-                    byte[] bytes = conn.getInputStream().readAllBytes();
-                    return Image.getInstance(bytes);
-                }
-                log.debug("School logo HTTP {} for URL: {}", conn.getResponseCode(), logoUrl);
-            } else {
-                // ── Relative path stored by SchoolService ─────────────────────
-                // logoUrl is like "/uploads/school-logos/1.png"
-                // Extract just the filename and resolve it against logoDirectory.
-                String filename = logoUrl.substring(logoUrl.lastIndexOf('/') + 1);
-                java.nio.file.Path filePath = java.nio.file.Paths.get(logoDirectory)
-                        .toAbsolutePath()
-                        .resolve(filename)
-                        .normalize();
-                if (java.nio.file.Files.exists(filePath)) {
-                    byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
-                    return Image.getInstance(bytes);
-                }
-                log.debug("School logo file not found at: {}", filePath);
+            java.net.URL url = new java.net.URL(logoUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(5000);
+            conn.connect();
+            if (conn.getResponseCode() == 200) {
+                return Image.getInstance(conn.getInputStream().readAllBytes());
             }
+            log.debug("School logo HTTP {} for URL: {}", conn.getResponseCode(), logoUrl);
         } catch (Exception e) {
             log.debug("School logo could not be loaded ({}): {}", logoUrl, e.getMessage());
         }
@@ -761,30 +728,21 @@ public class ReportCardPdfGenerator {
 
     /**
      * Returns the raw bytes of the school logo for use in the logo watermark.
-     * Same URL-resolution logic as loadLogoImage() but returns bytes so they can
-     * be passed into the static WatermarkEvent class.
+     * Same URL handling as loadLogoImage() but returns bytes so they can be passed into the
+     * static WatermarkEvent class.
      */
     private byte[] loadLogoBytes(String logoUrl) {
-        if (logoUrl == null || logoUrl.isBlank()) return null;
+        if (logoUrl == null || logoUrl.isBlank() || !(logoUrl.startsWith("http://") || logoUrl.startsWith("https://"))) {
+            return null;
+        }
         try {
-            if (logoUrl.startsWith("http://") || logoUrl.startsWith("https://")) {
-                java.net.URL url = new java.net.URL(logoUrl);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(3000);
-                conn.setReadTimeout(5000);
-                conn.connect();
-                if (conn.getResponseCode() == 200) {
-                    return conn.getInputStream().readAllBytes();
-                }
-            } else {
-                String filename = logoUrl.substring(logoUrl.lastIndexOf('/') + 1);
-                java.nio.file.Path filePath = java.nio.file.Paths.get(logoDirectory)
-                        .toAbsolutePath()
-                        .resolve(filename)
-                        .normalize();
-                if (java.nio.file.Files.exists(filePath)) {
-                    return java.nio.file.Files.readAllBytes(filePath);
-                }
+            java.net.URL url = new java.net.URL(logoUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(5000);
+            conn.connect();
+            if (conn.getResponseCode() == 200) {
+                return conn.getInputStream().readAllBytes();
             }
         } catch (Exception e) {
             log.debug("Logo bytes could not be loaded for watermark ({}): {}", logoUrl, e.getMessage());
@@ -794,35 +752,24 @@ public class ReportCardPdfGenerator {
 
     /**
      * Loads the custom report card header image.
-     * Same URL-resolution logic as loadLogoImage — handles HTTP URLs and relative (/uploads/...) paths.
-     * Returns null silently on any error so the caller can fall back to the auto-generated header.
+     * Same URL handling as loadLogoImage — see its Phase 3 comment for why the local-disk
+     * fallback was removed. Returns null silently on any error so the caller can fall back to
+     * the auto-generated header.
      */
     private Image loadHeaderImage(String headerUrl) {
-        if (headerUrl == null || headerUrl.isBlank()) return null;
+        if (headerUrl == null || headerUrl.isBlank() || !(headerUrl.startsWith("http://") || headerUrl.startsWith("https://"))) {
+            return null;
+        }
         try {
-            if (headerUrl.startsWith("http://") || headerUrl.startsWith("https://")) {
-                java.net.URL url = new java.net.URL(headerUrl);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(3000);
-                conn.setReadTimeout(5000);
-                conn.connect();
-                if (conn.getResponseCode() == 200) {
-                    byte[] bytes = conn.getInputStream().readAllBytes();
-                    return Image.getInstance(bytes);
-                }
-                log.debug("Report card header HTTP {} for URL: {}", conn.getResponseCode(), headerUrl);
-            } else {
-                String filename = headerUrl.substring(headerUrl.lastIndexOf('/') + 1);
-                java.nio.file.Path filePath = java.nio.file.Paths.get(headerDirectory)
-                        .toAbsolutePath()
-                        .resolve(filename)
-                        .normalize();
-                if (java.nio.file.Files.exists(filePath)) {
-                    byte[] bytes = java.nio.file.Files.readAllBytes(filePath);
-                    return Image.getInstance(bytes);
-                }
-                log.debug("Report card header file not found at: {}", filePath);
+            java.net.URL url = new java.net.URL(headerUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(5000);
+            conn.connect();
+            if (conn.getResponseCode() == 200) {
+                return Image.getInstance(conn.getInputStream().readAllBytes());
             }
+            log.debug("Report card header HTTP {} for URL: {}", conn.getResponseCode(), headerUrl);
         } catch (Exception e) {
             log.debug("Report card header image could not be loaded ({}): {}", headerUrl, e.getMessage());
         }
@@ -887,30 +834,22 @@ public class ReportCardPdfGenerator {
     }
 
     /**
-     * Loads the student photo from disk — same logic as loadLogoImage() but using
-     * studentPhotoDirectory. Paths are stored as /uploads/student-photos/abc.jpg.
-     * Returns null silently so the caller can render a placeholder instead.
+     * Loads the student photo — same URL handling as loadLogoImage(). See its Phase 3 comment
+     * for why the local-disk fallback was removed. Returns null silently so the caller can
+     * render a placeholder instead.
      */
     private Image loadStudentPhotoImage(String photoUrl) {
-        if (photoUrl == null || photoUrl.isBlank()) return null;
+        if (photoUrl == null || photoUrl.isBlank() || !(photoUrl.startsWith("http://") || photoUrl.startsWith("https://"))) {
+            return null;
+        }
         try {
-            if (photoUrl.startsWith("http://") || photoUrl.startsWith("https://")) {
-                java.net.URL url = new java.net.URL(photoUrl);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
-                conn.setConnectTimeout(3000);
-                conn.setReadTimeout(5000);
-                conn.connect();
-                if (conn.getResponseCode() == 200) {
-                    return Image.getInstance(conn.getInputStream().readAllBytes());
-                }
-            } else {
-                String filename = photoUrl.substring(photoUrl.lastIndexOf('/') + 1);
-                java.nio.file.Path filePath = java.nio.file.Paths.get(studentPhotoDirectory)
-                        .toAbsolutePath().resolve(filename).normalize();
-                if (java.nio.file.Files.exists(filePath)) {
-                    return Image.getInstance(java.nio.file.Files.readAllBytes(filePath));
-                }
-                log.debug("Student photo file not found at: {}", filePath);
+            java.net.URL url = new java.net.URL(photoUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(5000);
+            conn.connect();
+            if (conn.getResponseCode() == 200) {
+                return Image.getInstance(conn.getInputStream().readAllBytes());
             }
         } catch (Exception e) {
             log.debug("Student photo could not be loaded ({}): {}", photoUrl, e.getMessage());

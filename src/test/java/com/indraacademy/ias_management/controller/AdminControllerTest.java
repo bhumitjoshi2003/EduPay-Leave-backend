@@ -2,7 +2,6 @@ package com.indraacademy.ias_management.controller;
 
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.service.AdminService;
-import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.ObjectStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,7 +25,6 @@ import static org.mockito.Mockito.when;
 class AdminControllerTest {
 
     @Mock private AdminService adminService;
-    @Mock private AuthService authService;
     @Mock private ObjectStorageService objectStorageService;
 
     private AdminController controller;
@@ -35,7 +33,6 @@ class AdminControllerTest {
     void setUp() {
         controller = new AdminController();
         ReflectionTestUtils.setField(controller, "adminService", adminService);
-        ReflectionTestUtils.setField(controller, "authService", authService);
         ReflectionTestUtils.setField(controller, "objectStorageService", objectStorageService);
     }
 

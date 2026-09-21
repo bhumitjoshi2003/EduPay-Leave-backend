@@ -1,28 +1,18 @@
 package com.indraacademy.ias_management.config;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
-import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-
-import java.nio.file.Paths;
 
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    private final FileStorageProperties fileStorageProperties;
     private final AiCopilotEntitlementInterceptor aiCopilotEntitlementInterceptor;
 
-    @Value("${school.logo.directory:./uploads/school-logos}")
-    private String schoolLogoDirectory;
-
     @Autowired
-    public WebConfig(FileStorageProperties fileStorageProperties,
-                     AiCopilotEntitlementInterceptor aiCopilotEntitlementInterceptor) {
-        this.fileStorageProperties = fileStorageProperties;
+    public WebConfig(AiCopilotEntitlementInterceptor aiCopilotEntitlementInterceptor) {
         this.aiCopilotEntitlementInterceptor = aiCopilotEntitlementInterceptor;
     }
 
@@ -33,16 +23,13 @@ public class WebConfig implements WebMvcConfigurer {
                 .excludePathPatterns("/api/public/**", "/api/auth/**", "/api/super-admin/**");
     }
 
-    @Override
-    public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        String eventsPath = Paths.get(fileStorageProperties.getDirectory()).toAbsolutePath().normalize().toString();
-        registry.addResourceHandler("/api/uploads/events/images/**")
-                .addResourceLocations("file:" + eventsPath + "/");
-
-        String schoolLogosPath = Paths.get(schoolLogoDirectory).toAbsolutePath().normalize().toString();
-        registry.addResourceHandler("/api/uploads/school-logos/**")
-                .addResourceLocations("file:" + schoolLogosPath + "/");
-    }
+    // Phase 3: the local-disk static resource handlers for /api/uploads/events/images/** and
+    // /api/uploads/school-logos/** were removed once every persistent upload category
+    // (including the one meaningful legacy asset, the school logo) fully migrated to Neon
+    // Object Storage — see ObjectStorageService.resolveDisplayUrl for how those categories are
+    // served now (a short-lived presigned GET URL, generated per read, never a static file
+    // path). FileStorageProperties (image.upload.directory) had no other purpose and was
+    // removed alongside this.
 
     @Override
     public void configureAsyncSupport(AsyncSupportConfigurer configurer) {

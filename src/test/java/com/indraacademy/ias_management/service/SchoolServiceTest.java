@@ -440,6 +440,9 @@ class SchoolServiceTest {
 
     @Test
     void removeReportCardHeader_legacyLocalDiskValue_neverPassedToObjectStorageDelete() {
+        // Phase 3: removeReportCardHeader no longer has a local-disk delete branch at all (the
+        // legacy write/serve infrastructure it existed for was removed) — a legacy value simply
+        // clears from the DB with no storage-deletion call of any kind.
         when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         when(securityUtil.getUsername()).thenReturn("admin1");
         when(securityUtil.getRole()).thenReturn("ADMIN");
@@ -448,7 +451,6 @@ class SchoolServiceTest {
         when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
         when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
         when(request.getRemoteAddr()).thenReturn("127.0.0.1");
-        ReflectionTestUtils.setField(service, "headerDirectory", System.getProperty("java.io.tmpdir"));
 
         service.removeReportCardHeader(request);
 

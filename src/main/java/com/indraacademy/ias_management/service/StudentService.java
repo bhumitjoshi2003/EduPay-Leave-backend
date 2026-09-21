@@ -22,9 +22,7 @@ import com.indraacademy.ias_management.repository.AcademicSessionRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
 import com.indraacademy.ias_management.util.SchoolTimeUtil;
 import jakarta.servlet.http.HttpServletRequest;
-import net.coobird.thumbnailator.Thumbnails;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,12 +31,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.Clock;
 import java.util.List;
@@ -50,9 +42,6 @@ import java.util.Optional;
 public class StudentService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentService.class);
-
-    @Value("${student.photo.directory:./uploads/student-photos}")
-    private String photoDirectory;
 
     @Autowired private StudentRepository studentRepository;
     @Autowired private StudentFeesService studentFeesService;
@@ -686,44 +675,4 @@ public class StudentService {
         log.info("Student {} and associated records deleted successfully.", studentId);
     }
 
-    private static final long MAX_PHOTO_SIZE = 10L * 1024 * 1024; // 10 MB
-
-    @Transactional
-    public String uploadPhoto(String studentId, MultipartFile file) {
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new IllegalArgumentException("Only image files are allowed.");
-        }
-        if (file.getSize() > MAX_PHOTO_SIZE) {
-            throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
-        }
-
-        Student student = studentRepository.findByStudentIdAndSchoolId(studentId, securityUtil.getSchoolId())
-                .orElseThrow(() -> new NoSuchElementException("Student not found: " + studentId));
-
-        try {
-            Path storageDir = Paths.get(photoDirectory).toAbsolutePath().normalize();
-            Files.createDirectories(storageDir);
-
-            // One photo per student — always saved as <studentId>.jpg
-            String fileName = studentId + ".jpg";
-            Path targetLocation = storageDir.resolve(fileName);
-            Thumbnails.of(file.getInputStream())
-                    .size(400, 400)
-                    .keepAspectRatio(true)
-                    .outputFormat("jpg")
-                    .outputQuality(0.80)
-                    .toFile(targetLocation.toFile());
-
-            String relativeUrl = "/uploads/student-photos/" + fileName;
-            student.setPhotoUrl(relativeUrl);
-            studentRepository.save(student);
-
-            log.info("Photo uploaded and resized for student {}: {}", studentId, relativeUrl);
-            return relativeUrl;
-        } catch (IOException e) {
-            log.error("Failed to store photo for student {}", studentId, e);
-            throw new RuntimeException("Could not store photo for student " + studentId, e);
-        }
-    }
 }

@@ -112,20 +112,24 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void missingPublicMedia_mapsTo404_notTheGeneric500() {
-        NoResourceFoundException logo = new NoResourceFoundException(
-                HttpMethod.GET, "/api/uploads/school-logos/missing.png");
-        NoResourceFoundException eventImage = new NoResourceFoundException(
-                HttpMethod.GET, "/api/uploads/events/images/missing.png");
+    void missingStaticResource_mapsTo404_notTheGeneric500() {
+        // Phase 3 removed the local-disk static resource handlers this test originally used as
+        // its example paths (/api/uploads/school-logos/**, /api/uploads/events/images/**) — the
+        // behavior under test (NoResourceFoundException -> 404, not a generic 500) is unrelated
+        // to which specific handlers exist, so any missing-static-asset path exercises it.
+        NoResourceFoundException missingAsset = new NoResourceFoundException(
+                HttpMethod.GET, "/api/some/missing/static-asset.png");
+        NoResourceFoundException anotherMissingAsset = new NoResourceFoundException(
+                HttpMethod.GET, "/api/another/missing/static-asset.png");
 
-        ResponseEntity<ErrorResponse> logoResponse = handler.handleNoResourceFound(logo);
-        ResponseEntity<ErrorResponse> eventImageResponse = handler.handleNoResourceFound(eventImage);
-        ResponseEntity<ErrorResponse> generic = handler.handleGeneric(logo);
+        ResponseEntity<ErrorResponse> firstResponse = handler.handleNoResourceFound(missingAsset);
+        ResponseEntity<ErrorResponse> secondResponse = handler.handleNoResourceFound(anotherMissingAsset);
+        ResponseEntity<ErrorResponse> generic = handler.handleGeneric(missingAsset);
 
-        assertThat(logoResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-        assertThat(logoResponse.getBody().getStatus()).isEqualTo(404);
-        assertThat(eventImageResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-        assertThat(eventImageResponse.getBody().getStatus()).isEqualTo(404);
+        assertThat(firstResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(firstResponse.getBody().getStatus()).isEqualTo(404);
+        assertThat(secondResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(secondResponse.getBody().getStatus()).isEqualTo(404);
         assertThat(generic.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
     }
 

@@ -3,20 +3,16 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.service.AdminService;
-import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.ObjectStorageService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Map;
 import java.util.Optional;
 import java.util.List;
 
@@ -28,7 +24,6 @@ public class AdminController {
     private static final Logger log = LoggerFactory.getLogger(AdminController.class);
 
     @Autowired private AdminService adminService;
-    @Autowired private AuthService authService;
     @Autowired private ObjectStorageService objectStorageService;
 
     @PostMapping
@@ -77,24 +72,4 @@ public class AdminController {
         return ResponseEntity.noContent().build();
     }
 
-    @PostMapping("/{adminId}/photo")
-    public ResponseEntity<?> uploadAdminPhoto(@PathVariable String adminId,
-                                              @RequestParam("file") MultipartFile file) {
-        String currentUserId = authService.getUserId();
-        String currentRole   = authService.getRole();
-
-        // ADMIN can only upload their own photo; SUPER_ADMIN can upload for any admin
-        if (Role.ADMIN.equals(currentRole) && !adminId.equals(currentUserId)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Admins can only upload their own photo.");
-        }
-
-        log.info("Photo upload for admin {} by {} ({})", adminId, currentUserId, currentRole);
-
-        if (file.isEmpty()) {
-            return ResponseEntity.badRequest().body("Uploaded file is empty.");
-        }
-
-        String photoUrl = adminService.uploadPhoto(adminId, file);
-        return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
-    }
 }

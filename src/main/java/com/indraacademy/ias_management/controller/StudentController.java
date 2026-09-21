@@ -129,11 +129,11 @@ public class StudentController {
 
     /**
      * Called only after the role-based resolvedStudentId logic above (STUDENT self-only, PARENT
-     * via assertChildAccess, ADMIN/TEACHER unrestricted) has already run — by the time a Student
-     * reaches here, the caller has already passed exactly the same access checks
-     * PersonalMediaController enforces for the legacy /uploads/student-photos/... path, so
-     * swapping in a fresh presigned GET URL here introduces no new access surface. Legacy local
-     * paths are left completely untouched — see ObjectStorageService.resolveDisplayUrl.
+     * via assertChildAccess, ADMIN/TEACHER unrestricted) has already run, so swapping in a fresh
+     * presigned GET URL here introduces no new access surface. A legacy /uploads/student-photos/...
+     * value is left completely untouched — Phase 3 removed its serving controller (no production
+     * student photo still needs it, see the Phase 3 report) — see
+     * ObjectStorageService.resolveDisplayUrl.
      */
     private void resolvePhotoUrlForDisplay(Student student) {
         student.setPhotoUrl(objectStorageService.resolveDisplayUrl(student.getPhotoUrl()));
@@ -222,23 +222,6 @@ public class StudentController {
         log.info("Bulk import completed: {} total, {} successful, {} failed",
                 result.getTotalRows(), result.getSuccessful(), result.getFailed());
         return ResponseEntity.ok(result);
-    }
-
-    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
-    @PostMapping("/{studentId}/photo")
-    public ResponseEntity<?> uploadStudentPhoto(@PathVariable String studentId,
-                                                @RequestParam("file") MultipartFile file) {
-        String currentUserId = authService.getUserId();
-        String currentRole   = authService.getRole();
-
-        log.info("Photo upload for student {} by {} ({})", studentId, currentUserId, currentRole);
-
-        if (file.isEmpty()) {
-            return ResponseEntity.badRequest().body("Uploaded file is empty.");
-        }
-
-        String photoUrl = studentService.uploadPhoto(studentId, file);
-        return ResponseEntity.ok(Map.of("photoUrl", photoUrl));
     }
 
     // ─── Promotion endpoints ──────────────────────────────────────────────────

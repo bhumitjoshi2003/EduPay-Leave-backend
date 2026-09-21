@@ -35,14 +35,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import net.coobird.thumbnailator.Thumbnails;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -53,15 +45,6 @@ import java.util.NoSuchElementException;
 public class SchoolService {
 
     private static final Logger log = LoggerFactory.getLogger(SchoolService.class);
-    private static final long MAX_LOGO_SIZE = 5L * 1024 * 1024; // 5 MB
-
-    @Value("${school.logo.directory:./uploads/school-logos}")
-    private String logoDirectory;
-
-    @Value("${school.report-card-header.directory:./uploads/report-card-headers}")
-    private String headerDirectory;
-
-    private static final long MAX_HEADER_SIZE = 10L * 1024 * 1024; // 10 MB
 
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
@@ -377,127 +360,14 @@ public class SchoolService {
     }
 
     /**
-     * Uploads and stores the school's logo image.
-     * The file is saved as {schoolId}.jpg — re-uploading replaces the previous logo.
-     * Returns the relative URL to be stored in school.logoUrl.
-     */
-    @Transactional
-    public String uploadLogo(MultipartFile file, HttpServletRequest request) {
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new IllegalArgumentException("Only image files are allowed.");
-        }
-        if (file.getSize() > MAX_LOGO_SIZE) {
-            throw new IllegalArgumentException("File size exceeds the 5 MB limit.");
-        }
-
-        Long schoolId = securityUtil.getSchoolId();
-        School school = schoolRepository.findById(schoolId)
-                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
-
-        try {
-            Path storageDir = Paths.get(logoDirectory).toAbsolutePath().normalize();
-            Files.createDirectories(storageDir);
-
-            // One logo per school — preserve PNG (transparency) or convert to JPG
-            boolean isPng = "image/png".equals(contentType);
-            String ext = isPng ? "png" : "jpg";
-            String fileName = schoolId + "." + ext;
-            Path targetLocation = storageDir.resolve(fileName);
-
-            // Delete any previous logo with different extension
-            String altFileName = schoolId + "." + (isPng ? "jpg" : "png");
-            Files.deleteIfExists(storageDir.resolve(altFileName));
-
-            Thumbnails.of(file.getInputStream())
-                    .size(400, 400)
-                    .keepAspectRatio(true)
-                    .outputFormat(ext)
-                    .outputQuality(0.85)
-                    .toFile(targetLocation.toFile());
-
-            String relativeUrl = "/uploads/school-logos/" + fileName;
-            school.setLogoUrl(relativeUrl);
-            schoolRepository.save(school);
-
-            auditService.log(
-                    securityUtil.getUsername(),
-                    securityUtil.getRole(),
-                    "UPLOAD_SCHOOL_LOGO",
-                    "School",
-                    String.valueOf(schoolId),
-                    null,
-                    relativeUrl,
-                    request.getRemoteAddr()
-            );
-
-            log.info("School logo uploaded for schoolId={}: {}", schoolId, relativeUrl);
-            return relativeUrl;
-        } catch (IOException e) {
-            log.error("Failed to store logo for schoolId={}", schoolId, e);
-            throw new RuntimeException("Could not store school logo. Please try again.", e);
-        }
-    }
-
-    /**
-     * Uploads and stores a custom report card header image.
-     * When set, this image replaces the auto-generated school header in all report card PDFs and web views.
-     * The file is saved as {schoolId}.{ext} — re-uploading replaces the previous one.
-     */
-    @Transactional
-    public String uploadReportCardHeader(MultipartFile file, HttpServletRequest request) {
-        String contentType = file.getContentType();
-        if (contentType == null || !contentType.startsWith("image/")) {
-            throw new IllegalArgumentException("Only image files are allowed.");
-        }
-        if (file.getSize() > MAX_HEADER_SIZE) {
-            throw new IllegalArgumentException("File size exceeds the 10 MB limit.");
-        }
-
-        Long schoolId = securityUtil.getSchoolId();
-        School school = schoolRepository.findById(schoolId)
-                .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
-
-        try {
-            Path storageDir = Paths.get(headerDirectory).toAbsolutePath().normalize();
-            Files.createDirectories(storageDir);
-
-            boolean isPng = "image/png".equals(contentType);
-            String ext = isPng ? "png" : "jpg";
-            String fileName = schoolId + "." + ext;
-            Path targetLocation = storageDir.resolve(fileName);
-
-            // Delete any previous header with different extension
-            Files.deleteIfExists(storageDir.resolve(schoolId + "." + (isPng ? "jpg" : "png")));
-
-            // Store as-is — no resize, user provides the exact resolution they want
-            Files.write(targetLocation, file.getBytes());
-
-            String relativeUrl = "/uploads/report-card-headers/" + fileName;
-            school.setReportCardHeaderImageUrl(relativeUrl);
-            schoolRepository.save(school);
-
-            auditService.log(
-                    securityUtil.getUsername(),
-                    securityUtil.getRole(),
-                    "UPLOAD_REPORT_CARD_HEADER",
-                    "School",
-                    String.valueOf(schoolId),
-                    null,
-                    relativeUrl,
-                    request.getRemoteAddr()
-            );
-
-            log.info("Report card header uploaded for schoolId={}: {}", schoolId, relativeUrl);
-            return relativeUrl;
-        } catch (IOException e) {
-            log.error("Failed to store report card header for schoolId={}", schoolId, e);
-            throw new RuntimeException("Could not store header image. Please try again.", e);
-        }
-    }
-
-    /**
      * Removes the custom report card header image, reverting to the auto-generated header.
+     *
+     * <p>Phase 3: legacy local-disk upload (uploadLogo/uploadReportCardHeader) and their
+     * filesystem-write helpers were removed once the direct-to-object-storage flow
+     * (FileUploadRequestService, UploadPurpose.SCHOOL_LOGO/REPORT_CARD_HEADER_IMAGE) fully
+     * replaced them and production's one meaningful legacy asset (the school logo) was
+     * re-uploaded through it. This remove action now only ever needs to delete an
+     * object-storage key — see ObjectStorageService.isObjectStorageKey/deleteObjectQuietly.
      */
     @Transactional
     public void removeReportCardHeader(HttpServletRequest request) {
@@ -509,19 +379,11 @@ public class SchoolService {
         school.setReportCardHeaderImageUrl(null);
         schoolRepository.save(school);
 
-        // Best-effort deletion, in whichever storage the old value actually lives in — DB is
-        // already cleared above regardless of outcome here (see the Phase 2 replacement/delete
-        // safety report: a not-found storage object must never corrupt DB state).
+        // Best-effort — DB is already cleared above regardless of outcome here (see the Phase 2
+        // replacement/delete safety report: a not-found storage object must never corrupt DB
+        // state). oldUrl is only ever null or an object-storage key now.
         if (ObjectStorageService.isObjectStorageKey(oldUrl)) {
             objectStorageService.deleteObjectQuietly(oldUrl);
-        } else if (oldUrl != null && !oldUrl.isBlank()) {
-            try {
-                String filename = oldUrl.substring(oldUrl.lastIndexOf('/') + 1);
-                Path filePath = Paths.get(headerDirectory).toAbsolutePath().normalize().resolve(filename);
-                Files.deleteIfExists(filePath);
-            } catch (IOException e) {
-                log.warn("Could not delete report card header file for schoolId={}", schoolId, e);
-            }
         }
 
         auditService.log(

@@ -107,8 +107,6 @@ public class SecurityConfig {
                                 "/api/webhooks/**",
                                 "/api/actuator/health",
                                 "/api/actuator/health/**").permitAll()
-                        .requestMatchers("/api/uploads/events/images/**").permitAll()
-                        .requestMatchers("/api/uploads/school-logos/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/demo-requests").permitAll()
                         .anyRequest().authenticated()
                 )

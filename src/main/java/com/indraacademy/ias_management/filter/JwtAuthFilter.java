@@ -65,7 +65,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // Bypass auth for public endpoints and static uploads (permitAll in SecurityConfig).
+        // Bypass auth for public endpoints (permitAll in SecurityConfig).
         // IMPORTANT: no /api/files/* exemption lives here anymore. The one legacy endpoint that
         // ever needed it (POST /api/files/uploadEventImage) has been retired — every controller
         // under /api/files/ (FileUploadRequestController's upload-request/complete) requires
@@ -74,6 +74,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         // those endpoints from ever having their JWT parsed at all — see JwtAuthFilterTest and
         // the Phase 2 report for the full history. Do not reintroduce an /api/files/* exemption
         // without an explicit, exact-match reason.
+        //
+        // Phase 3: /api/uploads/events/images/** and /api/uploads/school-logos/** are also gone
+        // — those static local-disk resource handlers were removed once every persistent upload
+        // category migrated to Object Storage (see WebConfig).
         if (path.startsWith("/api/auth/login")
                 || path.startsWith("/api/auth/logout")
                 || path.startsWith("/api/auth/refresh-token")
@@ -82,9 +86,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/public/")
                 || path.startsWith("/api/webhooks/")
                 || path.equals("/api/actuator/health")
-                || path.startsWith("/api/actuator/health/")
-                || path.startsWith("/api/uploads/events/images/")
-                || path.startsWith("/api/uploads/school-logos/")) {
+                || path.startsWith("/api/actuator/health/")) {
 
             filterChain.doFilter(request, response);
             return;

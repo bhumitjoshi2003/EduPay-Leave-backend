@@ -8,13 +8,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.jpa.repository.config.EnableJpaAuditing;
 import org.springframework.scheduling.annotation.EnableScheduling;
-import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @SpringBootApplication
 @EnableScheduling
 @EnableJpaAuditing
-public class IasManagementApplication implements WebMvcConfigurer {
+public class IasManagementApplication {
 
 	@Bean
 	public ModelMapper modelMapper() {
@@ -30,9 +28,8 @@ public class IasManagementApplication implements WebMvcConfigurer {
 		TimeZone.setDefault(TimeZone.getTimeZone("Asia/Kolkata"));
 	}
 
-	@Override
-	public void addResourceHandlers(ResourceHandlerRegistry registry) {
-		registry.addResourceHandler("/uploads/images/**")
-				.addResourceLocations("file:uploads/images/");
-	}
+	// Phase 3: removed a WebMvcConfigurer.addResourceHandlers override mapping
+	// /uploads/images/** -> file:uploads/images/ — pre-dates even the current JWT auth system
+	// (last touched during the original Keycloak-integration prototype, per git history) and had
+	// no writer anywhere in the codebase; genuinely orphaned, not part of any migrated category.
 }

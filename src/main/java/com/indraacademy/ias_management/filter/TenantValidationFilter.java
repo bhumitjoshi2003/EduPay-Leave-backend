@@ -156,6 +156,10 @@ public class TenantValidationFilter extends OncePerRequestFilter {
         // method used a broad path.startsWith("/api/files/") match, which silently (and
         // incorrectly) skipped tenant validation for those endpoints too — see
         // TenantValidationFilterTest and the Phase 2 report for the full history.
+        //
+        // Phase 3: /api/uploads/events/images/** and /api/uploads/school-logos/** are also gone
+        // — those static local-disk resource handlers were removed once every persistent upload
+        // category migrated to Object Storage (see WebConfig).
         return path.equals("/api/auth/login")
                 || path.equals("/api/auth/logout")
                 || path.equals("/api/auth/refresh-token")
@@ -163,8 +167,6 @@ public class TenantValidationFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/auth/reset-password")
                 || path.startsWith("/api/public/")
                 || path.startsWith("/api/webhooks/")
-                || path.startsWith("/api/uploads/events/images/")
-                || path.startsWith("/api/uploads/school-logos/")
                 || path.equals("/api/actuator/health")
                 || path.startsWith("/api/actuator/health/");
     }

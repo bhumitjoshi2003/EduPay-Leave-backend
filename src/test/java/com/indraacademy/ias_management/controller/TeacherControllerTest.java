@@ -9,10 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.lang.reflect.Method;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,14 +53,9 @@ class TeacherControllerTest {
         verify(teacherService).updateTeacher(body, request);
     }
 
-    @Test
-    void teacherPhotoUploadIsAdminOnly() throws Exception {
-        Method method = TeacherController.class.getMethod(
-                "uploadTeacherPhoto", String.class, org.springframework.web.multipart.MultipartFile.class);
-        PreAuthorize authorization = method.getAnnotation(PreAuthorize.class);
-
-        assertThat(authorization.value()).isEqualTo("hasRole('ADMIN')");
-    }
+    // Phase 3: teacherPhotoUploadIsAdminOnly (asserted @PreAuthorize on the now-retired
+    // uploadTeacherPhoto multipart endpoint) removed along with that endpoint — see
+    // LegacyUploadEndpointsRemovedTest for the regression guard proving it's genuinely gone.
 
     // ─── Object-storage photo resolution on read (backward-compatible with legacy paths) ────
 
