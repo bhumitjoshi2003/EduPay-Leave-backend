@@ -196,19 +196,17 @@ class ObjectStorageRealIT {
         assertThat(response.body()).isEqualTo(content);
     }
 
-    // ─── Section 5/6: apply the production+local-dev CORS policy, then prove preflight ───
-    // works for BOTH origins in one deterministic test (JUnit 5's default method order is not
-    // guaranteed to be source order, so PutBucketCors and the preflight checks that depend on it
-    // must not be split across separate @Test methods).
-    //
-    // Neon's PutBucketCors already confirmed working in an earlier session (single-origin rule
-    // for https://edunexify.co.in) — this now widens that same one rule to also allow local
-    // development from http://localhost:4200, without using a wildcard. PutBucketCors REPLACES
-    // the entire ruleset (not additive), so the production origin is included here explicitly
-    // rather than assumed to survive from whatever was set before.
+    // ─── Section 5/6: production-only CORS release policy ─────────────────────────────────
+    // Local development (http://localhost:4200) was allowed TEMPORARILY during the object
+    // storage migration/testing phase. Now that everything has been verified locally, this
+    // narrows the bucket back down to production-only, in one deterministic test (JUnit 5's
+    // default method order is not guaranteed to be source order, so PutBucketCors and the
+    // preflight checks that depend on it must not be split across separate @Test methods).
+    // PutBucketCors REPLACES the entire ruleset (not additive), so localhost is genuinely gone
+    // afterward, not just left off this one call.
 
     @Test
-    void applyProductionAndLocalDevCorsPolicy_thenPreflightSucceedsForBothOrigins() throws Exception {
+    void applyProductionOnlyCorsPolicy_thenPreflightSucceedsForProductionAndRejectsLocalhost() throws Exception {
         try {
             var existing = s3Client.getBucketCors(GetBucketCorsRequest.builder().bucket(bucket).build());
             System.out.println("[ObjectStorageRealIT] Existing bucket CORS rules before update: " + existing.corsRules().size());
@@ -217,7 +215,7 @@ class ObjectStorageRealIT {
         }
 
         CORSRule rule = CORSRule.builder()
-                .allowedOrigins("https://edunexify.co.in", "http://localhost:4200")
+                .allowedOrigins("https://edunexify.co.in")
                 .allowedMethods("PUT", "GET", "HEAD")
                 .allowedHeaders("content-type")
                 .maxAgeSeconds(3000)
@@ -226,20 +224,43 @@ class ObjectStorageRealIT {
                 .bucket(bucket)
                 .corsConfiguration(CORSConfiguration.builder().corsRules(rule).build())
                 .build());
-        System.out.println("[ObjectStorageRealIT] PutBucketCors applied: production + local-dev origins, no wildcard.");
+        System.out.println("[ObjectStorageRealIT] PutBucketCors applied: production-only, no wildcard, localhost removed.");
 
         var updated = s3Client.getBucketCors(GetBucketCorsRequest.builder().bucket(bucket).build());
         assertThat(updated.corsRules()).hasSize(1);
-        assertThat(updated.corsRules().get(0).allowedOrigins())
-                .containsExactlyInAnyOrder("https://edunexify.co.in", "http://localhost:4200");
+        assertThat(updated.corsRules().get(0).allowedOrigins()).containsExactly("https://edunexify.co.in");
         assertThat(updated.corsRules().get(0).allowedMethods()).containsExactlyInAnyOrder("PUT", "GET", "HEAD");
         assertThat(updated.corsRules().get(0).allowedHeaders()).containsExactly("content-type");
 
         assertPreflightAllowsOrigin("https://edunexify.co.in");
-        assertPreflightAllowsOrigin("http://localhost:4200");
+        assertPreflightRejectsOrigin("http://localhost:4200");
     }
 
     private void assertPreflightAllowsOrigin(String origin) throws Exception {
+        HttpResponse<String> response = preflightFor(origin);
+
+        String allowOrigin = response.headers().firstValue("Access-Control-Allow-Origin").orElse("<absent>");
+        System.out.println("[ObjectStorageRealIT] Preflight for Origin=" + origin
+                + " -> status=" + response.statusCode() + ", Access-Control-Allow-Origin=" + allowOrigin);
+
+        assertThat(response.statusCode()).isBetween(200, 204);
+        assertThat(allowOrigin).isEqualTo(origin);
+    }
+
+    /** Confirms an origin that is NOT in the CORS policy genuinely gets no CORS grant — the
+     * browser will block the response even if the raw HTTP status looks like success, since
+     * there is no matching Access-Control-Allow-Origin header for it to honor. */
+    private void assertPreflightRejectsOrigin(String origin) throws Exception {
+        HttpResponse<String> response = preflightFor(origin);
+
+        String allowOrigin = response.headers().firstValue("Access-Control-Allow-Origin").orElse("<absent>");
+        System.out.println("[ObjectStorageRealIT] Preflight for REMOVED Origin=" + origin
+                + " -> status=" + response.statusCode() + ", Access-Control-Allow-Origin=" + allowOrigin);
+
+        assertThat(allowOrigin).isNotEqualTo(origin);
+    }
+
+    private HttpResponse<String> preflightFor(String origin) throws Exception {
         String key = testKey("cors-preflight-" + origin.replaceAll("[^a-zA-Z0-9]", "-") + ".txt");
         PutObjectRequest putRequest = PutObjectRequest.builder().bucket(bucket).key(key).contentType("text/plain").build();
         var presigned = s3Presigner.presignPutObject(PutObjectPresignRequest.builder()
@@ -252,13 +273,6 @@ class ObjectStorageRealIT {
                 .header("Access-Control-Request-Method", "PUT")
                 .header("Access-Control-Request-Headers", "content-type")
                 .build();
-        HttpResponse<String> response = httpClient.send(preflight, HttpResponse.BodyHandlers.ofString());
-
-        String allowOrigin = response.headers().firstValue("Access-Control-Allow-Origin").orElse("<absent>");
-        System.out.println("[ObjectStorageRealIT] Preflight for Origin=" + origin
-                + " -> status=" + response.statusCode() + ", Access-Control-Allow-Origin=" + allowOrigin);
-
-        assertThat(response.statusCode()).isBetween(200, 204);
-        assertThat(allowOrigin).isEqualTo(origin);
+        return httpClient.send(preflight, HttpResponse.BodyHandlers.ofString());
     }
 }
