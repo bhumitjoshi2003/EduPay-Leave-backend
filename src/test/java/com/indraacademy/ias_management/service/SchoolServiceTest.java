@@ -52,6 +52,7 @@ class SchoolServiceTest {
     @Mock private EntitlementRefreshService entitlementRefreshService;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private HttpServletRequest request;
+    @Mock private ObjectStorageService objectStorageService;
 
     private SchoolService service;
 
@@ -70,6 +71,7 @@ class SchoolServiceTest {
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(service, "entitlementRefreshService", entitlementRefreshService);
         ReflectionTestUtils.setField(service, "eventPublisher", eventPublisher);
+        ReflectionTestUtils.setField(service, "objectStorageService", objectStorageService);
 
         lenient().when(schoolRepository.count()).thenReturn(5L);
         lenient().when(schoolRepository.countByActiveTrue()).thenReturn(4L);
@@ -380,5 +382,77 @@ class SchoolServiceTest {
         SchoolSettingsResponse response = service.updateSchoolDetails(SCHOOL_ID, req, request);
 
         assertThat(response.getPlan()).isEqualTo(SubscriptionPlan.TRIAL);
+    }
+
+    // ─── Phase 2: object-storage logo/report-card-header display resolution ────────────────
+
+    @Test
+    void getSettings_objectStorageKeys_resolvedToFreshPresignedUrls() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        School school = existingSchool();
+        school.setLogoUrl("schools/2/school/logo/uuid.png");
+        school.setReportCardHeaderImageUrl("schools/2/school/report-card-header/uuid.png");
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+        when(objectStorageService.resolveDisplayUrl("schools/2/school/logo/uuid.png"))
+                .thenReturn("https://storage.example/logo-get-url");
+        when(objectStorageService.resolveDisplayUrl("schools/2/school/report-card-header/uuid.png"))
+                .thenReturn("https://storage.example/header-get-url");
+
+        SchoolSettingsResponse response = service.getSettings();
+
+        assertThat(response.getLogoUrl()).isEqualTo("https://storage.example/logo-get-url");
+        assertThat(response.getReportCardHeaderImageUrl()).isEqualTo("https://storage.example/header-get-url");
+    }
+
+    @Test
+    void getSettings_legacyLocalDiskValues_leftCompletelyUntouched() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        School school = existingSchool();
+        school.setLogoUrl("/uploads/school-logos/2.png");
+        school.setReportCardHeaderImageUrl(null);
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+        when(objectStorageService.resolveDisplayUrl("/uploads/school-logos/2.png")).thenReturn("/uploads/school-logos/2.png");
+        when(objectStorageService.resolveDisplayUrl(null)).thenReturn(null);
+
+        SchoolSettingsResponse response = service.getSettings();
+
+        assertThat(response.getLogoUrl()).isEqualTo("/uploads/school-logos/2.png");
+        assertThat(response.getReportCardHeaderImageUrl()).isNull();
+    }
+
+    @Test
+    void removeReportCardHeader_objectStorageKey_deletedViaObjectStorage_notLocalDisk() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(securityUtil.getUsername()).thenReturn("admin1");
+        when(securityUtil.getRole()).thenReturn("ADMIN");
+        School school = existingSchool();
+        school.setReportCardHeaderImageUrl("schools/2/school/report-card-header/old.png");
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(request.getRemoteAddr()).thenReturn("127.0.0.1");
+
+        service.removeReportCardHeader(request);
+
+        assertThat(school.getReportCardHeaderImageUrl()).isNull();
+        verify(schoolRepository).save(school);
+        verify(objectStorageService).deleteObjectQuietly("schools/2/school/report-card-header/old.png");
+    }
+
+    @Test
+    void removeReportCardHeader_legacyLocalDiskValue_neverPassedToObjectStorageDelete() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(securityUtil.getUsername()).thenReturn("admin1");
+        when(securityUtil.getRole()).thenReturn("ADMIN");
+        School school = existingSchool();
+        school.setReportCardHeaderImageUrl("/uploads/report-card-headers/2.png");
+        when(schoolRepository.findById(SCHOOL_ID)).thenReturn(Optional.of(school));
+        when(schoolRepository.save(any(School.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(request.getRemoteAddr()).thenReturn("127.0.0.1");
+        ReflectionTestUtils.setField(service, "headerDirectory", System.getProperty("java.io.tmpdir"));
+
+        service.removeReportCardHeader(request);
+
+        assertThat(school.getReportCardHeaderImageUrl()).isNull();
+        verify(objectStorageService, org.mockito.Mockito.never()).deleteObjectQuietly(any());
     }
 }

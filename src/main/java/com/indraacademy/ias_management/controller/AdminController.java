@@ -4,6 +4,7 @@ import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.entity.Admin;
 import com.indraacademy.ias_management.service.AdminService;
 import com.indraacademy.ias_management.service.AuthService;
+import com.indraacademy.ias_management.service.ObjectStorageService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +29,7 @@ public class AdminController {
 
     @Autowired private AdminService adminService;
     @Autowired private AuthService authService;
+    @Autowired private ObjectStorageService objectStorageService;
 
     @PostMapping
     @PreAuthorize("hasRole('" + Role.SUPER_ADMIN + "')")
@@ -42,6 +44,7 @@ public class AdminController {
     public ResponseEntity<Admin> getAdmin(@PathVariable String adminId) {
         log.info("Request to get Admin with ID: {}", adminId);
         Optional<Admin> admin = adminService.getAdminById(adminId);
+        admin.ifPresent(a -> a.setPhotoUrl(objectStorageService.resolveDisplayUrl(a.getPhotoUrl())));
 
         return admin.map(ResponseEntity::ok)
                 .orElseGet(() -> {

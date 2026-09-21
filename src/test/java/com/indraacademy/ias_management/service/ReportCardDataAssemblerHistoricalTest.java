@@ -65,6 +65,7 @@ class ReportCardDataAssemblerHistoricalTest {
     @Mock private SecurityUtil securityUtil;
     @Mock private StudentTemporalMembershipResolver temporalMembershipResolver;
     @Mock private SchoolClassRepository schoolClassRepo;
+    @Mock private ObjectStorageService objectStorageService;
 
     private ReportCardDataAssembler assembler;
 
@@ -88,6 +89,9 @@ class ReportCardDataAssemblerHistoricalTest {
         ReflectionTestUtils.setField(assembler, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(assembler, "temporalMembershipResolver", temporalMembershipResolver);
         ReflectionTestUtils.setField(assembler, "schoolClassRepo", schoolClassRepo);
+        ReflectionTestUtils.setField(assembler, "objectStorageService", objectStorageService);
+        lenient().when(objectStorageService.resolveDisplayUrl(org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(inv -> inv.getArgument(0));
         lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
         // No AcademicSession fixtures by default — resolveHistoricalSection's enrollment lookup
         // gracefully finds nothing (Optional.empty()) and falls back to the pre-E6E legacy

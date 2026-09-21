@@ -56,6 +56,16 @@ public class ObjectStorageService {
                 schoolId, entityType, safeEntityId, purposeSegment, UUID.randomUUID(), extension);
     }
 
+    /**
+     * Same collision-safety/tenant-scoping as {@link #buildObjectKey}, for a purpose with no
+     * per-entity id below the school itself (school logo, report-card header — see
+     * {@link UploadPurpose#schoolLevel()}). {@code category} is always a fixed, code-defined
+     * constant (never client input), so no sanitization is needed here the way entityId requires.
+     */
+    public String buildSchoolLevelObjectKey(Long schoolId, String category, String extension) {
+        return "schools/%d/school/%s/%s.%s".formatted(schoolId, category, UUID.randomUUID(), extension);
+    }
+
     private static final java.util.regex.Pattern SAFE_SEGMENT = java.util.regex.Pattern.compile("^[A-Za-z0-9_-]+$");
 
     /**
@@ -144,6 +154,21 @@ public class ObjectStorageService {
      * of existing data. See TeacherService's photo-resolution logic. */
     public static boolean isObjectStorageKey(String storedValue) {
         return storedValue != null && storedValue.startsWith("schools/");
+    }
+
+    /**
+     * The one shared "what URL do I show for this stored value" rule, used by every controller
+     * that reads back a field which may hold either a legacy local-disk path/URL or a
+     * newer object-storage key: an object-storage key gets swapped for a freshly-presigned,
+     * short-lived GET URL (never persisted back — a new one is generated on every read); anything
+     * else (null, a legacy /uploads/... path, an already-absolute http(s) URL) passes through
+     * completely unchanged, so no caller needs its own isObjectStorageKey branch anymore.
+     */
+    public String resolveDisplayUrl(String storedValue) {
+        if (!isObjectStorageKey(storedValue)) {
+            return storedValue;
+        }
+        return createPresignedDownloadUrl(storedValue).toString();
     }
 
     private S3Client requireClient() {

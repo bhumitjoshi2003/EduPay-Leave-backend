@@ -97,8 +97,13 @@ class TenantValidationFilterTest {
     }
 
     @Test
-    void legacyUploadEventImagePath_stillExemptFromTenantValidation() throws Exception {
+    void retiredUploadEventImagePath_isNoLongerExemptFromTenantValidationEither() throws Exception {
+        // Same retirement as JwtAuthFilterTest's equivalent — /api/files/uploadEventImage no
+        // longer has any special-case exemption in isPublicPath(), so a mismatched slug/schoolId
+        // must now be caught for it exactly like any other authenticated path (404 for the
+        // now-nonexistent controller happens downstream, at dispatch — irrelevant to this filter).
         SchoolContext.set(1L);
+        when(slugResolutionService.resolveSlugToSchoolId("otherschool")).thenReturn(2L);
 
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRequestURI("/api/files/uploadEventImage");
@@ -109,7 +114,7 @@ class TenantValidationFilterTest {
 
         filter.doFilter(request, response, chain);
 
-        assertThat(chain.getRequest()).isNotNull();
-        verifyNoInteractions(slugResolutionService);
+        assertThat(response.getStatus()).isEqualTo(403);
+        assertThat(chain.getRequest()).isNull();
     }
 }

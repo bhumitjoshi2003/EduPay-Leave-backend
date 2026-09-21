@@ -77,6 +77,7 @@ public class SchoolService {
     @Autowired private EntitlementRefreshService entitlementRefreshService;
     @Autowired private AuditService auditService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectStorageService objectStorageService;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private AcademicSessionService academicSessionService;
     @Autowired private SlugResolutionService slugResolutionService;
@@ -266,6 +267,11 @@ public class SchoolService {
         Long schoolId = securityUtil.getSchoolId();
         School school = schoolRepository.findById(schoolId)
                 .orElseThrow(() -> new NoSuchElementException("School not found: " + schoolId));
+        // In-memory only, on an already-detached entity (no @Transactional here) — never
+        // persisted back. See ObjectStorageService.resolveDisplayUrl / TeacherController's
+        // identical pattern for teacher photos.
+        school.setLogoUrl(objectStorageService.resolveDisplayUrl(school.getLogoUrl()));
+        school.setReportCardHeaderImageUrl(objectStorageService.resolveDisplayUrl(school.getReportCardHeaderImageUrl()));
         return SchoolSettingsResponse.from(school);
     }
 
@@ -503,8 +509,12 @@ public class SchoolService {
         school.setReportCardHeaderImageUrl(null);
         schoolRepository.save(school);
 
-        // Best-effort file deletion
-        if (oldUrl != null && !oldUrl.isBlank()) {
+        // Best-effort deletion, in whichever storage the old value actually lives in — DB is
+        // already cleared above regardless of outcome here (see the Phase 2 replacement/delete
+        // safety report: a not-found storage object must never corrupt DB state).
+        if (ObjectStorageService.isObjectStorageKey(oldUrl)) {
+            objectStorageService.deleteObjectQuietly(oldUrl);
+        } else if (oldUrl != null && !oldUrl.isBlank()) {
             try {
                 String filename = oldUrl.substring(oldUrl.lastIndexOf('/') + 1);
                 Path filePath = Paths.get(headerDirectory).toAbsolutePath().normalize().resolve(filename);

@@ -98,10 +98,7 @@ public class TeacherController {
      * Phase 1 has no generic "file" entity to address by id, only this one entity's own field.
      */
     private void resolvePhotoUrlForDisplay(Teacher teacher) {
-        String stored = teacher.getPhotoUrl();
-        if (ObjectStorageService.isObjectStorageKey(stored)) {
-            teacher.setPhotoUrl(objectStorageService.createPresignedDownloadUrl(stored).toString());
-        }
+        teacher.setPhotoUrl(objectStorageService.resolveDisplayUrl(teacher.getPhotoUrl()));
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")

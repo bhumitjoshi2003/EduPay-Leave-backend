@@ -5,8 +5,16 @@ import com.indraacademy.ias_management.dto.UploadCompleteRequest;
 import com.indraacademy.ias_management.dto.UploadCompleteResponse;
 import com.indraacademy.ias_management.dto.UploadRequestRequest;
 import com.indraacademy.ias_management.dto.UploadRequestResponse;
+import com.indraacademy.ias_management.entity.Admin;
+import com.indraacademy.ias_management.entity.Event;
+import com.indraacademy.ias_management.entity.School;
+import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.Teacher;
 import com.indraacademy.ias_management.entity.UploadIntent;
+import com.indraacademy.ias_management.repository.AdminRepository;
+import com.indraacademy.ias_management.repository.EventRepository;
+import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UploadIntentRepository;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -31,10 +39,10 @@ import java.util.Optional;
  * confirming the object genuinely exists via HEAD. See the Phase 1 report for the full threat
  * model this defends against.
  *
- * <p>Phase 1 authorizes exactly one purpose ({@link UploadPurpose#TEACHER_PROFILE_PHOTO}) —
- * mirrors the existing {@code TeacherController.uploadTeacherPhoto}'s ADMIN-only restriction
- * exactly, so this is strictly additive: the legacy endpoint keeps working unchanged as a
- * rollback path.
+ * <p>Phase 1 authorized exactly one purpose ({@link UploadPurpose#TEACHER_PROFILE_PHOTO}). Phase
+ * 2 adds the remaining "normal persistent user upload" categories, each preserving its own
+ * pre-existing authorization rules (see the per-case comments in {@link #authorizeForPurpose}) —
+ * this class only ever widens by adding a new {@code case}, never by loosening an existing one.
  */
 @Service
 public class FileUploadRequestService {
@@ -44,6 +52,10 @@ public class FileUploadRequestService {
     @Autowired private ObjectStorageService objectStorageService;
     @Autowired private UploadIntentRepository uploadIntentRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private StudentRepository studentRepository;
+    @Autowired private AdminRepository adminRepository;
+    @Autowired private SchoolRepository schoolRepository;
+    @Autowired private EventRepository eventRepository;
     @Autowired private SecurityUtil securityUtil;
 
     @Value("${object-storage.presign-expiry-seconds:600}")
@@ -52,7 +64,7 @@ public class FileUploadRequestService {
     @Transactional
     public UploadRequestResponse createUploadRequest(UploadRequestRequest request) {
         UploadPurpose purpose = parsePurpose(request.getPurpose());
-        Long schoolId = requireSchoolId();
+        Long schoolId = resolveSchoolId(purpose, request.getEntityId());
 
         authorizeForPurpose(purpose, schoolId, request.getEntityId());
 
@@ -64,7 +76,9 @@ public class FileUploadRequestService {
         }
 
         String extension = UploadPurpose.extensionFor(request.getContentType());
-        String objectKey = objectStorageService.buildObjectKey(schoolId, entityTypeFor(purpose), request.getEntityId(), "profile", extension);
+        String objectKey = purpose.schoolLevel()
+                ? objectStorageService.buildSchoolLevelObjectKey(schoolId, purpose.objectKeySegment(), extension)
+                : objectStorageService.buildObjectKey(schoolId, purpose.entityType(), request.getEntityId(), purpose.objectKeySegment(), extension);
 
         ObjectStorageService.PresignedUpload presigned = objectStorageService.createPresignedUploadUrl(objectKey, request.getContentType());
 
@@ -89,7 +103,7 @@ public class FileUploadRequestService {
     @Transactional
     public UploadCompleteResponse completeUpload(UploadCompleteRequest request) {
         UploadPurpose purpose = parsePurpose(request.getPurpose());
-        Long schoolId = requireSchoolId();
+        Long schoolId = resolveSchoolId(purpose, request.getEntityId());
 
         UploadIntent intent = uploadIntentRepository.findByObjectKey(request.getObjectKey())
                 .orElseThrow(() -> new NoSuchElementException("No upload was authorized for this object."));
@@ -143,7 +157,9 @@ public class FileUploadRequestService {
 
     /** Persists the new object key onto the target entity and returns whatever value was there
      * before (for the caller to decide whether it needs cleanup) — never null-checks/deletes
-     * here, keeping that decision in completeUpload alongside its own logging. */
+     * here, keeping that decision in completeUpload alongside its own logging. Returns null for
+     * EVENT_IMAGE's "new event" sentinel, where there is no entity yet to attach to — see its
+     * case below. */
     private String attachToEntity(UploadPurpose purpose, String entityId, String newObjectKey) {
         return switch (purpose) {
             case TEACHER_PROFILE_PHOTO -> {
@@ -154,25 +170,121 @@ public class FileUploadRequestService {
                 teacherRepository.save(teacher);
                 yield old;
             }
+            case STUDENT_PROFILE_PHOTO -> {
+                Student student = studentRepository.findByStudentIdAndSchoolId(entityId, requireSchoolId())
+                        .orElseThrow(() -> new NoSuchElementException("Student not found: " + entityId));
+                String old = student.getPhotoUrl();
+                student.setPhotoUrl(newObjectKey);
+                studentRepository.save(student);
+                yield old;
+            }
+            case ADMIN_PROFILE_PHOTO -> {
+                // Plain findById (not schoolId-scoped) — authorizeForPurpose has already run
+                // (both at request time and again just above in completeUpload) with the correct
+                // ADMIN-self-only or SUPER_ADMIN-any-admin rule for this exact entityId, so no
+                // further scoping is needed to safely persist here.
+                Admin admin = adminRepository.findById(entityId)
+                        .orElseThrow(() -> new NoSuchElementException("Admin not found: " + entityId));
+                String old = admin.getPhotoUrl();
+                admin.setPhotoUrl(newObjectKey);
+                adminRepository.save(admin);
+                yield old;
+            }
+            case SCHOOL_LOGO -> {
+                School school = schoolRepository.findById(requireSchoolId())
+                        .orElseThrow(() -> new NoSuchElementException("School not found."));
+                String old = school.getLogoUrl();
+                school.setLogoUrl(newObjectKey);
+                schoolRepository.save(school);
+                yield old;
+            }
+            case REPORT_CARD_HEADER_IMAGE -> {
+                School school = schoolRepository.findById(requireSchoolId())
+                        .orElseThrow(() -> new NoSuchElementException("School not found."));
+                String old = school.getReportCardHeaderImageUrl();
+                school.setReportCardHeaderImageUrl(newObjectKey);
+                schoolRepository.save(school);
+                yield old;
+            }
+            case EVENT_IMAGE -> {
+                if (UploadPurpose.NEW_EVENT_SENTINEL.equals(entityId)) {
+                    // The event doesn't exist yet — nothing to attach to. The frontend includes
+                    // this response's objectKey as Event.imageUrl when it subsequently creates
+                    // the event, exactly mirroring the legacy uploadEventImage-then-save flow.
+                    yield null;
+                }
+                Event event = eventRepository.findByIdAndSchoolId(parseEventId(entityId), requireSchoolId())
+                        .orElseThrow(() -> new NoSuchElementException("Event not found: " + entityId));
+                String old = event.getImageUrl();
+                event.setImageUrl(newObjectKey);
+                eventRepository.save(event);
+                yield old;
+            }
         };
     }
 
     private void authorizeForPurpose(UploadPurpose purpose, Long schoolId, String entityId) {
         switch (purpose) {
             case TEACHER_PROFILE_PHOTO -> {
+                // Mirrors TeacherController.uploadTeacherPhoto's existing ADMIN-only restriction.
                 if (!Role.ADMIN.equals(securityUtil.getRole())) {
                     throw new AccessDeniedException("Not authorized to upload a teacher profile photo.");
                 }
                 teacherRepository.findByTeacherIdAndSchoolId(entityId, schoolId)
                         .orElseThrow(() -> new NoSuchElementException("Teacher not found: " + entityId));
             }
+            case STUDENT_PROFILE_PHOTO -> {
+                // Mirrors StudentController's existing ADMIN-only POST .../{studentId}/photo —
+                // the self/parent-child read rules (preserved separately on the read side, see
+                // StudentController.resolvePhotoUrlForDisplay) never applied to the WRITE side.
+                if (!Role.ADMIN.equals(securityUtil.getRole())) {
+                    throw new AccessDeniedException("Not authorized to upload a student profile photo.");
+                }
+                studentRepository.findByStudentIdAndSchoolId(entityId, schoolId)
+                        .orElseThrow(() -> new NoSuchElementException("Student not found: " + entityId));
+            }
+            case ADMIN_PROFILE_PHOTO -> {
+                // Mirrors AdminController.uploadAdminPhoto exactly: an ADMIN may only ever target
+                // their own id (schoolId-scoped lookup makes cross-school targeting impossible
+                // even if an ADMIN somehow guessed another school's own adminId); SUPER_ADMIN may
+                // target any admin in any school (id-only lookup, matching
+                // AdminService.findAdminByIdForCurrentUser's existing SUPER_ADMIN branch).
+                String role = securityUtil.getRole();
+                if (Role.SUPER_ADMIN.equals(role)) {
+                    adminRepository.findById(entityId)
+                            .orElseThrow(() -> new NoSuchElementException("Admin not found: " + entityId));
+                } else if (Role.ADMIN.equals(role)) {
+                    if (!entityId.equals(securityUtil.getUsername())) {
+                        throw new AccessDeniedException("Admins can only upload their own photo.");
+                    }
+                    adminRepository.findByAdminIdAndSchoolId(entityId, schoolId)
+                            .orElseThrow(() -> new NoSuchElementException("Admin not found: " + entityId));
+                } else {
+                    throw new AccessDeniedException("Not authorized to upload an admin profile photo.");
+                }
+            }
+            case SCHOOL_LOGO, REPORT_CARD_HEADER_IMAGE -> {
+                // Mirrors SchoolController's existing hasRole('ADMIN') on both
+                // /api/school/logo and /api/school/report-card-header. schoolId itself is
+                // already the trusted, session-derived tenant (see requireSchoolId) — there is
+                // exactly one school per schoolId, so no further entity lookup is meaningful.
+                if (!Role.ADMIN.equals(securityUtil.getRole())) {
+                    throw new AccessDeniedException("Not authorized to upload school branding.");
+                }
+            }
+            case EVENT_IMAGE -> {
+                // Mirrors EventController's existing hasAnyRole('ADMIN') on create/update. The
+                // "new event" sentinel skips the entity lookup entirely — there is nothing to
+                // look up yet, and schoolId is already the trusted, session-derived tenant.
+                if (!Role.ADMIN.equals(securityUtil.getRole())) {
+                    throw new AccessDeniedException("Not authorized to upload an event image.");
+                }
+                if (!UploadPurpose.NEW_EVENT_SENTINEL.equals(entityId)) {
+                    eventRepository.findByIdAndSchoolId(parseEventId(entityId), schoolId)
+                            .orElseThrow(() -> new NoSuchElementException("Event not found: " + entityId));
+                }
+            }
         }
-    }
-
-    private String entityTypeFor(UploadPurpose purpose) {
-        return switch (purpose) {
-            case TEACHER_PROFILE_PHOTO -> "teachers";
-        };
     }
 
     private UploadPurpose parsePurpose(String raw) {
@@ -183,11 +295,36 @@ public class FileUploadRequestService {
         }
     }
 
+    /**
+     * Normally the caller's own tenant. The one exception is a SUPER_ADMIN uploading ANOTHER
+     * school's admin's photo — SUPER_ADMIN's own session carries no schoolId (cross-tenant by
+     * design, see AdminService.findAdminByIdForCurrentUser's identical SUPER_ADMIN branch), so
+     * the TARGET admin's own schoolId is used instead. Every object key this service builds is
+     * still schoolId-prefixed regardless of which path resolved it, so tenant isolation of the
+     * stored object itself is unaffected either way.
+     */
+    private Long resolveSchoolId(UploadPurpose purpose, String entityId) {
+        if (purpose == UploadPurpose.ADMIN_PROFILE_PHOTO && Role.SUPER_ADMIN.equals(securityUtil.getRole())) {
+            return adminRepository.findById(entityId)
+                    .map(Admin::getSchoolId)
+                    .orElseThrow(() -> new NoSuchElementException("Admin not found: " + entityId));
+        }
+        return requireSchoolId();
+    }
+
     private Long requireSchoolId() {
         Long schoolId = securityUtil.getSchoolId();
         if (schoolId == null) {
             throw new AccessDeniedException("No school context for the current session.");
         }
         return schoolId;
+    }
+
+    private Long parseEventId(String entityId) {
+        try {
+            return Long.parseLong(entityId);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid event id: " + entityId);
+        }
     }
 }

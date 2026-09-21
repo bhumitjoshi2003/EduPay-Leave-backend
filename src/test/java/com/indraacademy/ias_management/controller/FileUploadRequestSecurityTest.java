@@ -62,17 +62,13 @@ class FileUploadRequestSecurityTest {
 	}
 
 	@Test
-	void legacyUploadEventImageRemainsPubliclyReachable() throws Exception {
-		// Must NOT be 401 — this is the one endpoint the /api/files/ exemption was always meant
-		// for (SecurityConfig.requestMatchers("/api/files/uploadEventImage").permitAll()), and it
-		// must stay reachable past the filter/security layer exactly as before this fix. Its own
-		// downstream validation (missing multipart body) is irrelevant to this test.
+	void retiredUploadEventImageEndpointNoLongerHasAnyPublicExemption() throws Exception {
+		// The legacy /api/files/uploadEventImage endpoint (and its FileUploadController) has
+		// been retired — no public/security-filter exemption remains for it at all. An
+		// unauthenticated request is now rejected by Spring Security itself (401), the same as
+		// any other /api/files/* path, before Spring MVC ever gets a chance to 404 on the
+		// missing handler.
 		mockMvc.perform(post("/api/files/uploadEventImage"))
-				.andExpect(result -> {
-					int status = result.getResponse().getStatus();
-					if (status == 401) {
-						throw new AssertionError("Expected the legacy public endpoint to remain reachable past security, but got 401");
-					}
-				});
+				.andExpect(status().isUnauthorized());
 	}
 }

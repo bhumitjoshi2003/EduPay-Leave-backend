@@ -13,7 +13,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Method;
-import java.net.URL;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -69,25 +68,29 @@ class TeacherControllerTest {
 
     @Test
     void getTeacher_legacyLocalDiskPhoto_leftCompletelyUntouched() {
+        // The isObjectStorageKey/presign decision now lives entirely inside
+        // ObjectStorageService.resolveDisplayUrl (see ObjectStorageServiceTest for that logic's
+        // own coverage) — the controller just delegates and trusts whatever comes back.
         Teacher teacher = new Teacher();
         teacher.setTeacherId("T1");
         teacher.setPhotoUrl("/uploads/teacher-photos/T1.jpg");
         when(teacherService.getTeacher("T1")).thenReturn(Optional.of(teacher));
+        when(objectStorageService.resolveDisplayUrl("/uploads/teacher-photos/T1.jpg"))
+                .thenReturn("/uploads/teacher-photos/T1.jpg");
 
         var response = controller.getTeacher("T1");
 
         assertThat(response.getBody().getPhotoUrl()).isEqualTo("/uploads/teacher-photos/T1.jpg");
-        verify(objectStorageService, never()).createPresignedDownloadUrl(any());
     }
 
     @Test
-    void getTeacher_objectStorageKeyPhoto_resolvedToFreshPresignedUrl() throws Exception {
+    void getTeacher_objectStorageKeyPhoto_resolvedToFreshPresignedUrl() {
         Teacher teacher = new Teacher();
         teacher.setTeacherId("T1");
         teacher.setPhotoUrl("schools/1/teachers/T1/profile/uuid.jpg");
         when(teacherService.getTeacher("T1")).thenReturn(Optional.of(teacher));
-        when(objectStorageService.createPresignedDownloadUrl("schools/1/teachers/T1/profile/uuid.jpg"))
-                .thenReturn(new URL("https://storage.example/signed-get-url"));
+        when(objectStorageService.resolveDisplayUrl("schools/1/teachers/T1/profile/uuid.jpg"))
+                .thenReturn("https://storage.example/signed-get-url");
 
         var response = controller.getTeacher("T1");
 
@@ -100,11 +103,11 @@ class TeacherControllerTest {
         teacher.setTeacherId("T1");
         teacher.setPhotoUrl(null);
         when(teacherService.getTeacher("T1")).thenReturn(Optional.of(teacher));
+        when(objectStorageService.resolveDisplayUrl(null)).thenReturn(null);
 
         var response = controller.getTeacher("T1");
 
         assertThat(response.getBody().getPhotoUrl()).isNull();
-        verify(objectStorageService, never()).createPresignedDownloadUrl(any());
     }
 
     @Test
@@ -114,6 +117,6 @@ class TeacherControllerTest {
         var response = controller.getTeacher("MISSING");
 
         assertThat(response.getStatusCode().value()).isEqualTo(404);
-        verify(objectStorageService, never()).createPresignedDownloadUrl(any());
+        verify(objectStorageService, never()).resolveDisplayUrl(any());
     }
 }

@@ -7,24 +7,76 @@ import java.util.Set;
  * a small, closed set — adding a new category means adding an enum constant plus its policy
  * below, never accepting an arbitrary client-supplied "purpose" string.
  *
- * <p>Phase 1 implements exactly one: {@link #TEACHER_PROFILE_PHOTO}. Other categories (student
- * photo, school logo, report-card header, notice/event attachments) remain on the existing
- * local-disk upload path until a later phase migrates them individually — see the Phase 1 audit
- * report for why this one was chosen first.
+ * <p>Phase 1 implemented exactly one: {@link #TEACHER_PROFILE_PHOTO}. Phase 2 adds the remaining
+ * "normal persistent user upload" categories — student/admin profile photos, school branding
+ * (logo, report-card header), and event images. Knowledge-base documents are deliberately NOT
+ * included here (see the Phase 2 audit report) — that subsystem stays on local disk for now.
+ *
+ * <p>Each constant drives {@link FileUploadRequestService}'s object-key construction via
+ * {@link #entityType()}/{@link #objectKeySegment()}/{@link #schoolLevel()}, in addition to the
+ * MIME/size policy every purpose has always declared. {@code entityType} is {@code null} exactly
+ * when {@code schoolLevel} is true — there is no per-entity id below the school itself for those
+ * two categories (see {@link com.indraacademy.ias_management.service.ObjectStorageService#buildSchoolLevelObjectKey}).
  */
 public enum UploadPurpose {
-    TEACHER_PROFILE_PHOTO(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024);
+    /** Unchanged from Phase 1 — same content types, same size, same object-key shape
+     * (schools/{id}/teachers/{id}/profile/{uuid}.ext). */
+    TEACHER_PROFILE_PHOTO(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024, "teachers", "profile", false),
+
+    /** Tightened from the legacy StudentService.uploadPhoto's looser "any image/*, 10MB" policy
+     * to the same explicit allow-list/5MB standard already established for teacher photos — the
+     * old ceiling was never a deliberate business requirement, just legacy permissiveness. */
+    STUDENT_PROFILE_PHOTO(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024, "students", "profile", false),
+
+    /** Same tightening rationale as STUDENT_PROFILE_PHOTO — legacy AdminService.uploadPhoto also
+     * allowed any image/* up to 10MB. */
+    ADMIN_PROFILE_PHOTO(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024, "admins", "profile", false),
+
+    /** School-level — one logo per school, not per some other entity id. Size limit matches the
+     * legacy SchoolService.uploadLogo's existing 5MB cap (already an explicit image allow-list in
+     * spirit, just tightened to jpeg/png/webp here for consistency). */
+    SCHOOL_LOGO(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024, null, "logo", true),
+
+    /** School-level. Size limit preserved from the legacy SchoolService.uploadReportCardHeader's
+     * existing 10MB cap — a report-card header can reasonably be a higher-resolution print asset,
+     * unlike a small profile photo. */
+    REPORT_CARD_HEADER_IMAGE(Set.of("image/jpeg", "image/png", "image/webp"), 10L * 1024 * 1024, null, "report-card-header", true),
+
+    /** Size limit preserved from the legacy FileStorageService.MAX_FILE_SIZE (event image via the
+     * now-retired /api/files/uploadEventImage). image/gif is kept (unlike the other categories)
+     * because the existing event-form frontend already deliberately allowed animated GIF event
+     * banners — dropping it here would be a silent feature regression, not a security tightening.
+     * entityId is either a real event id (replacing an existing event's image) or the literal
+     * sentinel "new" (uploading an image before the event itself has been created) — see
+     * FileUploadRequestService.authorizeForPurpose. */
+    EVENT_IMAGE(Set.of("image/jpeg", "image/png", "image/webp", "image/gif"), 10L * 1024 * 1024, "events", "images", false);
+
+    /** Sentinel entityId for an EVENT_IMAGE upload requested before the event itself exists yet
+     * (the frontend creates the real event only after the image finishes uploading). */
+    public static final String NEW_EVENT_SENTINEL = "new";
 
     private final Set<String> allowedContentTypes;
     private final long maxSizeBytes;
+    private final String entityType;
+    private final String objectKeySegment;
+    private final boolean schoolLevel;
 
-    UploadPurpose(Set<String> allowedContentTypes, long maxSizeBytes) {
+    UploadPurpose(Set<String> allowedContentTypes, long maxSizeBytes, String entityType, String objectKeySegment, boolean schoolLevel) {
         this.allowedContentTypes = allowedContentTypes;
         this.maxSizeBytes = maxSizeBytes;
+        this.entityType = entityType;
+        this.objectKeySegment = objectKeySegment;
+        this.schoolLevel = schoolLevel;
     }
 
     public Set<String> getAllowedContentTypes() { return allowedContentTypes; }
     public long getMaxSizeBytes() { return maxSizeBytes; }
+    /** Null for a school-level purpose — see {@link #schoolLevel()}. */
+    public String entityType() { return entityType; }
+    public String objectKeySegment() { return objectKeySegment; }
+    /** True when this purpose has no per-entity id below the school itself (logo, report-card
+     * header) — see {@link ObjectStorageService#buildSchoolLevelObjectKey}. */
+    public boolean schoolLevel() { return schoolLevel; }
 
     public boolean allowsContentType(String contentType) {
         return contentType != null && allowedContentTypes.contains(contentType);
@@ -32,14 +84,15 @@ public enum UploadPurpose {
 
     /** The object-key extension for a content type this purpose has already validated — never
      * derived from a client-supplied filename (see ObjectStorageService.buildObjectKey). Unlike
-     * the legacy TeacherService.uploadPhoto pipeline (which resizes and always re-encodes to
-     * .jpg), the object itself is stored exactly as the client uploaded it — no server-side
-     * image processing happens in the direct-upload path — so the extension must reflect the
-     * real validated content type, not a hardcoded assumption. */
+     * the legacy resize-and-re-encode-to-.jpg pipelines this replaces, the object itself is
+     * stored exactly as the client uploaded it — no server-side image processing happens in the
+     * direct-upload path — so the extension must reflect the real validated content type, not a
+     * hardcoded assumption. */
     public static String extensionFor(String contentType) {
         return switch (contentType) {
             case "image/png" -> "png";
             case "image/webp" -> "webp";
+            case "image/gif" -> "gif";
             default -> "jpg";
         };
     }

@@ -283,17 +283,24 @@ class JwtAuthFilterTest {
     }
 
     @Test
-    void legacyUploadEventImagePath_stillBypassesAuthFilterEntirely() throws Exception {
-        // The ONE legacy endpoint the /api/files/ prefix exemption was ever meant to cover
-        // (SecurityConfig's own exact-match permitAll) must remain untouched by the fix.
+    void retiredUploadEventImagePath_isNoLongerExemptFromAuthEither() throws Exception {
+        // POST /api/files/uploadEventImage (the ONE endpoint the old /api/files/ prefix
+        // exemption was ever meant to cover) has been retired entirely — its controller no
+        // longer exists, and this filter's exemption list has no /api/files/* entry at all
+        // anymore. A request to this now-nonexistent path must be treated like any other
+        // ordinary authenticated route: a valid session authenticates it (this filter has no way
+        // to know the controller is gone — that 404 happens downstream, at dispatch).
+        when(userSessionService.isActiveForUser(SESSION_ID, USER_ID)).thenReturn(true);
+
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setRequestURI("/api/files/uploadEventImage");
+        request.setCookies(new jakarta.servlet.http.Cookie("accessToken", accessToken(USER_ID, SESSION_ID)));
         MockHttpServletResponse response = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
 
         filter.doFilter(request, response, chain);
 
         assertThat(chain.getRequest()).isNotNull();
-        verifyNoInteractions(userSessionService);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
     }
 }

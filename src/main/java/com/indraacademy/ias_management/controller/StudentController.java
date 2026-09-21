@@ -18,6 +18,7 @@ import com.indraacademy.ias_management.service.StudentBulkImportService;
 import com.indraacademy.ias_management.service.StudentPromotionService;
 import com.indraacademy.ias_management.service.StudentService;
 import com.indraacademy.ias_management.service.ParentPortalService;
+import com.indraacademy.ias_management.service.ObjectStorageService;
 import com.indraacademy.ias_management.service.TeacherClassScopeService;
 import com.indraacademy.ias_management.service.TeacherClassScopeService.ScopedAccess;
 import com.indraacademy.ias_management.util.SecurityUtil;
@@ -61,6 +62,7 @@ public class StudentController {
     @Autowired private ParentPortalService parentPortalService;
     @Autowired private TeacherClassScopeService teacherClassScopeService;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private ObjectStorageService objectStorageService;
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/search")
@@ -116,12 +118,25 @@ public class StudentController {
         }
 
         Optional<Student> student = studentService.getStudent(resolvedStudentId);
+        student.ifPresent(this::resolvePhotoUrlForDisplay);
         return student.map(ResponseEntity::ok)
                 .orElseGet(() -> {
                     // Use the final variable in the lambda
                     log.warn("Student with ID {} not found.", resolvedStudentId);
                     return ResponseEntity.notFound().build();
                 });
+    }
+
+    /**
+     * Called only after the role-based resolvedStudentId logic above (STUDENT self-only, PARENT
+     * via assertChildAccess, ADMIN/TEACHER unrestricted) has already run — by the time a Student
+     * reaches here, the caller has already passed exactly the same access checks
+     * PersonalMediaController enforces for the legacy /uploads/student-photos/... path, so
+     * swapping in a fresh presigned GET URL here introduces no new access surface. Legacy local
+     * paths are left completely untouched — see ObjectStorageService.resolveDisplayUrl.
+     */
+    private void resolvePhotoUrlForDisplay(Student student) {
+        student.setPhotoUrl(objectStorageService.resolveDisplayUrl(student.getPhotoUrl()));
     }
 
     @PreAuthorize("hasRole('" + Role.ADMIN + "')")

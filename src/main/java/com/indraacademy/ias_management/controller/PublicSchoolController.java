@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.dto.PlanResponse;
 import com.indraacademy.ias_management.dto.PublicSchoolResponse;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.service.ObjectStorageService;
 import com.indraacademy.ias_management.service.PlanService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +26,9 @@ public class PublicSchoolController {
     @Autowired
     private PlanService planService;
 
+    @Autowired
+    private ObjectStorageService objectStorageService;
+
     /**
      * Public unauthenticated endpoint — called by the frontend on load to get
      * school branding for the login screen.
@@ -39,10 +43,13 @@ public class PublicSchoolController {
                     String boardType = school.getBoardType() != null
                             ? school.getBoardType().name()
                             : null;
+                    // Public, unauthenticated endpoint — the presigned GET URL generated here
+                    // uses this backend's own object-storage credentials, never anything
+                    // derived from a caller session, so this is safe with no auth context at all.
                     PublicSchoolResponse response = new PublicSchoolResponse(
                             school.getName(),
                             school.getSlug(),
-                            school.getLogoUrl(),
+                            objectStorageService.resolveDisplayUrl(school.getLogoUrl()),
                             school.getThemeColor(),
                             school.getCity(),
                             boardType

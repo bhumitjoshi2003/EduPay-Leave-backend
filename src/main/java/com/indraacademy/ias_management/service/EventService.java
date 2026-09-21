@@ -31,6 +31,7 @@ public class EventService {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private BusinessNotificationService businessNotifications;
+    @Autowired private ObjectStorageService objectStorageService;
 
     public Event createEvent(Event event, HttpServletRequest request) {
 
@@ -227,7 +228,11 @@ public class EventService {
             url = url.substring(4);
         }
 
-        event.setImageUrl(url);
+        // A fresh object-storage key never starts with "http" or "/api/uploads/", so it passes
+        // through the legacy normalization above completely unchanged — only then is it swapped
+        // for a short-lived presigned GET URL. Never persisted back (see
+        // ObjectStorageService.resolveDisplayUrl); a legacy /uploads/... path is left untouched.
+        event.setImageUrl(objectStorageService.resolveDisplayUrl(url));
     }
 
     public void deleteEvent(Long id, HttpServletRequest request) {

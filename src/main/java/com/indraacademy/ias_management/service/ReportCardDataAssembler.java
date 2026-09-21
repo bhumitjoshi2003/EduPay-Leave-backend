@@ -48,6 +48,7 @@ public class ReportCardDataAssembler {
     @Autowired private MarkService markService;
     @Autowired private WeightageCalculationEngine weightageEngine;
     @Autowired private ReportCardTemplateService templateService;
+    @Autowired private ObjectStorageService objectStorageService;
     @Autowired private RemarksService remarksService;
     @Autowired private SecurityUtil securityUtil;
     @Autowired private StudentTemporalMembershipResolver temporalMembershipResolver;
@@ -122,11 +123,15 @@ public class ReportCardDataAssembler {
         if (student.getDob() != null) {
             dto.setDateOfBirth(student.getDob().format(DOB_FMT));
         }
-        dto.setPhotoUrl(student.getPhotoUrl());
+        // Fresh presigned GET URLs for any object-storage key (legacy local-disk paths and
+        // already-absolute URLs pass through unchanged) — ReportCardPdfGenerator's
+        // loadStudentPhotoImage/loadLogoImage/loadHeaderImage already fetch any http(s) URL over
+        // the network, so no generator changes are needed for this to work.
+        dto.setPhotoUrl(objectStorageService.resolveDisplayUrl(student.getPhotoUrl()));
 
         // School fields
         dto.setSchoolName(school.getName());
-        dto.setSchoolLogoUrl(school.getLogoUrl());
+        dto.setSchoolLogoUrl(objectStorageService.resolveDisplayUrl(school.getLogoUrl()));
         dto.setSchoolAddress(school.getAddress());
         dto.setSchoolPhone(school.getPhone());
         dto.setSchoolEmail(school.getEmail());
@@ -136,7 +141,7 @@ public class ReportCardDataAssembler {
         dto.setAffiliationNumber(school.getAffiliationNumber());
         dto.setSchoolCode(school.getSchoolCode());
         dto.setSchoolCity(school.getCity());
-        dto.setReportCardHeaderImageUrl(school.getReportCardHeaderImageUrl());
+        dto.setReportCardHeaderImageUrl(objectStorageService.resolveDisplayUrl(school.getReportCardHeaderImageUrl()));
 
         // Template
         dto.setTemplate(templateService.getTemplate(templateId));
