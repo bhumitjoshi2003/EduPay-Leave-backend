@@ -45,6 +45,7 @@ public class EventService {
         }
 
         try {
+            event.setImageUrl(sanitizeImageUrlForPersistence(event.getImageUrl(), null));
             event.setCreatedBy(securityUtil.getUsername());
             event.setSchoolId(securityUtil.getSchoolId());
 
@@ -174,7 +175,7 @@ public class EventService {
             event.setCategory(eventDetails.getCategory());
             event.setTargetAudience(eventDetails.getTargetAudience());
             event.setVideoLinks(eventDetails.getVideoLinks());
-            event.setImageUrl(eventDetails.getImageUrl());
+            event.setImageUrl(sanitizeImageUrlForPersistence(eventDetails.getImageUrl(), event.getImageUrl()));
             event.setCreatedBy(securityUtil.getUsername());
             event.setUpdatedAt(LocalDateTime.now().toLocalDate());
 
@@ -233,6 +234,28 @@ public class EventService {
         // for a short-lived presigned GET URL. Never persisted back (see
         // ObjectStorageService.resolveDisplayUrl); a legacy /uploads/... path is left untouched.
         event.setImageUrl(objectStorageService.resolveDisplayUrl(url));
+    }
+
+    /**
+     * Guards against ever persisting a resolved presigned display URL back into the DB. Every
+     * value this backend itself ever hands to a client for display purposes (see
+     * resolveImageUrl above) is either a stable value (null, an object-storage key, or a legacy
+     * /uploads/... relative path — resolveImageUrl already strips any absolute host off those) or
+     * a short-lived, absolute http(s) presigned GET URL. A legitimate NEW value from the client
+     * — a fresh upload's object key, or an explicit removal (null) — is therefore NEVER an
+     * absolute http(s) URL; if one shows up here, it can only be an unmodified round-trip of a
+     * previously-displayed presigned URL (e.g. the edit form was saved without touching the
+     * photo), and persisting it would silently corrupt the stable reference into a value that
+     * stops working once the signature expires. In that case the existing DB value is kept
+     * unchanged instead.
+     */
+    private String sanitizeImageUrlForPersistence(String incoming, String currentlyStored) {
+        if (incoming != null && incoming.startsWith("http")) {
+            log.warn("Ignoring client-supplied absolute imageUrl on event save — looks like a resolved " +
+                    "presigned display URL, not a stable value. Keeping the existing stored value unchanged.");
+            return currentlyStored;
+        }
+        return incoming;
     }
 
     public void deleteEvent(Long id, HttpServletRequest request) {
