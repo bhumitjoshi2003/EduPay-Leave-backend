@@ -38,7 +38,7 @@ class PasswordResetServiceTest {
         service.sendParentWelcomeLink(user, "Asha & <Family> \"Parent\"", "Doon & <Valley> \"School\"");
 
         ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendHtmlEmail(eq("parent@example.com"),
+        verify(emailService).sendHtmlEmail(eq(EmailPurpose.SECURITY), eq("parent@example.com"),
                 eq("Welcome to Edunexify – Set Your Password"), html.capture());
 
         assertThat(html.getValue())
@@ -68,7 +68,7 @@ class PasswordResetServiceTest {
         service.sendResetLink(user, "Password Reset Request – Edunexify", intro);
 
         ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendHtmlEmail(eq("student@example.com"),
+        verify(emailService).sendHtmlEmail(eq(EmailPurpose.SECURITY), eq("student@example.com"),
                 eq("Password Reset Request – Edunexify"), html.capture());
 
         assertThat(html.getValue())

@@ -100,7 +100,7 @@ public class UsageLimitAlertScheduler {
                 studentAlert,  staffAlert
         );
         String subject = "Usage Limit Warning — " + schoolName + " is approaching plan limits";
-        emailService.sendHtmlEmail(recipientEmail, subject, html);
+        emailService.sendHtmlEmail(EmailPurpose.NOTIFICATION, recipientEmail, subject, html);
         log.info("Sent usage alert to {} for school '{}' (students={}/{}, staff={}/{})",
                 recipientEmail, schoolName, activeStudents, maxStudents, totalStaff, maxStaff);
         return true;

@@ -44,7 +44,7 @@ public class PasswordResetService {
         userRepository.save(user);
 
         String resetLink = frontendUrl + "/reset-password?token=" + rawToken;
-        emailService.sendHtmlEmail(user.getEmail(), subject, buildPasswordResetHtml(resetLink, introHtml));
+        emailService.sendHtmlEmail(EmailPurpose.SECURITY, user.getEmail(), subject, buildPasswordResetHtml(resetLink, introHtml));
     }
 
     /** As {@link #sendResetLink}, but for a brand-new Parent account: the email additionally
@@ -58,7 +58,7 @@ public class PasswordResetService {
         userRepository.save(user);
 
         String resetLink = frontendUrl + "/reset-password?token=" + rawToken;
-        emailService.sendHtmlEmail(user.getEmail(), "Welcome to Edunexify – Set Your Password",
+        emailService.sendHtmlEmail(EmailPurpose.SECURITY, user.getEmail(), "Welcome to Edunexify – Set Your Password",
                 buildParentWelcomeHtml(resetLink, parentName, user.getUserId(), schoolName));
     }
 

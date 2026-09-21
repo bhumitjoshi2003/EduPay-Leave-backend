@@ -152,9 +152,18 @@ public class NotificationDeliveryWorker {
         String email = recipient.getEmail();
         if (email == null || email.isBlank()) return ExternalDeliveryResult.skipped("Recipient has no email address");
         String schoolName = schoolRepository.findById(delivery.schoolId()).map(School::getName).orElse("School");
-        emailService.sendNotificationEmailOrThrow(email, delivery.title(),
+        emailService.sendNotificationEmailOrThrow(purposeFor(delivery.eventCode()), email, delivery.title(),
                 emailService.buildAnnouncementHtml(delivery.title(), delivery.message(), schoolName));
         return ExternalDeliveryResult.sent(null);
+    }
+
+    private EmailPurpose purposeFor(String eventCode) {
+        if (eventCode == null) return EmailPurpose.NOTIFICATION;
+        return switch (eventCode) {
+            case "PAYMENT_SUCCESS", "PAYMENT_REFUNDED", "FEE_DUE", "FEE_OVERDUE", "FEE_REMINDER" -> EmailPurpose.FEES;
+            case "ACCOUNT_SECURITY" -> EmailPurpose.SECURITY;
+            default -> EmailPurpose.NOTIFICATION;
+        };
     }
 
     private void complete(ClaimedNotificationDelivery delivery, ExternalDeliveryResult result, LocalDateTime now) {

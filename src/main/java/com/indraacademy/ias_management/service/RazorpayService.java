@@ -437,7 +437,7 @@ public class RazorpayService {
                             student.getName(), paymentId, displayAmountRupees, session, monthNames, schoolName);
 
                     log.info("Initiating asynchronous HTML email send to {} for payment verification.", studentEmail);
-                    emailService.sendHtmlEmail(studentEmail, subject, htmlBody);
+                    emailService.sendHtmlEmail(EmailPurpose.FEES, studentEmail, subject, htmlBody);
                 } else {
                     log.warn("Student email not found or is empty for student ID: {}. Skipping email notification.", studentId);
                 }

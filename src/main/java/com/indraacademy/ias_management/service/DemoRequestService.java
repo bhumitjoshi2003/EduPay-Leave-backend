@@ -47,7 +47,7 @@ public class DemoRequestService {
         try {
             String subject = "New Demo Request — " + dto.getSchoolName();
             String htmlBody = buildEmailHtml(dto);
-            emailService.sendHtmlEmail(adminEmail, subject, htmlBody);
+            emailService.sendHtmlEmail(EmailPurpose.NOTIFICATION, adminEmail, subject, htmlBody);
         } catch (Exception e) {
             log.error("Failed to send demo request notification email: {}", e.getMessage());
         }

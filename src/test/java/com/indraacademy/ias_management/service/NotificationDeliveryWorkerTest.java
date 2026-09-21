@@ -205,12 +205,26 @@ class NotificationDeliveryWorkerTest {
         when(schools.findById(2L)).thenReturn(Optional.of(school));
         when(email.buildAnnouncementHtml("Title", "Message", "Edunexify School")).thenReturn("<html>message</html>");
         doThrow(new NotificationEmailDeliveryException("temporary", new java.net.SocketTimeoutException()))
-                .when(email).sendNotificationEmailOrThrow(eq("current@example.com"), eq("Title"), anyString());
+                .when(email).sendNotificationEmailOrThrow(eq(EmailPurpose.NOTIFICATION), eq("current@example.com"), eq("Title"), anyString());
         when(classifier.classify(any())).thenReturn(ExternalDeliveryOutcome.RETRYABLE_FAILURE);
 
         worker.processDelivery(delivery(ExternalDeliveryChannel.EMAIL, 1));
 
         verify(states).markRetryable(eq(10L), eq("lease"), contains("NotificationEmailDeliveryException"), any());
+    }
+
+    @Test
+    void feeEventsUseFeesSenderPurposeWithoutChangingDeliveryFlow() {
+        User user = user("current@example.com");
+        when(users.findByUserIdAndSchoolIdAndActiveTrue("student-1", 2L)).thenReturn(Optional.of(user));
+        when(schools.findById(2L)).thenReturn(Optional.of(new School()));
+        when(email.buildAnnouncementHtml(anyString(), anyString(), anyString())).thenReturn("<html>message</html>");
+        when(states.markSent(eq(10L), eq("lease"), isNull(), any())).thenReturn(true);
+
+        worker.processDelivery(delivery(ExternalDeliveryChannel.EMAIL, 1, "FEE_OVERDUE"));
+
+        verify(email).sendNotificationEmailOrThrow(eq(EmailPurpose.FEES), eq("current@example.com"), eq("Title"), anyString());
+        verify(states).markSent(eq(10L), eq("lease"), isNull(), any());
     }
 
     @Test
@@ -224,6 +238,12 @@ class NotificationDeliveryWorkerTest {
     private ClaimedNotificationDelivery delivery(ExternalDeliveryChannel channel, int attempt) {
         return new ClaimedNotificationDelivery(10L, 2L, 20L, "student-1", channel,
                 "snapshot@example.com", "Title", "Message", attempt, "lease");
+    }
+
+    private ClaimedNotificationDelivery delivery(ExternalDeliveryChannel channel, int attempt, String eventCode) {
+        return new ClaimedNotificationDelivery(10L, 2L, 20L, "student-1", channel,
+                "snapshot@example.com", "Title", "Message", 30L, eventCode,
+                null, null, null, null, attempt, "lease");
     }
 
     private User user(String address) {

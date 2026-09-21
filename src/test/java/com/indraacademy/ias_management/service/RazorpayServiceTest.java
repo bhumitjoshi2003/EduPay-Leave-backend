@@ -214,7 +214,7 @@ class RazorpayServiceTest {
             assertThat(result.get("message")).isEqualTo("Payment Verified Successfully");
             verify(businessNotifications).studentAndParents(eq(SCHOOL_ID), eq("S1"), any(), any(), any(),
                     anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), anyString(), any());
-            verify(emailService).sendHtmlEmail(eq("parent@example.com"), anyString(), anyString());
+            verify(emailService).sendHtmlEmail(eq(EmailPurpose.FEES), eq("parent@example.com"), anyString(), anyString());
         }
     }
 

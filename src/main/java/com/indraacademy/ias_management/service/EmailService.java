@@ -10,7 +10,6 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.InternetAddress;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -34,13 +33,19 @@ public class EmailService {
     @Autowired private JavaMailSender javaMailSender;
     @Autowired private StudentRepository studentRepository;
     @Autowired private TeacherRepository teacherRepository;
+    @Autowired private EmailSenderResolver senderResolver;
 
-
-    @Value("${app.mail.from:noreply@edunexify.co.in}")
-    private String emailSender;
-
+    /**
+     * Legacy compatibility overload. New production call sites must provide an explicit
+     * {@link EmailPurpose}; omitted purpose intentionally falls back to SECURITY.
+     */
     @Async
     public void sendHtmlEmail(String to, String subject, String htmlBody) {
+        sendHtmlEmail(EmailPurpose.SECURITY, to, subject, htmlBody);
+    }
+
+    @Async
+    public void sendHtmlEmail(EmailPurpose purpose, String to, String subject, String htmlBody) {
         if (to == null || to.trim().isEmpty() || subject == null || htmlBody == null) {
             log.warn("Attempted to send HTML email with a missing required field. Aborting.");
             return;
@@ -49,7 +54,7 @@ public class EmailService {
         try {
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom(emailSender);
+            setFrom(helper, purpose);
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(htmlBody, true);
@@ -73,8 +78,15 @@ public class EmailService {
      * FeeReminderService.sendReminderEmailSync, used only by the AI-workflow dispatch
      * path — the interactive single/bulk-send endpoints keep using the async version above
      * so their HTTP response isn't slowed down by real SMTP round-trips).
+     *
+     * Legacy compatibility overload. New production call sites must provide an explicit
+     * {@link EmailPurpose}; omitted purpose intentionally falls back to SECURITY.
      */
     public boolean sendHtmlEmailSync(String to, String subject, String htmlBody) {
+        return sendHtmlEmailSync(EmailPurpose.SECURITY, to, subject, htmlBody);
+    }
+
+    public boolean sendHtmlEmailSync(EmailPurpose purpose, String to, String subject, String htmlBody) {
         if (to == null || to.trim().isEmpty() || subject == null || htmlBody == null) {
             log.warn("Attempted to send HTML email (sync) with a missing required field. Aborting.");
             return false;
@@ -82,7 +94,7 @@ public class EmailService {
         try {
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom(emailSender);
+            setFrom(helper, purpose);
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(htmlBody, true);
@@ -101,8 +113,17 @@ public class EmailService {
         }
     }
 
-    /** Provider call for the durable notification worker. Unlike legacy helpers, failures are not swallowed. */
+    /**
+     * Legacy compatibility overload for notification delivery. New production call sites
+     * should provide an explicit {@link EmailPurpose}. The notification default is retained
+     * to preserve this method's existing domain semantics.
+     */
     public void sendNotificationEmailOrThrow(String to, String subject, String htmlBody) {
+        sendNotificationEmailOrThrow(EmailPurpose.NOTIFICATION, to, subject, htmlBody);
+    }
+
+    /** Provider call for the durable notification worker. Unlike legacy helpers, failures are not swallowed. */
+    public void sendNotificationEmailOrThrow(EmailPurpose purpose, String to, String subject, String htmlBody) {
         if (to == null || to.isBlank() || subject == null || htmlBody == null) {
             throw new IllegalArgumentException("Email recipient, subject and body are required");
         }
@@ -111,7 +132,7 @@ public class EmailService {
             address.validate();
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom(emailSender);
+            setFrom(helper, purpose);
             helper.setTo(address);
             helper.setSubject(subject);
             helper.setText(htmlBody, true);
@@ -143,7 +164,7 @@ public class EmailService {
             String htmlBody = buildAnnouncementHtml(subject, body, schoolName);
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom(emailSender);
+            setFrom(helper, EmailPurpose.NOTIFICATION);
             helper.setSubject(subject);
             helper.setText(htmlBody, true);
             helper.setBcc(validEmails.toArray(new String[0]));
@@ -241,7 +262,7 @@ public class EmailService {
         try {
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom(emailSender);
+            setFrom(helper, EmailPurpose.NOTIFICATION);
             helper.setTo(to);
             helper.setSubject("Report Card – " + session + " | " + (schoolName != null ? schoolName : "School"));
             helper.setText(buildReportCardHtml(studentName, schoolName, session), true);
@@ -320,6 +341,15 @@ public class EmailService {
                 </body>
                 </html>
                 """.formatted(sn, session, safe, session, sn, year, sn);
+    }
+
+    private void setFrom(MimeMessageHelper helper, EmailPurpose purpose) throws MessagingException {
+        EmailSenderIdentity sender = senderResolver.resolve(purpose);
+        try {
+            helper.setFrom(new InternetAddress(sender.email(), sender.displayName(), "UTF-8"));
+        } catch (java.io.UnsupportedEncodingException e) {
+            throw new MessagingException("Unable to encode sender display name", e);
+        }
     }
 
     @Async

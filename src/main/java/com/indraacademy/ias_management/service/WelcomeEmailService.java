@@ -65,7 +65,7 @@ public class WelcomeEmailService {
             String subject = "Welcome to Edunexify, " + safeName + "!";
             String htmlBody = buildWelcomeHtml(safeName, userId, roleLabel, schoolName, loginUrl);
 
-            emailService.sendHtmlEmail(email, subject, htmlBody);
+            emailService.sendHtmlEmail(EmailPurpose.ONBOARDING, email, subject, htmlBody);
             log.info("Welcome email queued for {} {} ({})", role, userId, email);
         } catch (Exception e) {
             // Never let a welcome-email failure affect the caller — account creation already

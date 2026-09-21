@@ -253,7 +253,7 @@ public class EntitlementRefreshService {
             String graceStr = graceEndsAt != null ? graceEndsAt.format(DATE_FMT) : "soon";
             String subject = "Action Required: Your Edunexify subscription has expired — " + school.getName();
             String html = buildGracePeriodHtml(school.getName(), planName, graceStr);
-            emailService.sendHtmlEmail(recipientEmail, subject, html);
+            emailService.sendHtmlEmail(EmailPurpose.NOTIFICATION, recipientEmail, subject, html);
             log.info("Sent grace period entry email to {} for school '{}'", recipientEmail, school.getName());
         } catch (Exception e) {
             log.error("Failed to send grace period email for schoolId={}: {}", schoolId, e.getMessage());

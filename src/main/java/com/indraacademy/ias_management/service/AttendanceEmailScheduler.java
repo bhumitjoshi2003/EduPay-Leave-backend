@@ -85,7 +85,7 @@ public class AttendanceEmailScheduler {
                                 .map(School::getName).orElse("School");
                         String htmlBody   = buildAbsenceHtml(studentName, dateStr, schoolName);
 
-                        emailService.sendHtmlEmail(parentEmail, subject, htmlBody);
+                        emailService.sendHtmlEmail(EmailPurpose.NOTIFICATION, parentEmail, subject, htmlBody);
                         log.info("Successfully sent absence email to parent of student ID: {} ({})", studentId, parentEmail);
                     } catch (Exception e) {
                         log.error("Failed to send attendance email for student ID: {}", studentId, e);

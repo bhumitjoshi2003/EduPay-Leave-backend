@@ -93,7 +93,7 @@ public class SubscriptionExpiryNotificationScheduler {
 
                 String subject = buildSubject(school.getName(), expiryStr, isTrial, (int) daysLeft);
                 String htmlBody = buildExpiryHtml(school.getName(), expiryStr, isTrial, (int) daysLeft);
-                emailService.sendHtmlEmail(recipientEmail, subject, htmlBody);
+                emailService.sendHtmlEmail(EmailPurpose.NOTIFICATION, recipientEmail, subject, htmlBody);
                 log.info("Sent {}-day expiry reminder to {} for school '{}' (expires {})",
                         daysLeft, recipientEmail, school.getName(), expiryStr);
                 sent++;

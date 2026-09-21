@@ -56,6 +56,7 @@ class WelcomeEmailServiceTest {
         service.sendWelcomeEmail("STU_001", "Asha Verma", Role.STUDENT, "asha@test.com", SCHOOL_ID);
 
         verify(emailService).sendHtmlEmail(
+                org.mockito.ArgumentMatchers.eq(EmailPurpose.ONBOARDING),
                 org.mockito.ArgumentMatchers.eq("asha@test.com"),
                 org.mockito.ArgumentMatchers.eq("Welcome to Edunexify, Asha Verma!"),
                 anyString());
@@ -69,7 +70,7 @@ class WelcomeEmailServiceTest {
         service.sendWelcomeEmail("STU_001", "Asha Verma", Role.STUDENT, "asha@test.com", SCHOOL_ID);
 
         ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendHtmlEmail(anyString(), anyString(), bodyCaptor.capture());
+        verify(emailService).sendHtmlEmail(org.mockito.ArgumentMatchers.eq(EmailPurpose.ONBOARDING), anyString(), anyString(), bodyCaptor.capture());
         String body = bodyCaptor.getValue();
 
         assertThat(body).contains("Asha Verma");
@@ -92,7 +93,7 @@ class WelcomeEmailServiceTest {
         service.sendWelcomeEmail("TCH_001", "Ravi Kumar", Role.TEACHER, "ravi@test.com", SCHOOL_ID);
 
         ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(emailService).sendHtmlEmail(anyString(), anyString(), bodyCaptor.capture());
+        verify(emailService).sendHtmlEmail(org.mockito.ArgumentMatchers.eq(EmailPurpose.ONBOARDING), anyString(), anyString(), bodyCaptor.capture());
         assertThat(bodyCaptor.getValue()).contains("Teacher");
     }
 
@@ -100,14 +101,14 @@ class WelcomeEmailServiceTest {
     void skipsSilentlyWhenEmailIsBlank() {
         service.sendWelcomeEmail("STU_001", "Asha Verma", Role.STUDENT, "  ", SCHOOL_ID);
 
-        verify(emailService, never()).sendHtmlEmail(anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlEmail(any(), anyString(), anyString(), anyString());
     }
 
     @Test
     void skipsSilentlyWhenEmailIsNull() {
         service.sendWelcomeEmail("STU_001", "Asha Verma", Role.STUDENT, null, SCHOOL_ID);
 
-        verify(emailService, never()).sendHtmlEmail(anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlEmail(any(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -118,6 +119,6 @@ class WelcomeEmailServiceTest {
         // succeeded, so a failure here must never surface to the caller.
         service.sendWelcomeEmail("STU_001", "Asha Verma", Role.STUDENT, "asha@test.com", SCHOOL_ID);
 
-        verify(emailService, never()).sendHtmlEmail(anyString(), anyString(), anyString());
+        verify(emailService, never()).sendHtmlEmail(any(), anyString(), anyString(), anyString());
     }
 }
