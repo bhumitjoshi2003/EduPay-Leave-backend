@@ -146,6 +146,9 @@ jobs:
                 -e SENTRY_DSN='${{ secrets.SENTRY_DSN }}' \
                 -e SENTRY_ENVIRONMENT=production \
                 -e RELEASE_SHA='${{ github.sha }}' \
+                -e ANDROID_LATEST_VERSION_NAME='${{ vars.ANDROID_LATEST_VERSION_NAME }}' \
+                -e ANDROID_LATEST_VERSION_CODE='${{ vars.ANDROID_LATEST_VERSION_CODE }}' \
+                -e ANDROID_MIN_SUPPORTED_VERSION_CODE='${{ vars.ANDROID_MIN_SUPPORTED_VERSION_CODE }}' \
                 -e BETTERSTACK_NOTIFICATION_WORKER_HEARTBEAT_URL='${{ secrets.BETTERSTACK_NOTIFICATION_WORKER_HEARTBEAT_URL }}' \
                 -e BETTERSTACK_ENTITLEMENT_REFRESH_HEARTBEAT_URL='${{ secrets.BETTERSTACK_ENTITLEMENT_REFRESH_HEARTBEAT_URL }}' \
                 "$1"
