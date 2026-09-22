@@ -228,6 +228,19 @@ class NotificationDeliveryWorkerTest {
     }
 
     @Test
+    void staffAdoptionReminderEventsUseNotificationSenderPurpose() {
+        User user = user("current@example.com");
+        when(users.findByUserIdAndSchoolIdAndActiveTrue("student-1", 2L)).thenReturn(Optional.of(user));
+        when(schools.findById(2L)).thenReturn(Optional.of(new School()));
+        when(email.buildAnnouncementHtml(anyString(), anyString(), anyString())).thenReturn("<html>message</html>");
+        when(states.markSent(eq(10L), eq("lease"), isNull(), any())).thenReturn(true);
+
+        worker.processDelivery(delivery(ExternalDeliveryChannel.EMAIL, 1, "STAFF_ADOPTION_NOT_STARTED_REMINDER"));
+
+        verify(email).sendNotificationEmailOrThrow(eq(EmailPurpose.NOTIFICATION), eq("current@example.com"), eq("Title"), anyString());
+    }
+
+    @Test
     void missingCurrentEmailIsSkipped() {
         when(users.findByUserIdAndSchoolIdAndActiveTrue("student-1", 2L)).thenReturn(Optional.of(user(null)));
         worker.processDelivery(delivery(ExternalDeliveryChannel.EMAIL, 1));

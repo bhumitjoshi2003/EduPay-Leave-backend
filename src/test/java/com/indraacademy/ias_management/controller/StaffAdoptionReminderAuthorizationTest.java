@@ -1,5 +1,9 @@
 package com.indraacademy.ias_management.controller;
 
+import com.indraacademy.ias_management.dto.StaffAdoptionReminderPreviewResponse;
+import com.indraacademy.ias_management.dto.StaffAdoptionReminderRequest;
+import com.indraacademy.ias_management.dto.StaffAdoptionReminderSendResponse;
+import com.indraacademy.ias_management.dto.StaffAdoptionReminderType;
 import com.indraacademy.ias_management.dto.StaffAdoptionResponse;
 import com.indraacademy.ias_management.service.StaffAdoptionReminderService;
 import com.indraacademy.ias_management.service.StaffAdoptionService;
@@ -23,8 +27,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-@SpringJUnitConfig(StaffAdoptionAuthorizationTest.Config.class)
-class StaffAdoptionAuthorizationTest {
+/** Mirrors {@link StaffAdoptionAuthorizationTest}: reminders share the same
+ *  {@code /api/admin/staff-adoption} controller and ADMIN-only class-level authorization. */
+@SpringJUnitConfig(StaffAdoptionReminderAuthorizationTest.Config.class)
+class StaffAdoptionReminderAuthorizationTest {
     @Configuration
     @EnableMethodSecurity
     static class Config {
@@ -36,29 +42,38 @@ class StaffAdoptionAuthorizationTest {
     }
 
     @Autowired StaffAdoptionController controller;
-    @Autowired StaffAdoptionService service;
+    @Autowired StaffAdoptionReminderService reminderService;
 
     @AfterEach void clear() { SecurityContextHolder.clearContext(); }
 
     @Test
-    void adminCanAccess() {
+    void adminCanPreviewAndSendReminders() {
         authenticate("ADMIN");
-        when(service.getStaffAdoption()).thenReturn(new StaffAdoptionResponse(
-                new StaffAdoptionResponse.Summary(0, 0, 0, 0, 0, 0, 0), List.of()));
-        assertThatCode(() -> controller.getStaffAdoption()).doesNotThrowAnyException();
+        when(reminderService.preview(StaffAdoptionReminderType.NOT_STARTED))
+                .thenReturn(new StaffAdoptionReminderPreviewResponse(0, List.of()));
+        when(reminderService.send(StaffAdoptionReminderType.NOT_STARTED))
+                .thenReturn(new StaffAdoptionReminderSendResponse(StaffAdoptionReminderType.NOT_STARTED, 0, 0, 0));
+
+        assertThatCode(() -> controller.previewReminder(StaffAdoptionReminderType.NOT_STARTED)).doesNotThrowAnyException();
+        assertThatCode(() -> controller.sendReminder(new StaffAdoptionReminderRequest(StaffAdoptionReminderType.NOT_STARTED)))
+                .doesNotThrowAnyException();
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"TEACHER", "STUDENT", "PARENT", "SUB_ADMIN", "SUPER_ADMIN"})
-    void nonAdminsCannotAccess(String role) {
+    void nonAdminsCannotPreviewOrSendReminders(String role) {
         authenticate(role);
-        assertThatThrownBy(() -> controller.getStaffAdoption())
+        assertThatThrownBy(() -> controller.previewReminder(StaffAdoptionReminderType.NOT_STARTED))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        assertThatThrownBy(() -> controller.sendReminder(new StaffAdoptionReminderRequest(StaffAdoptionReminderType.NOT_STARTED)))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
     }
 
     @Test
-    void anonymousCannotAccess() {
-        assertThatThrownBy(() -> controller.getStaffAdoption())
+    void anonymousCannotPreviewOrSendReminders() {
+        assertThatThrownBy(() -> controller.previewReminder(StaffAdoptionReminderType.NOT_STARTED))
+                .isInstanceOf(org.springframework.security.core.AuthenticationException.class);
+        assertThatThrownBy(() -> controller.sendReminder(new StaffAdoptionReminderRequest(StaffAdoptionReminderType.NOT_STARTED)))
                 .isInstanceOf(org.springframework.security.core.AuthenticationException.class);
     }
 
