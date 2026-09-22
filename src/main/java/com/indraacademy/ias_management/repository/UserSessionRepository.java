@@ -7,14 +7,24 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 public interface UserSessionRepository extends JpaRepository<UserSession, Long> {
 
+    interface LastActivity {
+        String getUserId();
+        Instant getLastActiveAt();
+    }
+
     Optional<UserSession> findByRefreshTokenHash(String refreshTokenHash);
 
     List<UserSession> findByUserIdAndRevokedAtIsNullOrderByLastUsedAtDesc(String userId);
+
+    @Query("SELECT s.userId AS userId, MAX(s.lastUsedAt) AS lastActiveAt " +
+            "FROM UserSession s WHERE s.userId IN :userIds GROUP BY s.userId")
+    List<LastActivity> findLastActivityByUserIds(@Param("userIds") Collection<String> userIds);
 
     /** Atomic compare-and-swap: rotates a session's refresh token ONLY if its hash is
      * still exactly oldHash at the moment this UPDATE actually runs. Under Postgres's
