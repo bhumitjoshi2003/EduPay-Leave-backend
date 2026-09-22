@@ -30,11 +30,12 @@ class StaffAdoptionServiceTest {
     @Mock UserSessionRepository sessions;
     @Mock TeacherAttendanceRepository attendance;
     @Mock SecurityUtil security;
+    @Mock AppUpdateConfig appUpdateConfig;
     private StaffAdoptionService service;
 
     @BeforeEach
     void setUp() {
-        service = new StaffAdoptionService(teachers, users, sessions, attendance, security);
+        service = new StaffAdoptionService(teachers, users, sessions, attendance, security, appUpdateConfig);
         when(security.getSchoolId()).thenReturn(42L);
     }
 
@@ -78,7 +79,7 @@ class StaffAdoptionServiceTest {
         assertThat(row(response, "T2").lastActiveAt()).isNull();
         assertThat(row(response, "T3").accountStatus()).isEqualTo("ACCOUNT_PENDING");
         assertThat(row(response, "T4").accountStatus()).isEqualTo("DISABLED");
-        assertThat(response.summary()).isEqualTo(new StaffAdoptionResponse.Summary(4, 1, 2, 1, 1));
+        assertThat(response.summary()).isEqualTo(new StaffAdoptionResponse.Summary(4, 1, 2, 1, 1, 0, 0));
 
         verify(teachers).findBySchoolId(42L);
         verify(users).findBySchoolIdAndRoleAndUserIdIn(eq(42L), eq("TEACHER"), anyList());

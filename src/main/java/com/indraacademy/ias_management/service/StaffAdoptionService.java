@@ -34,15 +34,17 @@ public class StaffAdoptionService {
     private final UserSessionRepository sessions;
     private final TeacherAttendanceRepository attendance;
     private final SecurityUtil security;
+    private final AppUpdateConfig appUpdateConfig;
 
     public StaffAdoptionService(TeacherRepository teachers, UserRepository users,
                                 UserSessionRepository sessions, TeacherAttendanceRepository attendance,
-                                SecurityUtil security) {
+                                SecurityUtil security, AppUpdateConfig appUpdateConfig) {
         this.teachers = teachers;
         this.users = users;
         this.sessions = sessions;
         this.attendance = attendance;
         this.security = security;
+        this.appUpdateConfig = appUpdateConfig;
     }
 
     /** Four bounded reads for a non-empty school; never one query per teacher. */
@@ -74,8 +76,11 @@ public class StaffAdoptionService {
         long notStarted = rows.stream().filter(r -> NOT_STARTED.equals(r.accountStatus())
                 || ACCOUNT_PENDING.equals(r.accountStatus())).count();
         long attendanceUsed = rows.stream().filter(StaffAdoptionResponse.TeacherRow::hasUsedAttendance).count();
+        long onboardingCompleted = rows.stream().filter(r -> "COMPLETED".equals(r.onboardingStatus())).count();
+        long appUpToDate = rows.stream().filter(r -> "UP_TO_DATE".equals(r.appVersionStatus())).count();
         return new StaffAdoptionResponse(
-                new StaffAdoptionResponse.Summary(rows.size(), started, notStarted, attendanceUsed, disabled), rows);
+                new StaffAdoptionResponse.Summary(rows.size(), started, notStarted, attendanceUsed, disabled,
+                        onboardingCompleted, appUpToDate), rows);
     }
 
     private StaffAdoptionResponse.TeacherRow row(Teacher teacher, User account, Instant lastActive,
@@ -88,11 +93,23 @@ public class StaffAdoptionService {
         } else {
             status = lastActive == null ? NOT_STARTED : STARTED;
         }
+        String onboardingStatus = account != null && account.getOnboardingCompletedAt() != null ? "COMPLETED" : "UNKNOWN";
         return new StaffAdoptionResponse.TeacherRow(teacher.getTeacherId(), teacher.getName(), status,
-                lastActive, lastAttendance != null, lastAttendance);
+                lastActive, lastAttendance != null, lastAttendance, onboardingStatus,
+                account == null ? null : account.getOnboardingCompletedAt(),
+                account == null ? null : account.getClientPlatform(),
+                account == null ? null : account.getAppVersionName(),
+                account == null ? null : account.getAppVersionCode(), appVersionStatus(account));
+    }
+
+    private String appVersionStatus(User account) {
+        if (account == null || !"ANDROID".equals(account.getClientPlatform()) || account.getAppVersionCode() == null) return "UNKNOWN";
+        if (account.getAppVersionCode() < appUpdateConfig.getMinimumSupportedVersionCode()) return "UPDATE_REQUIRED";
+        if (account.getAppVersionCode() < appUpdateConfig.getLatestVersionCode()) return "UPDATE_AVAILABLE";
+        return "UP_TO_DATE";
     }
 
     private StaffAdoptionResponse empty() {
-        return new StaffAdoptionResponse(new StaffAdoptionResponse.Summary(0, 0, 0, 0, 0), List.of());
+        return new StaffAdoptionResponse(new StaffAdoptionResponse.Summary(0, 0, 0, 0, 0, 0, 0), List.of());
     }
 }

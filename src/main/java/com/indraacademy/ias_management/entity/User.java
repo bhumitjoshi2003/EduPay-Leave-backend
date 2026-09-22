@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.util.Date;
+import java.time.Instant;
 
 @Entity
 @Table(name = "users")
@@ -44,6 +45,21 @@ public class User {
 
     @Column(name = "active", nullable = false)
     private boolean active = true;
+
+    @Column(name = "client_platform", length = 20)
+    private String clientPlatform;
+
+    @Column(name = "app_version_name", length = 50)
+    private String appVersionName;
+
+    @Column(name = "app_version_code")
+    private Integer appVersionCode;
+
+    @Column(name = "client_reported_at")
+    private Instant clientReportedAt;
+
+    @Column(name = "onboarding_completed_at")
+    private Instant onboardingCompletedAt;
 
     public String getUserId() {
         return userId;

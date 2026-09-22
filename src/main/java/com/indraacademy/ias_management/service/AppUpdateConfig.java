@@ -40,4 +40,7 @@ public class AppUpdateConfig {
         return new AppUpdateInfoResponse(
                 latestVersionName, latestVersionCode, minimumSupportedVersionCode, updateMessage, playStoreUrl);
     }
+
+    public int getLatestVersionCode() { return latestVersionCode; }
+    public int getMinimumSupportedVersionCode() { return minimumSupportedVersionCode; }
 }

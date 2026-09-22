@@ -10,7 +10,9 @@ public record StaffAdoptionResponse(Summary summary, List<TeacherRow> teachers) 
             long startedTeachers,
             long notStartedTeachers,
             long attendanceUsedTeachers,
-            long disabledTeachers) {}
+            long disabledTeachers,
+            long onboardingCompletedTeachers,
+            long appUpToDateTeachers) {}
 
     public record TeacherRow(
             String teacherId,
@@ -18,5 +20,11 @@ public record StaffAdoptionResponse(Summary summary, List<TeacherRow> teachers) 
             String accountStatus,
             Instant lastActiveAt,
             boolean hasUsedAttendance,
-            LocalDateTime lastAttendanceAt) {}
+            LocalDateTime lastAttendanceAt,
+            String onboardingStatus,
+            Instant onboardingCompletedAt,
+            String clientPlatform,
+            String appVersionName,
+            Integer appVersionCode,
+            String appVersionStatus) {}
 }

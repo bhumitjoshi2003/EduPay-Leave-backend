@@ -40,7 +40,7 @@ class StaffAdoptionAuthorizationTest {
     void adminCanAccess() {
         authenticate("ADMIN");
         when(service.getStaffAdoption()).thenReturn(new StaffAdoptionResponse(
-                new StaffAdoptionResponse.Summary(0, 0, 0, 0, 0), List.of()));
+                new StaffAdoptionResponse.Summary(0, 0, 0, 0, 0, 0, 0), List.of()));
         assertThatCode(() -> controller.getStaffAdoption()).doesNotThrowAnyException();
     }
 
