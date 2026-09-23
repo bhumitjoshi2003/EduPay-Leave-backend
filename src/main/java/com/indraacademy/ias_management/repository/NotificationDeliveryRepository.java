@@ -13,6 +13,7 @@ import java.util.List;
 
 public interface NotificationDeliveryRepository extends JpaRepository<NotificationDelivery, Long> {
     List<NotificationDelivery> findByNotificationIdAndSchoolId(Long notificationId, Long schoolId);
+    List<NotificationDelivery> findByUserNotificationId(Long userNotificationId);
     List<NotificationDelivery> findByStatusAndNextAttemptAtLessThanEqual(
             NotificationDeliveryStatus status, LocalDateTime nextAttemptAt);
     boolean existsBySchoolIdAndUserNotificationIdAndChannel(

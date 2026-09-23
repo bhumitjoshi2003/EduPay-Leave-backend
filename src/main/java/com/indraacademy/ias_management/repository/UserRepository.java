@@ -18,6 +18,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findFirstBySchoolIdAndRole(Long schoolId, String role);
     Optional<User> findByUserIdAndSchoolIdAndActiveTrue(String userId, Long schoolId);
     List<User> findBySchoolIdAndActiveTrueAndUserIdIn(Long schoolId, Collection<String> userIds);
+    List<User> findBySchoolIdAndUserIdIn(Long schoolId, Collection<String> userIds);
     List<User> findBySchoolIdAndRoleAndActiveTrue(Long schoolId, String role);
     List<User> findBySchoolIdAndRoleAndUserIdIn(Long schoolId, String role, Collection<String> userIds);
     List<User> findBySchoolIdAndActiveTrue(Long schoolId);
