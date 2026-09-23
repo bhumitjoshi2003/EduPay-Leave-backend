@@ -15,14 +15,12 @@ import com.indraacademy.ias_management.repository.NotificationDeliveryRepository
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -47,15 +45,12 @@ public class NotificationDeliveryLogService {
     private final UserRepository users;
     private final NotificationRetryPolicy retryPolicy;
     private final NotificationDeliverySummaryQuery summaryQuery;
-    private final long retentionDays;
 
     public NotificationDeliveryLogService(NotificationDeliveryLogQuery query, NotificationDeliveryRepository deliveries,
                                           UserNotificationRepository inbox, SchoolRepository schools,
                                           UserRepository users, NotificationRetryPolicy retryPolicy,
-                                          NotificationDeliverySummaryQuery summaryQuery,
-                                          @Value("${notification.delivery.retention-days:90}") long retentionDays) {
+                                          NotificationDeliverySummaryQuery summaryQuery) {
         this.summaryQuery = summaryQuery;
-        this.retentionDays = retentionDays;
         this.query = query;
         this.deliveries = deliveries;
         this.inbox = inbox;
@@ -124,7 +119,6 @@ public class NotificationDeliveryLogService {
         Map<Long, NotificationDeliverySummaryQuery.InboxCounts> inboxCounts = summaryQuery.inboxCounts(ids);
         Map<Long, NotificationDeliverySummaryQuery.DeliveryCounts> deliveryCounts = summaryQuery.deliveryCounts(schoolIds, ids);
         Map<Long, String> schoolNames = schoolNames(schoolIds);
-        LocalDateTime retentionCutoff = LocalDateTime.now().minusDays(retentionDays);
 
         List<SummaryRow> content = pageGroups.stream().map(g -> {
             NotificationDeliverySummaryQuery.InboxCounts inboxCount = inboxCounts.getOrDefault(g.notificationId(),
@@ -136,10 +130,9 @@ public class NotificationDeliveryLogService {
                     inboxCount.stored(),
                     new InAppCounts(inboxCount.stored(), inboxCount.opened(), inboxCount.stored() - inboxCount.opened()),
                     channelCounts(byChannel.get(ExternalDeliveryChannel.PUSH.name())),
-                    channelCounts(byChannel.get(ExternalDeliveryChannel.EMAIL.name())),
-                    g.createdAt() != null && g.createdAt().isBefore(retentionCutoff));
+                    channelCounts(byChannel.get(ExternalDeliveryChannel.EMAIL.name())));
         }).toList();
-        return new SummaryPage(content, safePage, safeSize, hasNext, retentionDays);
+        return new SummaryPage(content, safePage, safeSize, hasNext);
     }
 
     private static ChannelCounts channelCounts(Map<String, Long> byStatus) {

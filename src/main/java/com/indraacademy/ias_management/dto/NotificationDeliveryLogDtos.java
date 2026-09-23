@@ -44,14 +44,14 @@ public final class NotificationDeliveryLogDtos {
     public record InAppCounts(long stored, long opened, long unopened) {}
 
     /**
-     * One notification publication. push/email are null when there are no delivery rows on that
-     * channel: normally it was never used for this notification, but when
-     * deliveryHistoryMayBeIncomplete is true the finished rows may already have been removed by
-     * the delivery retention cleanup, so counts for older notifications can be partial or absent.
+     * One notification publication. push/email are null when that channel was never used for
+     * this notification (no delivery rows). Delivery rows are only ever removed together with
+     * their notification (NotificationRetentionCleanupJob), so a listed notification's counts are
+     * complete.
      */
     public record SummaryRow(long notificationId, Long schoolId, String schoolName, String eventCode, String title,
                              String messagePreview, LocalDateTime createdAt, long totalRecipients, InAppCounts inApp,
-                             ChannelCounts push, ChannelCounts email, boolean deliveryHistoryMayBeIncomplete) {}
+                             ChannelCounts push, ChannelCounts email) {}
 
-    public record SummaryPage(List<SummaryRow> content, int page, int size, boolean hasNext, long deliveryRetentionDays) {}
+    public record SummaryPage(List<SummaryRow> content, int page, int size, boolean hasNext) {}
 }

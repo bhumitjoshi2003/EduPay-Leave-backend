@@ -59,4 +59,11 @@ public interface UserNotificationRepository extends JpaRepository<UserNotificati
     @Modifying
     @Query("delete from UserNotification u where u.notification.id = :notificationId and u.schoolId = :schoolId")
     int deleteByNotificationIdAndSchoolId(@Param("notificationId") Long notificationId, @Param("schoolId") Long schoolId);
+
+    /** Platform-wide retention cleanup: every inbox row of the given (expired) notifications, in
+     *  any school — a platform-wide notification's inbox rows can span schools, and the FK
+     *  requires all of them gone before the parent notification can be deleted. */
+    @Modifying
+    @Query("delete from UserNotification u where u.notification.id in :notificationIds")
+    int deleteByNotificationIdIn(@Param("notificationIds") List<Long> notificationIds);
 }

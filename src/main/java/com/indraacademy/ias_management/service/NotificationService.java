@@ -18,13 +18,10 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDateTime;
-import java.time.Period;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -428,19 +425,5 @@ public class NotificationService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
-    }
-
-    @Scheduled(cron = "0 0 2 * * ?")
-    @Transactional
-    public void cleanupOldNotifications() {
-        // Intentional platform-wide retention job; public CRUD remains tenant-scoped.
-        LocalDateTime oneMonthAgo = LocalDateTime.now().minus(Period.ofMonths(1));
-        try {
-            List<Notification> oldNotifications = notificationRepository.findByCreatedAtBefore(oneMonthAgo);
-            notificationRepository.deleteAll(oldNotifications);
-            log.info("Cleaned up {} old notifications created before {}", oldNotifications.size(), oneMonthAgo);
-        } catch (DataAccessException e) {
-            log.error("Data access error during scheduled notification cleanup", e);
-        }
     }
 }

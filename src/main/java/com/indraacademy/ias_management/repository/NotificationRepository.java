@@ -5,6 +5,9 @@ import com.indraacademy.ias_management.notification.NotificationEventCode;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -16,8 +19,14 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     List<Notification> findBySchoolIdAndCreatedAtBefore(Long schoolId, LocalDateTime twoMonthsAgo);
 
-    // Platform-wide lookup (used by cleanupOldNotifications scheduler — no schoolId filter)
-    List<Notification> findByCreatedAtBefore(LocalDateTime dateTime);
+    /** Retention cleanup: ids only (never loads entities), oldest first, bounded by the Pageable. */
+    @Query("select n.id from Notification n where n.createdAt < :cutoff order by n.createdAt asc, n.id asc")
+    List<Long> findIdsCreatedBefore(@Param("cutoff") LocalDateTime cutoff, Pageable pageable);
+
+    /** Retention cleanup only — callers must delete user_notifications children first (no DB cascade). */
+    @Modifying
+    @Query("delete from Notification n where n.id in :ids")
+    int deleteByIdIn(@Param("ids") List<Long> ids);
 
     int deleteBySchoolIdAndCreatedAtBefore(Long schoolId, LocalDateTime fourDaysAgo);
 

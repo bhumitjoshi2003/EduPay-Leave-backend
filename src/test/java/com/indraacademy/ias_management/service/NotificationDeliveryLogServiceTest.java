@@ -45,7 +45,7 @@ class NotificationDeliveryLogServiceTest {
 
     @BeforeEach
     void setup() {
-        service = new NotificationDeliveryLogService(query, deliveries, inbox, schools, users, retryPolicy, summaryQuery, 90);
+        service = new NotificationDeliveryLogService(query, deliveries, inbox, schools, users, retryPolicy, summaryQuery);
         School school = new School();
         school.setId(1L);
         school.setName("Indra Academy");
@@ -162,13 +162,12 @@ class NotificationDeliveryLogServiceTest {
         assertThat(r.push()).isEqualTo(new ChannelCounts(500, 487, 10, 2, 0, 1));
         assertThat(r.email()).isEqualTo(new ChannelCounts(500, 492, 5, 0, 3, 0));
         assertThat(r.messagePreview()).hasSize(NotificationDeliveryLogService.MESSAGE_PREVIEW_LENGTH + 1).endsWith("…");
-        assertThat(r.deliveryHistoryMayBeIncomplete()).isFalse();
     }
 
     @Test
-    void summaryLeavesAnUnusedChannelNullAndFlagsNotificationsOlderThanDeliveryRetention() {
+    void summaryLeavesAnUnusedChannelNullAndHandlesPlatformWideNotificationsWithNoRecipients() {
         when(summaryQuery.groups(any(), anyInt(), anyInt())).thenReturn(List.of(
-                new NotificationDeliverySummaryQuery.Group(1L, 1L, "HOLIDAY_PUBLISHED", "Holiday", "Closed.", LocalDateTime.now().minusDays(120)),
+                new NotificationDeliverySummaryQuery.Group(1L, 1L, "HOLIDAY_PUBLISHED", "Holiday", "Closed.", LocalDateTime.now().minusDays(10)),
                 new NotificationDeliverySummaryQuery.Group(2L, null, "LEGACY_NOTIFICATION", "Platform", "Hi.", LocalDateTime.now())));
         when(summaryQuery.inboxCounts(any())).thenReturn(Map.of(1L, new NotificationDeliverySummaryQuery.InboxCounts(40, 0)));
         when(summaryQuery.deliveryCounts(any(), any())).thenReturn(Map.of());
@@ -178,12 +177,10 @@ class NotificationDeliveryLogServiceTest {
         SummaryRow old = page.content().get(0);
         assertThat(old.push()).isNull();
         assertThat(old.email()).isNull();
-        assertThat(old.deliveryHistoryMayBeIncomplete()).isTrue();
         SummaryRow platform = page.content().get(1);
         assertThat(platform.schoolName()).isNull();
         assertThat(platform.totalRecipients()).isZero();
         assertThat(platform.inApp()).isEqualTo(new InAppCounts(0, 0, 0));
-        assertThat(page.deliveryRetentionDays()).isEqualTo(90);
         verify(summaryQuery).deliveryCounts(Set.of(1L), List.of(1L, 2L));
     }
 

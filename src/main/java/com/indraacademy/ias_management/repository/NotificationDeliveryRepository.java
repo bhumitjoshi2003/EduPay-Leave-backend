@@ -37,6 +37,13 @@ public interface NotificationDeliveryRepository extends JpaRepository<Notificati
             """, nativeQuery = true)
     List<Long> lockEligibleIds(@Param("now") LocalDateTime now, @Param("batchSize") int batchSize);
 
+    /** Retention cleanup of expired notifications. Postgres already cascades these rows when the
+     *  notification/inbox row is deleted; deleting them explicitly first keeps the cleanup correct
+     *  regardless of the database's cascade configuration. */
+    @Modifying
+    @Query("DELETE FROM NotificationDelivery d WHERE d.notification.id IN :notificationIds")
+    int deleteByNotificationIdIn(@Param("notificationIds") List<Long> notificationIds);
+
     @Modifying
     @Query("""
             DELETE FROM NotificationDelivery d
