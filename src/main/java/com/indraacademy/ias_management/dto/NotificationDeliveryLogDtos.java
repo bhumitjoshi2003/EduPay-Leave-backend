@@ -32,4 +32,26 @@ public final class NotificationDeliveryLogDtos {
                          String lastError, String providerMessageId, LocalDateTime createdAt,
                          LocalDateTime sentAt, LocalDateTime nextAttemptAt, LocalDateTime processingStartedAt,
                          Boolean read, LocalDateTime readAt, List<RelatedChannel> relatedChannels) {}
+
+    /**
+     * Per-channel outcome counts for one notification. accepted = SENT (provider accepted, not a
+     * delivery receipt); failed = FAILED_FINAL; retrying = FAILED_RETRYABLE; skipped = SKIPPED;
+     * queued = PENDING + PROCESSING. total is every delivery row on that channel.
+     */
+    public record ChannelCounts(long total, long accepted, long failed, long retrying, long skipped, long queued) {}
+
+    /** stored = inbox rows (= recipients); opened = the recipient opened it in the app. */
+    public record InAppCounts(long stored, long opened, long unopened) {}
+
+    /**
+     * One notification publication. push/email are null when there are no delivery rows on that
+     * channel: normally it was never used for this notification, but when
+     * deliveryHistoryMayBeIncomplete is true the finished rows may already have been removed by
+     * the delivery retention cleanup, so counts for older notifications can be partial or absent.
+     */
+    public record SummaryRow(long notificationId, Long schoolId, String schoolName, String eventCode, String title,
+                             String messagePreview, LocalDateTime createdAt, long totalRecipients, InAppCounts inApp,
+                             ChannelCounts push, ChannelCounts email, boolean deliveryHistoryMayBeIncomplete) {}
+
+    public record SummaryPage(List<SummaryRow> content, int page, int size, boolean hasNext, long deliveryRetentionDays) {}
 }

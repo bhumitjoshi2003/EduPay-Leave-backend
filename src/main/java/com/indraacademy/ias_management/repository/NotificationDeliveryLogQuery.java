@@ -26,7 +26,12 @@ public class NotificationDeliveryLogQuery {
     public static final String IN_APP_STORED = "STORED";
 
     public record Filter(String status, String channel, String eventCode, Long schoolId,
-                         String recipientUserId, LocalDateTime from, LocalDateTime to) {}
+                         String recipientUserId, LocalDateTime from, LocalDateTime to, Long notificationId) {
+        public Filter(String status, String channel, String eventCode, Long schoolId,
+                      String recipientUserId, LocalDateTime from, LocalDateTime to) {
+            this(status, channel, eventCode, schoolId, recipientUserId, from, to, null);
+        }
+    }
 
     public record Row(long rowId, String channel, String status, long schoolId, String recipientUserId,
                       long notificationId, String eventCode, String title, int attemptCount,
@@ -91,6 +96,7 @@ public class NotificationDeliveryLogQuery {
 
     private void addCommon(List<String> where, MapSqlParameterSource params, Filter filter,
                            String schoolCol, String recipientCol, String createdCol) {
+        if (filter.notificationId() != null) { where.add("n.id = :notificationId"); params.addValue("notificationId", filter.notificationId()); }
         if (filter.eventCode() != null) { where.add("n.event_code = :eventCode"); params.addValue("eventCode", filter.eventCode()); }
         if (filter.schoolId() != null) { where.add(schoolCol + " = :schoolId"); params.addValue("schoolId", filter.schoolId()); }
         if (filter.recipientUserId() != null) { where.add(recipientCol + " = :recipient"); params.addValue("recipient", filter.recipientUserId()); }

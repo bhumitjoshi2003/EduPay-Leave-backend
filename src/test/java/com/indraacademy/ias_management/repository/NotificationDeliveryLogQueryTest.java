@@ -99,6 +99,19 @@ class NotificationDeliveryLogQueryTest {
     }
 
     @Test
+    void drillDownByNotificationIdReturnsEveryChannelForThatNotificationOnly() {
+        long feeId = query.search(filter(null, null, "FEE_REMINDER", null, null), 1, 0).get(0).notificationId();
+        NotificationDeliveryLogQuery.Filter byNotification =
+                new NotificationDeliveryLogQuery.Filter(null, null, null, null, null, null, null, feeId);
+
+        assertThat(query.search(byNotification, 50, 0)).extracting(NotificationDeliveryLogQuery.Row::channel)
+                .containsExactlyInAnyOrder("PUSH", "EMAIL", "IN_APP");
+        assertThat(query.search(byNotification, 50, 0)).allSatisfy(r -> assertThat(r.notificationId()).isEqualTo(feeId));
+        assertThat(query.search(new NotificationDeliveryLogQuery.Filter("FAILED_FINAL", null, null, null, null, null, null, feeId), 50, 0))
+                .singleElement().satisfies(r -> assertThat(r.channel()).isEqualTo("EMAIL"));
+    }
+
+    @Test
     void filtersByDateRangeAndPaginates() {
         NotificationDeliveryLogQuery.Filter firstDay = new NotificationDeliveryLogQuery.Filter(
                 null, null, null, null, null, T0.toLocalDate().atStartOfDay(), T0.toLocalDate().plusDays(1).atStartOfDay());

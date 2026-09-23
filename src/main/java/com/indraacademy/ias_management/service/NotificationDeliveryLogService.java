@@ -10,16 +10,19 @@ import com.indraacademy.ias_management.notification.ExternalDeliveryChannel;
 import com.indraacademy.ias_management.notification.NotificationDeliveryStatus;
 import com.indraacademy.ias_management.notification.NotificationEventCode;
 import com.indraacademy.ias_management.repository.NotificationDeliveryLogQuery;
+import com.indraacademy.ias_management.repository.NotificationDeliverySummaryQuery;
 import com.indraacademy.ias_management.repository.NotificationDeliveryRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.UserNotificationRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -29,6 +32,7 @@ import java.util.stream.Collectors;
 public class NotificationDeliveryLogService {
     static final int MAX_PAGE_SIZE = 50;
     static final int LIST_ERROR_LENGTH = 300;
+    static final int MESSAGE_PREVIEW_LENGTH = 160;
     private static final Pattern EMAIL = Pattern.compile("([A-Za-z0-9._%+-]{1,2})[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\\.[A-Za-z]{2,})");
     private static final Set<String> STATUSES = Arrays.stream(NotificationDeliveryStatus.values())
             .map(Enum::name).collect(Collectors.toCollection(HashSet::new));
@@ -42,10 +46,16 @@ public class NotificationDeliveryLogService {
     private final SchoolRepository schools;
     private final UserRepository users;
     private final NotificationRetryPolicy retryPolicy;
+    private final NotificationDeliverySummaryQuery summaryQuery;
+    private final long retentionDays;
 
     public NotificationDeliveryLogService(NotificationDeliveryLogQuery query, NotificationDeliveryRepository deliveries,
                                           UserNotificationRepository inbox, SchoolRepository schools,
-                                          UserRepository users, NotificationRetryPolicy retryPolicy) {
+                                          UserRepository users, NotificationRetryPolicy retryPolicy,
+                                          NotificationDeliverySummaryQuery summaryQuery,
+                                          @Value("${notification.delivery.retention-days:90}") long retentionDays) {
+        this.summaryQuery = summaryQuery;
+        this.retentionDays = retentionDays;
         this.query = query;
         this.deliveries = deliveries;
         this.inbox = inbox;
@@ -60,7 +70,7 @@ public class NotificationDeliveryLogService {
 
     @Transactional(readOnly = true)
     public RowPage search(int page, int size, String status, String channel, String eventCode, Long schoolId,
-                          String recipientUserId, LocalDate fromDate, LocalDate toDate) {
+                          String recipientUserId, LocalDate fromDate, LocalDate toDate, Long notificationId) {
         int safePage = Math.max(0, page);
         int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
         NotificationDeliveryLogQuery.Filter filter = new NotificationDeliveryLogQuery.Filter(
@@ -70,10 +80,9 @@ public class NotificationDeliveryLogService {
                 schoolId,
                 blankToNull(recipientUserId),
                 fromDate == null ? null : fromDate.atStartOfDay(),
-                toDate == null ? null : toDate.plusDays(1).atStartOfDay());
-        if (fromDate != null && toDate != null && toDate.isBefore(fromDate)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The end date is before the start date.");
-        }
+                toDate == null ? null : toDate.plusDays(1).atStartOfDay(),
+                notificationId);
+        requireOrderedDates(fromDate, toDate);
 
         List<NotificationDeliveryLogQuery.Row> rows = query.search(filter, safeSize + 1, safePage * safeSize);
         boolean hasNext = rows.size() > safeSize;
@@ -90,6 +99,65 @@ public class NotificationDeliveryLogService {
                 truncate(maskEmails(r.lastError()), LIST_ERROR_LENGTH), r.providerMessageId(),
                 r.createdAt(), r.sentAt(), r.nextAttemptAt(), r.read(), r.readAt())).toList();
         return new RowPage(content, safePage, safeSize, hasNext);
+    }
+
+    /** Event-level summary: one row per notification publication, every count aggregated in SQL. */
+    @Transactional(readOnly = true)
+    public SummaryPage summary(int page, int size, String eventCode, Long schoolId, LocalDate fromDate,
+                               LocalDate toDate, String search) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        requireOrderedDates(fromDate, toDate);
+        NotificationDeliverySummaryQuery.Filter filter = new NotificationDeliverySummaryQuery.Filter(
+                oneOf(eventCode, new HashSet<>(eventCodes()), "eventCode"), schoolId,
+                fromDate == null ? null : fromDate.atStartOfDay(),
+                toDate == null ? null : toDate.plusDays(1).atStartOfDay(),
+                blankToNull(search));
+
+        List<NotificationDeliverySummaryQuery.Group> groups = summaryQuery.groups(filter, safeSize + 1, safePage * safeSize);
+        boolean hasNext = groups.size() > safeSize;
+        List<NotificationDeliverySummaryQuery.Group> pageGroups = hasNext ? groups.subList(0, safeSize) : groups;
+
+        List<Long> ids = pageGroups.stream().map(NotificationDeliverySummaryQuery.Group::notificationId).toList();
+        Set<Long> schoolIds = pageGroups.stream().map(NotificationDeliverySummaryQuery.Group::schoolId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, NotificationDeliverySummaryQuery.InboxCounts> inboxCounts = summaryQuery.inboxCounts(ids);
+        Map<Long, NotificationDeliverySummaryQuery.DeliveryCounts> deliveryCounts = summaryQuery.deliveryCounts(schoolIds, ids);
+        Map<Long, String> schoolNames = schoolNames(schoolIds);
+        LocalDateTime retentionCutoff = LocalDateTime.now().minusDays(retentionDays);
+
+        List<SummaryRow> content = pageGroups.stream().map(g -> {
+            NotificationDeliverySummaryQuery.InboxCounts inboxCount = inboxCounts.getOrDefault(g.notificationId(),
+                    new NotificationDeliverySummaryQuery.InboxCounts(0, 0));
+            Map<String, Map<String, Long>> byChannel = Optional.ofNullable(deliveryCounts.get(g.notificationId()))
+                    .map(NotificationDeliverySummaryQuery.DeliveryCounts::byChannel).orElse(Map.of());
+            return new SummaryRow(g.notificationId(), g.schoolId(), g.schoolId() == null ? null : schoolNames.get(g.schoolId()),
+                    g.eventCode(), g.title(), truncate(g.message(), MESSAGE_PREVIEW_LENGTH), g.createdAt(),
+                    inboxCount.stored(),
+                    new InAppCounts(inboxCount.stored(), inboxCount.opened(), inboxCount.stored() - inboxCount.opened()),
+                    channelCounts(byChannel.get(ExternalDeliveryChannel.PUSH.name())),
+                    channelCounts(byChannel.get(ExternalDeliveryChannel.EMAIL.name())),
+                    g.createdAt() != null && g.createdAt().isBefore(retentionCutoff));
+        }).toList();
+        return new SummaryPage(content, safePage, safeSize, hasNext, retentionDays);
+    }
+
+    private static ChannelCounts channelCounts(Map<String, Long> byStatus) {
+        if (byStatus == null || byStatus.isEmpty()) return null;
+        long accepted = byStatus.getOrDefault(NotificationDeliveryStatus.SENT.name(), 0L);
+        long failed = byStatus.getOrDefault(NotificationDeliveryStatus.FAILED_FINAL.name(), 0L);
+        long retrying = byStatus.getOrDefault(NotificationDeliveryStatus.FAILED_RETRYABLE.name(), 0L);
+        long skipped = byStatus.getOrDefault(NotificationDeliveryStatus.SKIPPED.name(), 0L);
+        long queued = byStatus.getOrDefault(NotificationDeliveryStatus.PENDING.name(), 0L)
+                + byStatus.getOrDefault(NotificationDeliveryStatus.PROCESSING.name(), 0L);
+        long total = byStatus.values().stream().mapToLong(Long::longValue).sum();
+        return new ChannelCounts(total, accepted, failed, retrying, skipped, queued);
+    }
+
+    private static void requireOrderedDates(LocalDate fromDate, LocalDate toDate) {
+        if (fromDate != null && toDate != null && toDate.isBefore(fromDate)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "The end date is before the start date.");
+        }
     }
 
     @Transactional(readOnly = true)
