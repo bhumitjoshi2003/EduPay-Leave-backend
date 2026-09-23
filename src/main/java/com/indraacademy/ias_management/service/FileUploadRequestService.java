@@ -220,6 +220,12 @@ public class FileUploadRequestService {
                 eventRepository.save(event);
                 yield old;
             }
+            case SUPPORT_TICKET_SCREENSHOT -> {
+                // The ticket doesn't exist yet either — always the "new" sentinel (see
+                // UploadPurpose.SUPPORT_TICKET_SCREENSHOT's javadoc). SupportTicketService
+                // persists the objectKey directly onto the ticket at creation time.
+                yield null;
+            }
         };
     }
 
@@ -283,6 +289,11 @@ public class FileUploadRequestService {
                     eventRepository.findByIdAndSchoolId(parseEventId(entityId), schoolId)
                             .orElseThrow(() -> new NoSuchElementException("Event not found: " + entityId));
                 }
+            }
+            case SUPPORT_TICKET_SCREENSHOT -> {
+                // Any authenticated user with a school context may attach a screenshot to their
+                // own not-yet-created support ticket — the controller's isAuthenticated() plus
+                // requireSchoolId() above is the whole check; there is no entity to look up yet.
             }
         }
     }

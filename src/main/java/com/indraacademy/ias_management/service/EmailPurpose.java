@@ -5,5 +5,6 @@ public enum EmailPurpose {
     ONBOARDING,
     NOTIFICATION,
     FEES,
-    SECURITY
+    SECURITY,
+    SUPPORT
 }

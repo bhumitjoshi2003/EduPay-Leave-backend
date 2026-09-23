@@ -17,6 +17,8 @@ class EmailSenderResolverTest {
                 .isEqualTo(new EmailSenderIdentity("fees@edunexify.co.in", "Edunexify Fees"));
         assertThat(resolver.resolve(EmailPurpose.SECURITY))
                 .isEqualTo(new EmailSenderIdentity("noreply@edunexify.co.in", "Edunexify Security"));
+        assertThat(resolver.resolve(EmailPurpose.SUPPORT))
+                .isEqualTo(new EmailSenderIdentity("support@edunexify.co.in", "Edunexify Support"));
     }
 
     @Test
@@ -27,16 +29,17 @@ class EmailSenderResolverTest {
 
     @Test
     void blankOverridesCannotProduceBlankFromAddresses() {
-        EmailSenderResolver resolver = new EmailSenderResolver(" ", "", null, "\t");
+        EmailSenderResolver resolver = new EmailSenderResolver(" ", "", null, "\t", "");
 
         assertThat(resolver.resolve(EmailPurpose.ONBOARDING).email()).isEqualTo("hello@edunexify.co.in");
         assertThat(resolver.resolve(EmailPurpose.NOTIFICATION).email()).isEqualTo("notifications@edunexify.co.in");
         assertThat(resolver.resolve(EmailPurpose.FEES).email()).isEqualTo("fees@edunexify.co.in");
         assertThat(resolver.resolve(EmailPurpose.SECURITY).email()).isEqualTo("noreply@edunexify.co.in");
+        assertThat(resolver.resolve(EmailPurpose.SUPPORT).email()).isEqualTo("support@edunexify.co.in");
     }
 
     private EmailSenderResolver defaults() {
         return new EmailSenderResolver("hello@edunexify.co.in", "notifications@edunexify.co.in",
-                "fees@edunexify.co.in", "noreply@edunexify.co.in");
+                "fees@edunexify.co.in", "noreply@edunexify.co.in", "support@edunexify.co.in");
     }
 }

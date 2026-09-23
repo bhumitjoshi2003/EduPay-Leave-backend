@@ -162,6 +162,7 @@ public class NotificationDeliveryWorker {
         return switch (eventCode) {
             case "PAYMENT_SUCCESS", "PAYMENT_REFUNDED", "FEE_DUE", "FEE_OVERDUE", "FEE_REMINDER" -> EmailPurpose.FEES;
             case "ACCOUNT_SECURITY" -> EmailPurpose.SECURITY;
+            case "SUPPORT_TICKET_IN_PROGRESS", "SUPPORT_TICKET_RESOLVED" -> EmailPurpose.SUPPORT;
             default -> EmailPurpose.NOTIFICATION;
         };
     }

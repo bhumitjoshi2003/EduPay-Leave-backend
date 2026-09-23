@@ -31,7 +31,7 @@ class EmailServiceSenderTest {
         ReflectionTestUtils.setField(service, "javaMailSender", transport);
         ReflectionTestUtils.setField(service, "senderResolver", new EmailSenderResolver(
                 "hello@edunexify.co.in", "notifications@edunexify.co.in",
-                "fees@edunexify.co.in", "noreply@edunexify.co.in"));
+                "fees@edunexify.co.in", "noreply@edunexify.co.in", "support@edunexify.co.in"));
     }
 
     @ParameterizedTest
@@ -56,6 +56,7 @@ class EmailServiceSenderTest {
                 Arguments.of(EmailPurpose.ONBOARDING, "hello@edunexify.co.in", "Edunexify"),
                 Arguments.of(EmailPurpose.NOTIFICATION, "notifications@edunexify.co.in", "Edunexify Notifications"),
                 Arguments.of(EmailPurpose.FEES, "fees@edunexify.co.in", "Edunexify Fees"),
-                Arguments.of(EmailPurpose.SECURITY, "noreply@edunexify.co.in", "Edunexify Security"));
+                Arguments.of(EmailPurpose.SECURITY, "noreply@edunexify.co.in", "Edunexify Security"),
+                Arguments.of(EmailPurpose.SUPPORT, "support@edunexify.co.in", "Edunexify Support"));
     }
 }

@@ -49,10 +49,18 @@ public enum UploadPurpose {
      * entityId is either a real event id (replacing an existing event's image) or the literal
      * sentinel "new" (uploading an image before the event itself has been created) — see
      * FileUploadRequestService.authorizeForPurpose. */
-    EVENT_IMAGE(Set.of("image/jpeg", "image/png", "image/webp", "image/gif"), 10L * 1024 * 1024, "events", "images", false);
+    EVENT_IMAGE(Set.of("image/jpeg", "image/png", "image/webp", "image/gif"), 10L * 1024 * 1024, "events", "images", false),
 
-    /** Sentinel entityId for an EVENT_IMAGE upload requested before the event itself exists yet
-     * (the frontend creates the real event only after the image finishes uploading). */
+    /** Optional screenshot on a technical support ticket. Always uploaded with entityId
+     * {@link #NEW_EVENT_SENTINEL} — the ticket itself doesn't exist yet when the screenshot is
+     * picked (mirrors EVENT_IMAGE's own "new" flow), and Phase 1 never replaces a screenshot on
+     * an already-created ticket, so there is nothing to attach to at completeUpload time; the
+     * resulting objectKey is instead included directly in SupportTicketDtos.CreateRequest. Any
+     * authenticated user may use this purpose — see FileUploadRequestService.authorizeForPurpose. */
+    SUPPORT_TICKET_SCREENSHOT(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024, "support-tickets", "screenshots", false);
+
+    /** Sentinel entityId for an EVENT_IMAGE or SUPPORT_TICKET_SCREENSHOT upload requested before
+     * the owning entity itself exists yet. */
     public static final String NEW_EVENT_SENTINEL = "new";
 
     private final Set<String> allowedContentTypes;
