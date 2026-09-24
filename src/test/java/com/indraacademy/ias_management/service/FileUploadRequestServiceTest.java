@@ -810,4 +810,50 @@ class FileUploadRequestServiceTest {
         verify(eventRepository).save(event);
         verify(objectStorageService).deleteObjectQuietly("schools/1/events/5/images/old.jpg");
     }
+
+    // ─── CLASS_UPDATE_ATTACHMENT ─────────────────────────────────────────────────────────────
+
+    @Test
+    void classUpdateAttachment_teacherUploadsPdf_newSentinel_succeeds() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(securityUtil.getRole()).thenReturn("TEACHER");
+        when(securityUtil.getUsername()).thenReturn("T1");
+        when(objectStorageService.buildObjectKey(eq(SCHOOL_ID), eq("class-updates"), eq("new"), eq("attachments"), eq("pdf")))
+                .thenReturn("schools/1/class-updates/new/attachments/uuid.pdf");
+        when(objectStorageService.createPresignedUploadUrl(anyString(), anyString()))
+                .thenReturn(new ObjectStorageService.PresignedUpload("schools/1/class-updates/new/attachments/uuid.pdf",
+                        "https://storage.example/put-url", java.time.Instant.now().plusSeconds(600), java.util.Map.of()));
+
+        var response = service.createUploadRequest(requestForPurpose("CLASS_UPDATE_ATTACHMENT", "new", "application/pdf", 5_000_000));
+
+        assertThat(response.objectKey()).isEqualTo("schools/1/class-updates/new/attachments/uuid.pdf");
+        ArgumentCaptor<UploadIntent> captor = ArgumentCaptor.forClass(UploadIntent.class);
+        verify(uploadIntentRepository).save(captor.capture());
+        assertThat(captor.getValue().getRequestedByUserId()).isEqualTo("T1");
+        assertThat(captor.getValue().getPurpose()).isEqualTo("CLASS_UPDATE_ATTACHMENT");
+    }
+
+    @Test
+    void classUpdateAttachment_nonTeacher_denied() {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(securityUtil.getRole()).thenReturn("STUDENT");
+
+        assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("CLASS_UPDATE_ATTACHMENT", "new", "image/png", 1000)))
+                .isInstanceOf(AccessDeniedException.class);
+        verify(uploadIntentRepository, never()).save(any());
+    }
+
+    @Test
+    void classUpdateAttachment_nonSentinelEntity_orDisallowedTypeOrSize_rejected() {
+        lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        lenient().when(securityUtil.getRole()).thenReturn("TEACHER");
+
+        assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("CLASS_UPDATE_ATTACHMENT", "42", "image/png", 1000)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("CLASS_UPDATE_ATTACHMENT", "new", "image/gif", 1000)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("CLASS_UPDATE_ATTACHMENT", "new", "application/pdf", 11L * 1024 * 1024)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(uploadIntentRepository, never()).save(any());
+    }
 }

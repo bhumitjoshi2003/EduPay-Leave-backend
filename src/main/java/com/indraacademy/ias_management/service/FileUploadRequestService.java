@@ -231,6 +231,11 @@ public class FileUploadRequestService {
                 // persists the objectKey itself when the teacher submits the post.
                 yield null;
             }
+            case CLASS_UPDATE_ATTACHMENT -> {
+                // Uploaded before the update is saved; ClassUpdateService verifies and persists
+                // the objectKey itself when the teacher submits the update.
+                yield null;
+            }
         };
     }
 
@@ -308,6 +313,16 @@ public class FileUploadRequestService {
                 }
                 if (!UploadPurpose.NEW_EVENT_SENTINEL.equals(entityId)) {
                     throw new IllegalArgumentException("Homework attachments must use entityId 'new'.");
+                }
+            }
+            case CLASS_UPDATE_ATTACHMENT -> {
+                // Only teachers post class updates. Always the "new" sentinel: the class
+                // authorization happens when the update itself is saved.
+                if (!Role.TEACHER.equals(securityUtil.getRole())) {
+                    throw new AccessDeniedException("Only teachers can upload class update attachments.");
+                }
+                if (!UploadPurpose.NEW_EVENT_SENTINEL.equals(entityId)) {
+                    throw new IllegalArgumentException("Class update attachments must use entityId 'new'.");
                 }
             }
         }
