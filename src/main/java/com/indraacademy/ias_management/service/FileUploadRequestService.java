@@ -226,6 +226,11 @@ public class FileUploadRequestService {
                 // persists the objectKey directly onto the ticket at creation time.
                 yield null;
             }
+            case HOMEWORK_ATTACHMENT -> {
+                // Uploaded before the post is saved; HomeworkClassworkService verifies and
+                // persists the objectKey itself when the teacher submits the post.
+                yield null;
+            }
         };
     }
 
@@ -294,6 +299,16 @@ public class FileUploadRequestService {
                 // Any authenticated user with a school context may attach a screenshot to their
                 // own not-yet-created support ticket — the controller's isAuthenticated() plus
                 // requireSchoolId() above is the whole check; there is no entity to look up yet.
+            }
+            case HOMEWORK_ATTACHMENT -> {
+                // Only teachers post homework/classwork. Always the "new" sentinel: the post's
+                // class/period authorization happens when the post itself is saved.
+                if (!Role.TEACHER.equals(securityUtil.getRole())) {
+                    throw new AccessDeniedException("Only teachers can upload homework attachments.");
+                }
+                if (!UploadPurpose.NEW_EVENT_SENTINEL.equals(entityId)) {
+                    throw new IllegalArgumentException("Homework attachments must use entityId 'new'.");
+                }
             }
         }
     }

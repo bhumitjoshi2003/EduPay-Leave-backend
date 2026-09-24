@@ -5,6 +5,7 @@ import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.TeacherStatus;
 import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.notification.NotificationAudience;
+import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.repository.TeacherRepository;
 import com.indraacademy.ias_management.repository.UserRepository;
@@ -27,15 +28,18 @@ public class NotificationRecipientResolver {
     private final TeacherRepository teacherRepository;
     private final UserRepository userRepository;
     private final ParentPortalService parentPortalService;
+    private final StudentEnrollmentRepository enrollmentRepository;
 
     public NotificationRecipientResolver(StudentRepository studentRepository,
                                          TeacherRepository teacherRepository,
                                          UserRepository userRepository,
-                                         ParentPortalService parentPortalService) {
+                                         ParentPortalService parentPortalService,
+                                         StudentEnrollmentRepository enrollmentRepository) {
         this.studentRepository = studentRepository;
         this.teacherRepository = teacherRepository;
         this.userRepository = userRepository;
         this.parentPortalService = parentPortalService;
+        this.enrollmentRepository = enrollmentRepository;
     }
 
     public Set<String> resolve(Long schoolId, NotificationAudience audience) {
@@ -51,6 +55,7 @@ public class NotificationRecipientResolver {
             case PARENTS -> activeParentsFor(activeStudentIds(schoolId), schoolId);
             case CLASS -> studentsAndParents(schoolId, requireValue(audience));
             case CLASS_WITH_TEACHER -> classWithTeacher(schoolId, requireValue(audience));
+            case CLASS_SECTION_STUDENTS -> classSectionStudents(schoolId, requireValue(audience));
             case ROLE -> byRole(schoolId, requireValue(audience));
             case WHOLE_SCHOOL -> wholeSchool(schoolId);
         };
@@ -91,6 +96,26 @@ public class NotificationRecipientResolver {
                 .filter(t -> userRepository.findByUserIdAndSchoolIdAndActiveTrue(t.getTeacherId(), schoolId).isPresent())
                 .forEach(t -> result.add(t.getTeacherId()));
         return result;
+    }
+
+    /** value = "sessionId:classId:sectionId" (sectionId "*" = every section). Students only, no
+     *  parents: ACTIVE enrollment effective today, ACTIVE student record, active user account. */
+    private Set<String> classSectionStudents(Long schoolId, String value) {
+        String[] parts = value.split(":");
+        if (parts.length != 3) throw new IllegalArgumentException("Invalid class/section audience: " + value);
+        long sessionId = Long.parseLong(parts[0]);
+        long classId = Long.parseLong(parts[1]);
+        LocalDate today = LocalDate.now();
+        List<String> enrolled = "*".equals(parts[2])
+                ? enrollmentRepository.findActiveStudentIdsInClass(schoolId, sessionId, classId, today)
+                : enrollmentRepository.findActiveStudentIdsInSection(schoolId, sessionId, classId, Long.parseLong(parts[2]), today);
+        if (enrolled.isEmpty()) return new LinkedHashSet<>();
+        List<String> activeStudents = studentRepository.findByStudentIdInAndSchoolId(enrolled, schoolId).stream()
+                .filter(s -> s.getStatus() == StudentStatus.ACTIVE)
+                .map(Student::getStudentId)
+                .sorted()
+                .toList();
+        return new LinkedHashSet<>(retainActiveUsers(activeStudents, schoolId));
     }
 
     private Set<String> studentsAndParents(Long schoolId, String className) {

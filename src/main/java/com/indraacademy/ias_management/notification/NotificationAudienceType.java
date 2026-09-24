@@ -9,6 +9,7 @@ public enum NotificationAudienceType {
     ROLE,
     CLASS,
     CLASS_WITH_TEACHER,
+    CLASS_SECTION_STUDENTS,
     STUDENTS,
     TEACHERS,
     PARENTS,

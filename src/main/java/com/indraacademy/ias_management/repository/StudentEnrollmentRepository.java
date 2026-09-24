@@ -98,6 +98,23 @@ public interface StudentEnrollmentRepository extends JpaRepository<StudentEnroll
             @Param("schoolId") Long schoolId,
             @Param("studentId") String studentId);
 
+    /** Students with an ACTIVE enrollment effective on {@code date} in a class (every section). */
+    @Query("SELECT DISTINCT e.studentId FROM StudentEnrollment e WHERE e.schoolId = :schoolId " +
+            "AND e.academicSessionId = :sessionId AND e.classId = :classId " +
+            "AND e.status = com.indraacademy.ias_management.entity.StudentEnrollmentStatus.ACTIVE " +
+            "AND e.effectiveFrom <= :date AND (e.effectiveUntil IS NULL OR e.effectiveUntil >= :date)")
+    List<String> findActiveStudentIdsInClass(@Param("schoolId") Long schoolId, @Param("sessionId") Long sessionId,
+                                            @Param("classId") Long classId, @Param("date") LocalDate date);
+
+    /** Students with an ACTIVE enrollment effective on {@code date} in one section of a class. */
+    @Query("SELECT DISTINCT e.studentId FROM StudentEnrollment e WHERE e.schoolId = :schoolId " +
+            "AND e.academicSessionId = :sessionId AND e.classId = :classId AND e.sectionId = :sectionId " +
+            "AND e.status = com.indraacademy.ias_management.entity.StudentEnrollmentStatus.ACTIVE " +
+            "AND e.effectiveFrom <= :date AND (e.effectiveUntil IS NULL OR e.effectiveUntil >= :date)")
+    List<String> findActiveStudentIdsInSection(@Param("schoolId") Long schoolId, @Param("sessionId") Long sessionId,
+                                              @Param("classId") Long classId, @Param("sectionId") Long sectionId,
+                                              @Param("date") LocalDate date);
+
     List<StudentEnrollment> findBySchoolIdAndAcademicSessionIdAndClassIdOrderByEffectiveFromAsc(
             Long schoolId, Long academicSessionId, Long classId);
 

@@ -129,6 +129,7 @@ public class NotificationPublicationTransaction {
             case PARENTS -> "PARENTS";
             case CLASS -> "CLASS:" + request.audience().value();
             case CLASS_WITH_TEACHER -> "CLASS_WITH_TEACHER:" + request.audience().value();
+            case CLASS_SECTION_STUDENTS -> "CLASS_SECTION_STUDENTS:" + request.audience().value();
             case ROLE -> "ROLE:" + request.audience().value();
             case DIRECT_USER -> request.audience().value();
         });

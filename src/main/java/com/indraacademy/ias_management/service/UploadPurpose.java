@@ -57,10 +57,16 @@ public enum UploadPurpose {
      * an already-created ticket, so there is nothing to attach to at completeUpload time; the
      * resulting objectKey is instead included directly in SupportTicketDtos.CreateRequest. Any
      * authenticated user may use this purpose — see FileUploadRequestService.authorizeForPurpose. */
-    SUPPORT_TICKET_SCREENSHOT(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024, "support-tickets", "screenshots", false);
+    SUPPORT_TICKET_SCREENSHOT(Set.of("image/jpeg", "image/png", "image/webp"), 5L * 1024 * 1024, "support-tickets", "screenshots", false),
 
-    /** Sentinel entityId for an EVENT_IMAGE or SUPPORT_TICKET_SCREENSHOT upload requested before
-     * the owning entity itself exists yet. */
+    /** Optional single attachment (image or PDF) on a teacher's Homework/Classwork post. Always
+     * uploaded with entityId {@link #NEW_EVENT_SENTINEL} before the post is saved; the service
+     * verifies the resulting objectKey against its UploadIntent (same school, same teacher, this
+     * purpose, COMPLETED) before persisting it. TEACHER only — see authorizeForPurpose. */
+    HOMEWORK_ATTACHMENT(Set.of("image/jpeg", "image/png", "image/webp", "application/pdf"), 10L * 1024 * 1024, "homework", "attachments", false);
+
+    /** Sentinel entityId for an EVENT_IMAGE, SUPPORT_TICKET_SCREENSHOT or HOMEWORK_ATTACHMENT
+     * upload requested before the owning entity itself exists yet. */
     public static final String NEW_EVENT_SENTINEL = "new";
 
     private final Set<String> allowedContentTypes;
@@ -101,6 +107,7 @@ public enum UploadPurpose {
             case "image/png" -> "png";
             case "image/webp" -> "webp";
             case "image/gif" -> "gif";
+            case "application/pdf" -> "pdf";
             default -> "jpg";
         };
     }

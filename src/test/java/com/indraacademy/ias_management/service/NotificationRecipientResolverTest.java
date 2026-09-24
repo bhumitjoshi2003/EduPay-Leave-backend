@@ -35,13 +35,14 @@ class NotificationRecipientResolverTest {
     @Mock TeacherRepository teacherRepository;
     @Mock UserRepository userRepository;
     @Mock ParentPortalService parentPortalService;
+    @Mock com.indraacademy.ias_management.repository.StudentEnrollmentRepository enrollmentRepository;
 
     private NotificationRecipientResolver resolver;
 
     @BeforeEach
     void setUp() {
         resolver = new NotificationRecipientResolver(
-                studentRepository, teacherRepository, userRepository, parentPortalService);
+                studentRepository, teacherRepository, userRepository, parentPortalService, enrollmentRepository);
         lenient().when(userRepository.findBySchoolIdAndActiveTrueAndUserIdIn(eq(2L), any(Collection.class)))
                 .thenAnswer(invocation -> ((Collection<String>) invocation.getArgument(1)).stream()
                         .map(id -> user(id, "STUDENT", 2L)).toList());
@@ -115,6 +116,43 @@ class NotificationRecipientResolverTest {
 
         assertThat(resolver.resolve(2L, new NotificationAudience(NotificationAudienceType.TEACHERS, null)))
                 .containsExactly("teacher-1");
+    }
+
+    @Test
+    void classSectionAudienceResolvesOnlyStudentsActivelyEnrolledInThatSection() {
+        when(enrollmentRepository.findActiveStudentIdsInSection(eq(2L), eq(11L), eq(7L), eq(3L), any(LocalDate.class)))
+                .thenReturn(List.of("S2", "S1"));
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S2", "S1"), 2L))
+                .thenReturn(List.of(student("S1", StudentStatus.ACTIVE), student("S2", StudentStatus.ACTIVE)));
+
+        assertThat(resolver.resolve(2L, NotificationAudience.classSectionStudents(11L, 7L, 3L)))
+                .containsExactly("S1", "S2");
+        org.mockito.Mockito.verify(enrollmentRepository, org.mockito.Mockito.never())
+                .findActiveStudentIdsInClass(any(), any(), any(), any());
+        org.mockito.Mockito.verifyNoInteractions(parentPortalService);
+    }
+
+    @Test
+    void classAudienceWithoutSectionCoversEverySectionOfTheClass() {
+        when(enrollmentRepository.findActiveStudentIdsInClass(eq(2L), eq(11L), eq(7L), any(LocalDate.class)))
+                .thenReturn(List.of("S1"));
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1"), 2L))
+                .thenReturn(List.of(student("S1", StudentStatus.ACTIVE)));
+
+        assertThat(resolver.resolve(2L, NotificationAudience.classSectionStudents(11L, 7L, null))).containsExactly("S1");
+    }
+
+    @Test
+    void classSectionAudienceExcludesExitedStudentsAndInactiveAccounts() {
+        when(enrollmentRepository.findActiveStudentIdsInSection(eq(2L), eq(11L), eq(7L), eq(3L), any(LocalDate.class)))
+                .thenReturn(List.of("S1", "S2", "S3"));
+        when(studentRepository.findByStudentIdInAndSchoolId(List.of("S1", "S2", "S3"), 2L))
+                .thenReturn(List.of(student("S1", StudentStatus.ACTIVE), student("S2", StudentStatus.GRADUATED),
+                        student("S3", StudentStatus.ACTIVE)));
+        when(userRepository.findBySchoolIdAndActiveTrueAndUserIdIn(eq(2L), any(Collection.class)))
+                .thenReturn(List.of(user("S1", "STUDENT", 2L)));
+
+        assertThat(resolver.resolve(2L, NotificationAudience.classSectionStudents(11L, 7L, 3L))).containsExactly("S1");
     }
 
     private Student student(String id, StudentStatus status) {
