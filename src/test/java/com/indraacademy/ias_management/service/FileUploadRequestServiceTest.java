@@ -856,4 +856,52 @@ class FileUploadRequestServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         verify(uploadIntentRepository, never()).save(any());
     }
+
+    // ─── ASSESSMENT_ATTACHMENT ───────────────────────────────────────────────────────────────
+
+    @Test
+    void assessmentAttachment_teacherMayUpload_newSentinel() {
+        assertAssessmentUploadAllowed("TEACHER");
+    }
+
+    @Test
+    void assessmentAttachment_adminMayUpload_newSentinel() {
+        assertAssessmentUploadAllowed("ADMIN");
+    }
+
+    private void assertAssessmentUploadAllowed(String role) {
+        when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        when(securityUtil.getRole()).thenReturn(role);
+        when(securityUtil.getUsername()).thenReturn("U1");
+        when(objectStorageService.buildObjectKey(eq(SCHOOL_ID), eq("assessments"), eq("new"), eq("attachments"), eq("pdf")))
+                .thenReturn("schools/1/assessments/new/attachments/uuid.pdf");
+        when(objectStorageService.createPresignedUploadUrl(anyString(), anyString()))
+                .thenReturn(new ObjectStorageService.PresignedUpload("schools/1/assessments/new/attachments/uuid.pdf",
+                        "https://storage.example/put-url", java.time.Instant.now().plusSeconds(600), java.util.Map.of()));
+
+        var response = service.createUploadRequest(requestForPurpose("ASSESSMENT_ATTACHMENT", "new", "application/pdf", 9_000_000));
+
+        assertThat(response.objectKey()).isEqualTo("schools/1/assessments/new/attachments/uuid.pdf");
+        ArgumentCaptor<UploadIntent> captor = ArgumentCaptor.forClass(UploadIntent.class);
+        verify(uploadIntentRepository).save(captor.capture());
+        assertThat(captor.getValue().getPurpose()).isEqualTo("ASSESSMENT_ATTACHMENT");
+    }
+
+    @Test
+    void assessmentAttachment_otherRolesDenied_andOnlyNewSentinelImageOrPdfUnder10Mb() {
+        lenient().when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
+        for (String role : new String[] {"STUDENT", "SUB_ADMIN", "PARENT"}) {
+            when(securityUtil.getRole()).thenReturn(role);
+            assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("ASSESSMENT_ATTACHMENT", "new", "image/png", 1000)))
+                    .as(role).isInstanceOf(AccessDeniedException.class);
+        }
+        when(securityUtil.getRole()).thenReturn("TEACHER");
+        assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("ASSESSMENT_ATTACHMENT", "7", "image/png", 1000)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("ASSESSMENT_ATTACHMENT", "new", "image/gif", 1000)))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.createUploadRequest(requestForPurpose("ASSESSMENT_ATTACHMENT", "new", "application/pdf", 11L * 1024 * 1024)))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(uploadIntentRepository, never()).save(any());
+    }
 }

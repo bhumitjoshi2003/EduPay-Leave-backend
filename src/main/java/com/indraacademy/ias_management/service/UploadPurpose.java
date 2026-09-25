@@ -69,10 +69,17 @@ public enum UploadPurpose {
      * entityId {@link #NEW_EVENT_SENTINEL} before the update is saved; ClassUpdateService verifies
      * the resulting objectKey against its UploadIntent (same school, same teacher, this purpose,
      * COMPLETED) before persisting it. TEACHER only — see authorizeForPurpose. */
-    CLASS_UPDATE_ATTACHMENT(Set.of("image/jpeg", "image/png", "image/webp", "application/pdf"), 10L * 1024 * 1024, "class-updates", "attachments", false);
+    CLASS_UPDATE_ATTACHMENT(Set.of("image/jpeg", "image/png", "image/webp", "application/pdf"), 10L * 1024 * 1024, "class-updates", "attachments", false),
 
-    /** Sentinel entityId for an EVENT_IMAGE, SUPPORT_TICKET_SCREENSHOT, HOMEWORK_ATTACHMENT or
-     * CLASS_UPDATE_ATTACHMENT upload requested before the owning entity itself exists yet. */
+    /** Optional single attachment (image or PDF) on an assessment. Always uploaded with entityId
+     * {@link #NEW_EVENT_SENTINEL} before the assessment is saved; AssessmentService verifies the
+     * resulting objectKey against its UploadIntent (same school, same uploader, this purpose,
+     * COMPLETED) before persisting it. TEACHER and ADMIN only — see authorizeForPurpose. */
+    ASSESSMENT_ATTACHMENT(Set.of("image/jpeg", "image/png", "image/webp", "application/pdf"), 10L * 1024 * 1024, "assessments", "attachments", false);
+
+    /** Sentinel entityId for an EVENT_IMAGE, SUPPORT_TICKET_SCREENSHOT, HOMEWORK_ATTACHMENT,
+     * CLASS_UPDATE_ATTACHMENT or ASSESSMENT_ATTACHMENT upload requested before the owning entity
+     * itself exists yet. */
     public static final String NEW_EVENT_SENTINEL = "new";
 
     private final Set<String> allowedContentTypes;

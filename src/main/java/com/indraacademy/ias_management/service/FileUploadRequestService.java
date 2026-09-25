@@ -236,6 +236,11 @@ public class FileUploadRequestService {
                 // the objectKey itself when the teacher submits the update.
                 yield null;
             }
+            case ASSESSMENT_ATTACHMENT -> {
+                // Uploaded before the assessment is saved; AssessmentService verifies and
+                // persists the objectKey itself when the assessment is submitted.
+                yield null;
+            }
         };
     }
 
@@ -323,6 +328,17 @@ public class FileUploadRequestService {
                 }
                 if (!UploadPurpose.NEW_EVENT_SENTINEL.equals(entityId)) {
                     throw new IllegalArgumentException("Class update attachments must use entityId 'new'.");
+                }
+            }
+            case ASSESSMENT_ATTACHMENT -> {
+                // Only teachers and school admins schedule assessments. Always the "new" sentinel:
+                // the class/subject authorization happens when the assessment itself is saved.
+                String role = securityUtil.getRole();
+                if (!Role.TEACHER.equals(role) && !Role.ADMIN.equals(role)) {
+                    throw new AccessDeniedException("Only teachers and admins can upload assessment attachments.");
+                }
+                if (!UploadPurpose.NEW_EVENT_SENTINEL.equals(entityId)) {
+                    throw new IllegalArgumentException("Assessment attachments must use entityId 'new'.");
                 }
             }
         }
