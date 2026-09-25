@@ -13,7 +13,7 @@ import com.indraacademy.ias_management.dto.StudentFeesAdminUpdateRequest;
 import com.indraacademy.ias_management.dto.StudentFeesCreateRequest;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.StudentFees;
-import com.indraacademy.ias_management.service.AttendanceService;
+import com.indraacademy.ias_management.service.AbsenceChargeService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.FeeReminderService;
 import com.indraacademy.ias_management.service.StudentFeesService;
@@ -41,7 +41,8 @@ public class StudentFeesController {
     private static final Logger log = LoggerFactory.getLogger(StudentFeesController.class);
 
     @Autowired private StudentFeesService studentFeesService;
-    @Autowired private AttendanceService attendanceService;
+    @Autowired private AbsenceChargeService absenceChargeService;
+    @Autowired private com.indraacademy.ias_management.util.SecurityUtil securityUtil;
     @Autowired private AuthService authService;
     @Autowired private FeeReminderService feeReminderService;
     @Autowired private StudentFeesRecalculationService recalculationService;
@@ -96,7 +97,8 @@ public class StudentFeesController {
 
         try {
             Payment payment = studentFeesService.recordManualPayment(paymentRequest, request.getRemoteAddr());
-            attendanceService.updateChargePaidAfterPayment(payment.getStudentId(), payment.getSession(), request);
+            absenceChargeService.settleAfterPayment(payment.getStudentId(), payment.getSession(),
+                    securityUtil.getSchoolId(), request.getRemoteAddr());
 
             log.info("Manual payment recorded successfully for student {}. Payment ID: {}", studentId, payment.getPaymentId());
             return new ResponseEntity<>(Map.of("message", "Manual payment recorded successfully", "paymentId", payment.getPaymentId()), HttpStatus.CREATED);
@@ -239,7 +241,7 @@ public class StudentFeesController {
         log.info("Checkout quote request: student={} session={} months={}", resolvedStudentId, session, monthList);
         CheckoutQuoteDto quote = studentFeesService.computeCheckoutQuote(resolvedStudentId, session, monthList);
         long additionalChargesPaise = Math.multiplyExact(
-                attendanceService.getTotalUnappliedLeaveCount(resolvedStudentId, session), 2_500L);
+                absenceChargeService.countChargeable(resolvedStudentId, session), 2_500L);
         quote.setAdditionalChargesPaise(additionalChargesPaise);
         long schoolSidePaise = Math.addExact(quote.getSchoolLiabilityPrincipalPaise(), additionalChargesPaise);
         quote.setSchoolFeePaise(schoolSidePaise);

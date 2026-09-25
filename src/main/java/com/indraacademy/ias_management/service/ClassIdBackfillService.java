@@ -23,7 +23,6 @@ public class ClassIdBackfillService {
 
     @Autowired private SchoolClassRepository schoolClassRepo;
     @Autowired private StudentRepository studentRepo;
-    @Autowired private AttendanceRepository attendanceRepo;
     @Autowired private LeaveRepository leaveRepo;
     @Autowired private PaymentRepository paymentRepo;
     @Autowired private FeeStructureRepository feeStructureRepo;
@@ -61,9 +60,6 @@ public class ClassIdBackfillService {
         if (count > 0) { studentRepo.saveAll(students); }
         summary.put("Student", count);
 
-        // Attendance
-        count = backfillAttendance(schoolId, nameToId);
-        summary.put("Attendance", count);
 
         // Leave
         count = backfillLeave(schoolId, nameToId);
@@ -99,20 +95,6 @@ public class ClassIdBackfillService {
 
         log.info("Backfill complete for school {}: {}", schoolId, summary);
         return summary;
-    }
-
-    private int backfillAttendance(Long schoolId, Map<String, Long> nameToId) {
-        // Process in date-class batches to avoid loading too many records
-        List<Attendance> records = attendanceRepo.findBySchoolId(schoolId);
-        int count = 0;
-        for (Attendance a : records) {
-            if (a.getClassId() == null && a.getClassName() != null) {
-                Long id = nameToId.get(a.getClassName());
-                if (id != null) { a.setClassId(id); count++; }
-            }
-        }
-        if (count > 0) attendanceRepo.saveAll(records);
-        return count;
     }
 
     private int backfillLeave(Long schoolId, Map<String, Long> nameToId) {

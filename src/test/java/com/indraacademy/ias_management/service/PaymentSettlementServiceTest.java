@@ -35,7 +35,7 @@ class PaymentSettlementServiceTest {
     @Mock PaymentOrderRepository paymentOrderRepository;
     @Mock PaymentRepository paymentRepository;
     @Mock StudentRepository studentRepository;
-    @Mock AttendanceService attendanceService;
+    @Mock AbsenceChargeService absenceChargeService;
     @Mock StudentFeesService studentFeesService;
     @InjectMocks PaymentSettlementService service;
 
@@ -98,7 +98,7 @@ class PaymentSettlementServiceTest {
         // Fix B: the trusted, already-validated schoolId is passed explicitly — never
         // re-derived from ambient SecurityUtil/SchoolContext, which is never populated for a
         // genuine /api/webhooks/* settlement.
-        verify(attendanceService).updateChargePaidAfterPayment("S1", "2025-2026", SCHOOL_ID);
+        verify(absenceChargeService).settleAfterPayment("S1", "2025-2026", SCHOOL_ID, null);
         verify(studentFeesService).markFeesAsPaid(any(Payment.class));
     }
 
@@ -128,7 +128,7 @@ class PaymentSettlementServiceTest {
         assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.ALREADY_SETTLED);
         assertThat(result.message()).isEqualTo("Payment already verified.");
         assertThat(result.payment()).isNull();
-        verifyNoInteractions(paymentOrderRepository, attendanceService, studentFeesService);
+        verifyNoInteractions(paymentOrderRepository, absenceChargeService, studentFeesService);
     }
 
     @Test
@@ -143,7 +143,7 @@ class PaymentSettlementServiceTest {
 
         assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.ALREADY_SETTLED);
         verify(paymentRepository, never()).save(any());
-        verifyNoInteractions(attendanceService, studentFeesService);
+        verifyNoInteractions(absenceChargeService, studentFeesService);
     }
 
     // ── Case 2: consumed order, different payment_id ────────────────────────────────────────
@@ -160,7 +160,7 @@ class PaymentSettlementServiceTest {
         assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.REJECTED);
         assertThat(result.message()).contains("already used");
         verify(paymentRepository, never()).save(any());
-        verifyNoInteractions(attendanceService, studentFeesService);
+        verifyNoInteractions(absenceChargeService, studentFeesService);
     }
 
     // ── Unknown order / wrong school ────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ class PaymentSettlementServiceTest {
         PaymentSettlementService.SettlementResult result = service.settle(ORDER_ID, PAYMENT_ID, SIGNATURE, SCHOOL_ID, PaymentSettlementService.SettlementSource.CLIENT_VERIFY);
 
         assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.ALREADY_SETTLED);
-        verifyNoInteractions(attendanceService, studentFeesService);
+        verifyNoInteractions(absenceChargeService, studentFeesService);
     }
 
     @Test
@@ -222,7 +222,7 @@ class PaymentSettlementServiceTest {
 
         assertThat(result.outcome()).isEqualTo(PaymentSettlementService.Outcome.REJECTED);
         assertThat(result.message()).contains("already used");
-        verifyNoInteractions(attendanceService, studentFeesService);
+        verifyNoInteractions(absenceChargeService, studentFeesService);
         verify(paymentOrderRepository, never()).save(eq(order));
     }
 

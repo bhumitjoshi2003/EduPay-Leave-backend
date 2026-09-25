@@ -82,7 +82,7 @@ class SectionDeletionPostgresIT {
 
     @AfterEach
     void removeAnyCommittedFixtures() {
-        jdbc.update("DELETE FROM attendance WHERE school_id=?", SCHOOL);
+        jdbc.update("DELETE FROM attendance_session WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM timetable_entry WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM class_teacher_responsibility WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM teacher_class_grant WHERE school_id=?", SCHOOL);
@@ -201,13 +201,14 @@ class SectionDeletionPostgresIT {
 
     @Test
     void attendanceReferenceBlocksSectionDeletion() {
-        jdbc.update("INSERT INTO attendance (school_id,student_id,date,class_name,class_id,section_id,charge_paid) VALUES (?,?,DATE '2026-06-01','10',?,?,false)", SCHOOL, STUDENT, CLASS, FREE_SECTION);
+        Long submission = jdbc.queryForObject("INSERT INTO attendance_session (school_id,academic_session_id,class_id,section_id,attendance_date,marked_by_user_id,marked_at,updated_at) VALUES (?,?,?,?,DATE '2026-06-01','SECTION-TEACHER-PG',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) RETURNING id", Long.class, SCHOOL, SESSION, CLASS, FREE_SECTION);
+        jdbc.update("INSERT INTO student_attendance (attendance_session_id,student_id,status,created_at,updated_at) VALUES (?,?,'ABSENT',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", submission, STUDENT);
 
         assertThatThrownBy(() -> service.deleteSection(FREE_SECTION, request))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("attendance history references it");
         assertThat(jdbc.queryForObject("SELECT count(*) FROM section WHERE school_id=? AND id=?", Integer.class, SCHOOL, FREE_SECTION)).isOne();
-        assertThat(jdbc.queryForObject("SELECT section_id FROM attendance WHERE school_id=? AND student_id=?", Long.class, SCHOOL, STUDENT)).isEqualTo(FREE_SECTION);
+        assertThat(jdbc.queryForObject("SELECT s.section_id FROM student_attendance a JOIN attendance_session s ON s.id=a.attendance_session_id WHERE s.school_id=? AND a.student_id=?", Long.class, SCHOOL, STUDENT)).isEqualTo(FREE_SECTION);
     }
 
     @Test

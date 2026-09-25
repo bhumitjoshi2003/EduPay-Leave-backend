@@ -49,7 +49,7 @@ import static org.mockito.Mockito.lenient;
 @Import({AttendanceService.class, MarkService.class, ReportCardDataAssembler.class,
         StudentTemporalMembershipResolver.class, AcademicSessionService.class,
         ReportCardTemplateService.class, WeightageCalculationEngine.class,
-        ReportCardPublicationService.class,
+        ReportCardPublicationService.class, com.indraacademy.ias_management.config.ClockConfig.class,
         CrossModuleHistoricalLifecyclePostgresIT.RealObjectMapperConfig.class})
 @EnabledIfEnvironmentVariable(named = "DB_URL", matches = ".+")
 class CrossModuleHistoricalLifecyclePostgresIT {
@@ -77,12 +77,15 @@ class CrossModuleHistoricalLifecyclePostgresIT {
     @Autowired ReportCardDataAssembler assembler;
     @Autowired ReportCardPublicationService publicationService;
     @Autowired StudentRepository studentRepository;
+    @MockBean ObjectStorageService objectStorageService; // ReportCardDataAssembler's logo lookup
     @MockBean SecurityUtil securityUtil;
     @MockBean AuditService auditService;
     @MockBean StudentService studentService;
     @MockBean com.indraacademy.ias_management.service.BusinessNotificationService businessNotificationService;
     @MockBean ReportCardEmailBlastService reportCardEmailBlastService;
     @MockBean RemarksService remarksService;
+    @MockBean TimetableSessionAccessService timetableSessionAccessService;
+    @MockBean TeacherClassScopeService teacherClassScopeService;
 
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
@@ -132,9 +135,8 @@ class CrossModuleHistoricalLifecyclePostgresIT {
                 LocalDate.of(2025, 4, 1), LocalDate.of(2026, 3, 31), "SESSION_COMPLETED");
         insertActiveEnrollment(student, SESSION_CURRENT, CLASS_10, null, LocalDate.of(2026, 4, 1));
 
-        insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 15));
-        insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 16));
-        insertAttendance(student, "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 16), "ABSENT");
+        markAttendance(student, CLASS_9, SECTION_A, LocalDate.of(2025, 8, 15), "PRESENT");
+        markAttendance(student, CLASS_9, SECTION_A, LocalDate.of(2025, 8, 16), "ABSENT");
 
         long exam = insertExamConfig(SESSION_PRIOR_LABEL, "9", "Half Yearly");
         long entry = insertSubjectEntry(exam, "Math", 100, null);
@@ -150,7 +152,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
         AttendanceSummaryDTO attendance = attendanceService.getStudentSummary(student, "year", null, null, SESSION_PRIOR_LABEL);
         assertThat(attendance.getClassName()).isEqualTo("9");
         assertThat(attendance.getTotalWorkingDays()).isEqualTo(2);
-        assertThat(attendance.getDaysAbsent()).isEqualTo(1.0);
+        assertThat(attendance.getDaysAbsent()).isEqualTo(1);
 
         // Results still resolve class 9.
         List<ExamResultDTO> results = markService.getStudentResults(student, SESSION_PRIOR_LABEL);
@@ -182,11 +184,13 @@ class CrossModuleHistoricalLifecyclePostgresIT {
                 LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 10), "CLASS_CHANGE");
         insertActiveEnrollment(student, SESSION_CURRENT, CLASS_10, null, LocalDate.of(2026, 8, 11));
 
-        // Attendance across the transition.
+        // Attendance across the transition: the enrollment roster puts the student in class 9's
+        // submissions for Aug 1-10 and class 10's (no sections) for Aug 11-20. Peers fill the
+        // other class's submissions on every day.
         for (int d = 1; d <= 20; d++) {
             LocalDate day = LocalDate.of(2026, 8, d);
-            insertAttendance("X", "9", CLASS_9, SECTION_A, day);
-            insertAttendance("X", "10", CLASS_10, null, day);
+            markAttendance(d <= 10 ? student : "E6F-B-PEER9", CLASS_9, SECTION_A, day, "PRESENT");
+            markAttendance(d <= 10 ? "E6F-B-PEER10" : student, CLASS_10, null, day, "PRESENT");
         }
         AttendanceSummaryDTO attendance = attendanceService.getStudentAttendanceForDateRange(
                 student, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 20));
@@ -226,12 +230,12 @@ class CrossModuleHistoricalLifecyclePostgresIT {
 
         for (int d = 1; d <= 10; d++) {
             LocalDate day = LocalDate.of(2026, 8, 20).plusDays(d);
-            insertAttendance("X", "9", CLASS_9, SECTION_A, day);
-            insertAttendance("X", "9", CLASS_9, SECTION_B, day);
+            markAttendance(student, CLASS_9, SECTION_A, day, "PRESENT");
+            markAttendance("E6F-C-PEER", CLASS_9, SECTION_B, day, "PRESENT");
         }
         AttendanceSummaryDTO attendance = attendanceService.getStudentAttendanceForDateRange(
                 student, LocalDate.of(2026, 8, 21), LocalDate.of(2026, 8, 30));
-        assertThat(attendance.getTotalWorkingDays()).isEqualTo(10); // union, not summed across sections
+        assertThat(attendance.getTotalWorkingDays()).isEqualTo(10); // own section's rows only, never section B's
 
         // One class context (not two) despite the section change.
         var context = assembler.resolveHistoricalContext(student, SESSION_CURRENT_LABEL, null);
@@ -264,17 +268,19 @@ class CrossModuleHistoricalLifecyclePostgresIT {
                 LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 10), "WITHDRAWN");
         insertActiveEnrollment(student, SESSION_CURRENT, CLASS_9, SECTION_A, LocalDate.of(2026, 8, 21));
 
+        // The class was marked every day; the enrollment roster only includes the student while
+        // enrolled (Aug 1-10 and Aug 21-30), so the gap days carry no row for them.
         for (int d = 1; d <= 30; d++) {
-            insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2026, 8, d));
+            LocalDate day = LocalDate.of(2026, 8, d);
+            markAttendance("E6F-D-PEER", CLASS_9, SECTION_A, day, "ABSENT");
+            if (d <= 10 || d >= 21) markAttendance(student, CLASS_9, SECTION_A, day, "PRESENT");
         }
-        // Stray personal evidence inside the gap — must be preserved but not counted.
-        insertAttendance(student, "9", CLASS_9, SECTION_A, LocalDate.of(2026, 8, 15), "ABSENT");
 
         AttendanceSummaryDTO attendance = attendanceService.getStudentAttendanceForDateRange(
                 student, LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 30));
         // 10 (Aug 1-10) + 10 (Aug 21-30) = 20; the Aug 11-20 gap contributes nothing.
         assertThat(attendance.getTotalWorkingDays()).isEqualTo(20);
-        assertThat(attendance.getDaysAbsent()).isEqualTo(0.0); // the gap-evidence row must not count
+        assertThat(attendance.getDaysAbsent()).isZero(); // a peer's absences never leak into this student
 
         // An exam dated inside the gap must not be discovered from fabricated membership.
         long gapExam = insertExamConfig(SESSION_CURRENT_LABEL, "9", "During Gap");
@@ -296,8 +302,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
         String student = "E6F-E";
         insertStudent(student, "9", CLASS_9, SECTION_A);
         // No enrollment at all for the prior session — genuinely legacy.
-        insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 4));
-        insertAttendance(student, "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 4), "ABSENT");
+        markAttendance(student, CLASS_9, SECTION_A, LocalDate.of(2025, 8, 4), "ABSENT");
         long exam = insertExamConfig(SESSION_PRIOR_LABEL, "9", "Half Yearly");
         insertMark(student, insertSubjectEntry(exam, "Math", 100, null), 70.0);
         publicationService.publish(TEMPLATE, SESSION_PRIOR_LABEL, "9");
@@ -328,8 +333,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
         insertClosedEnrollment(student, SESSION_PRIOR, CLASS_9, SECTION_A,
                 LocalDate.of(2025, 4, 1), LocalDate.of(2026, 3, 31), "SESSION_COMPLETED");
 
-        insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 15));
-        insertAttendance(student, "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 15), "ABSENT");
+        markAttendance(student, CLASS_9, SECTION_A, LocalDate.of(2025, 8, 15), "ABSENT");
         long exam = insertExamConfig(SESSION_PRIOR_LABEL, "9", "Final");
         insertMark(student, insertSubjectEntry(exam, "Math", 100, null), 95.0);
         publicationService.publish(TEMPLATE, SESSION_PRIOR_LABEL, "9");
@@ -360,8 +364,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
         insertStudent(student, "10", CLASS_10, null);
         insertClosedEnrollment(student, SESSION_PRIOR, CLASS_9, SECTION_A,
                 LocalDate.of(2025, 4, 1), LocalDate.of(2026, 3, 31), "SESSION_COMPLETED");
-        insertAttendance(student, "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 4), "ABSENT");
-        insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 4));
+        markAttendance(student, CLASS_9, SECTION_A, LocalDate.of(2025, 8, 4), "ABSENT");
         long exam = insertExamConfig(SESSION_PRIOR_LABEL, "9", "Half Yearly");
         insertMark(student, insertSubjectEntry(exam, "Math", 100, null), 85.0);
         publicationService.publish(TEMPLATE, SESSION_PRIOR_LABEL, "9");
@@ -385,7 +388,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
                                   long fees, long payments) {}
 
     private TableSignature signatures() {
-        return new TableSignature(count("student"), count("student_enrollment"), count("attendance"),
+        return new TableSignature(count("student"), count("student_enrollment"), count("student_attendance"),
                 count("exam_config"), count("exam_subject_entry"), count("student_mark"),
                 count("report_card_publication"), count("report_card_remark"),
                 count("student_fees"), count("payment"));
@@ -471,13 +474,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
                 id, SCHOOL, studentId, examSubjectEntryId, marksObtained);
     }
 
-    private void insertAttendance(String studentId, String className, long classId, Long sectionId, LocalDate date) {
-        insertAttendance(studentId, className, classId, sectionId, date, null);
-    }
-
-    private void insertAttendance(String studentId, String className, long classId, Long sectionId, LocalDate date, String status) {
-        jdbc.update("INSERT INTO attendance (school_id,student_id,class_name,class_id,section_id,date,status,charge_paid) " +
-                        "VALUES (?,?,?,?,?,?,?,false)",
-                SCHOOL, studentId, className, classId, sectionId, date, status);
+    private void markAttendance(String studentId, long classId, Long sectionId, LocalDate date, String status) {
+        AttendanceV2Fixtures.mark(jdbc, SCHOOL, studentId, classId, sectionId, date, status);
     }
 }

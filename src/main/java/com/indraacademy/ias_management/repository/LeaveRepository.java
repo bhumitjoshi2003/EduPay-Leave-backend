@@ -109,4 +109,19 @@ public interface LeaveRepository extends JpaRepository<Leave, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select l from Leave l where l.id = :leaveId")
     Optional<Leave> findByIdForUpdate(@Param("leaveId") Long leaveId);
+
+    // ─── Attendance V2: only APPROVED leave ever affects attendance (screen hint + approved-leave counts) ──
+
+    /** [studentId, leaveDate] of APPROVED leave in a school between two yyyy-MM-dd dates (inclusive). */
+    @Query("SELECT l.studentId, l.leaveDate FROM Leave l WHERE l.schoolId = :schoolId "
+            + "AND l.status = com.indraacademy.ias_management.entity.LeaveStatus.APPROVED "
+            + "AND l.leaveDate >= :from AND l.leaveDate <= :to")
+    List<Object[]> findApprovedLeaveDays(@Param("schoolId") Long schoolId, @Param("from") String from, @Param("to") String to);
+
+    /** Same, for one student. */
+    @Query("SELECT l.studentId, l.leaveDate FROM Leave l WHERE l.schoolId = :schoolId AND l.studentId = :studentId "
+            + "AND l.status = com.indraacademy.ias_management.entity.LeaveStatus.APPROVED "
+            + "AND l.leaveDate >= :from AND l.leaveDate <= :to")
+    List<Object[]> findApprovedLeaveDaysForStudent(@Param("schoolId") Long schoolId, @Param("studentId") String studentId,
+                                                   @Param("from") String from, @Param("to") String to);
 }

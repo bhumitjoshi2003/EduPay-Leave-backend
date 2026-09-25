@@ -1,11 +1,12 @@
 package com.indraacademy.ias_management.service;
 
-import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.AttendanceStatus;
 import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
-import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.AttendanceRow;
 import com.indraacademy.ias_management.repository.SchoolRepository;
+import com.indraacademy.ias_management.repository.StudentAttendanceRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
@@ -14,90 +15,91 @@ import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
+/**
+ * Daily absence email to the address on the student record (the family contact), sent at 12:15
+ * school time (cron zone IST, the platform default) for Attendance V2 rows explicitly marked
+ * ABSENT on that school's own local date. An absence covered by APPROVED leave is authorized,
+ * so it does not get this "your child was absent" email; the leave flow already notified the
+ * family. Only ACTIVE students are emailed.
+ */
 @Service
 public class AttendanceEmailScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(AttendanceEmailScheduler.class);
 
-    @Autowired private AttendanceRepository attendanceRepository;
+    @Autowired private StudentAttendanceRepository studentAttendanceRepository;
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
+    @Autowired private AttendanceService attendanceService;
     @Autowired private EmailService emailService;
+    @Autowired private Clock clock;
 
     @Scheduled(cron = "0 15 12 * * *", zone = "Asia/Kolkata")
     public void sendAttendanceEmails() {
-        log.info("Starting scheduled job: sendAttendanceEmails at {}", LocalDate.now());
-        final LocalDate today = LocalDate.now();
-        List<Attendance> attendanceList = null;
-
+        LocalDate utcToday = LocalDate.now(clock.withZone(ZoneOffset.UTC));
+        List<AttendanceRow> absences;
         try {
-            attendanceList = attendanceRepository.findByDate(today);
-            if (attendanceList.isEmpty()) {
-                log.info("No absent students found for today: {}", today);
-                return;
-            }
-            log.info("Found {} absent records for today.", attendanceList.size());
+            // Every school's local "today" lies within UTC today ± 1; filtered per school below.
+            absences = studentAttendanceRepository.findRowsWithStatusOnDates(AttendanceStatus.ABSENT,
+                    List.of(utcToday.minusDays(1), utcToday, utcToday.plusDays(1)));
         } catch (DataAccessException e) {
-            log.error("Data access error while fetching absent students for date: {}", today, e);
+            log.error("Data access error while fetching today's absences", e);
             return;
         }
-
-        for (Attendance attendance : attendanceList) {
-            String studentId = attendance.getStudentId();
-
-            if ("X".equals(studentId)) {
-                log.warn("Skipping attendance record with non-standard student ID 'X'. Record details: {}", attendance.toString());
-                continue;
-            }
-            if (attendance.getStatus() != null && !"ABSENT".equalsIgnoreCase(attendance.getStatus())) {
-                log.debug("Skipping absence email for student {} with status {}", studentId, attendance.getStatus());
-                continue;
-            }
-
-            Optional<Student> studentOptional = Optional.empty();
-            try {
-                // Use schoolId from the attendance record to avoid cross-school student lookup
-                studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, attendance.getSchoolId());
-            } catch (DataAccessException e) {
-                log.error("Data access error while fetching Student ID: {}. Skipping email for this student.", studentId, e);
-                continue;
-            }
-
-            if (studentOptional.isPresent()) {
-                Student student = studentOptional.get();
-                if (student.getStatus() != StudentStatus.ACTIVE) {
-                    log.debug("Skipping absence email for non-active student ID: {}", studentId);
-                    continue;
-                }
-                String parentEmail = student.getEmail();
-
-                if (parentEmail != null && !parentEmail.trim().isEmpty()) {
-                    try {
-                        String studentName = student.getName() != null ? student.getName() : "your child";
-                        String dateStr    = today.format(DateTimeFormatter.ofPattern("dd MMMM yyyy"));
-                        String subject    = "Absence Notification – " + studentName;
-                        String schoolName = schoolRepository.findById(student.getSchoolId() != null ? student.getSchoolId() : -1L)
-                                .map(School::getName).orElse("School");
-                        String htmlBody   = buildAbsenceHtml(studentName, dateStr, schoolName);
-
-                        emailService.sendHtmlEmail(EmailPurpose.NOTIFICATION, parentEmail, subject, htmlBody);
-                        log.info("Successfully sent absence email to parent of student ID: {} ({})", studentId, parentEmail);
-                    } catch (Exception e) {
-                        log.error("Failed to send attendance email for student ID: {}", studentId, e);
-                    }
-                } else {
-                    log.warn("Parent/Guardian email not found or empty for student ID: {}", studentId);
-                }
-            } else {
-                log.warn("Student not found with ID: {}. Unable to send absence email.", studentId);
+        Map<Long, List<AttendanceRow>> bySchool = absences.stream().collect(Collectors.groupingBy(AttendanceRow::schoolId));
+        int sent = 0;
+        for (Map.Entry<Long, List<AttendanceRow>> entry : bySchool.entrySet()) {
+            Long schoolId = entry.getKey();
+            School school = schoolRepository.findById(schoolId).orElse(null);
+            if (school == null) continue;
+            LocalDate today = attendanceService.schoolToday(school);
+            Set<String> approvedLeave = attendanceService.approvedLeaveKeys(schoolId, today, today);
+            for (AttendanceRow absence : entry.getValue()) {
+                if (!today.equals(absence.date())) continue;
+                if (approvedLeave.contains(AttendanceService.leaveKey(absence.studentId(), today))) continue;
+                if (sendAbsenceEmail(school, absence.studentId(), today)) sent++;
             }
         }
-        log.info("Finished scheduled job: sendAttendanceEmails");
+        log.info("Finished scheduled job: sendAttendanceEmails — {} email(s) sent", sent);
+    }
+
+    private boolean sendAbsenceEmail(School school, String studentId, LocalDate date) {
+        Optional<Student> studentOptional;
+        try {
+            studentOptional = studentRepository.findByStudentIdAndSchoolId(studentId, school.getId());
+        } catch (DataAccessException e) {
+            log.error("Data access error while fetching student {}; skipping absence email.", studentId, e);
+            return false;
+        }
+        if (studentOptional.isEmpty()) return false;
+        Student student = studentOptional.get();
+        if (student.getStatus() != StudentStatus.ACTIVE) return false;
+        String parentEmail = student.getEmail();
+        if (parentEmail == null || parentEmail.trim().isEmpty()) {
+            log.warn("Parent/Guardian email not found for student ID: {}", studentId);
+            return false;
+        }
+        try {
+            String studentName = student.getName() != null ? student.getName() : "your child";
+            String dateStr = date.format(DateTimeFormatter.ofPattern("dd MMMM yyyy"));
+            String subject = "Absence Notification – " + studentName;
+            String htmlBody = buildAbsenceHtml(studentName, dateStr, school.getName());
+            emailService.sendHtmlEmail(EmailPurpose.NOTIFICATION, parentEmail, subject, htmlBody);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to send absence email for student ID: {}", studentId, e);
+            return false;
+        }
     }
 
     private String buildAbsenceHtml(String studentName, String dateStr, String schoolName) {

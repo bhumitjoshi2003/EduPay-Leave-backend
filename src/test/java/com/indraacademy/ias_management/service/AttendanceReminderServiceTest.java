@@ -58,7 +58,7 @@ class AttendanceReminderServiceTest {
         when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
 
         ClassAttendanceSummaryDTO summaryRow = new ClassAttendanceSummaryDTO(
-                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 30.0);
+                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 0L, 30.0);
         when(attendanceService.getSchoolSummary("year", null, null, SESSION))
                 .thenReturn(List.of(summaryRow));
 
@@ -95,7 +95,7 @@ class AttendanceReminderServiceTest {
 
         // Comfortably ABOVE any threshold — flagged purely for three days running.
         ClassAttendanceSummaryDTO summaryRow = new ClassAttendanceSummaryDTO(
-                STUDENT_ID, "Jordan Test Student", "10", 20L, 17L, 3L, 85.0);
+                STUDENT_ID, "Jordan Test Student", "10", 20L, 17L, 3L, 0L, 85.0);
         when(attendanceService.getSchoolSummary("year", null, null, SESSION))
                 .thenReturn(List.of(summaryRow));
 
@@ -127,7 +127,7 @@ class AttendanceReminderServiceTest {
         when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
 
         ClassAttendanceSummaryDTO summaryRow = new ClassAttendanceSummaryDTO(
-                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 30.0);
+                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 0L, 30.0);
         when(attendanceService.getSchoolSummary("year", null, null, SESSION))
                 .thenReturn(List.of(summaryRow));
 
@@ -167,7 +167,7 @@ class AttendanceReminderServiceTest {
         when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
 
         ClassAttendanceSummaryDTO summaryRow = new ClassAttendanceSummaryDTO(
-                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 30.0);
+                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 0L, 30.0);
         when(attendanceService.getSchoolSummary("year", null, null, SESSION))
                 .thenReturn(List.of(summaryRow));
 
@@ -193,7 +193,7 @@ class AttendanceReminderServiceTest {
         when(securityUtil.getSchoolId()).thenReturn(SCHOOL_ID);
 
         ClassAttendanceSummaryDTO summaryRow = new ClassAttendanceSummaryDTO(
-                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 30.0);
+                STUDENT_ID, "Jordan Test Student", "10", 10L, 3L, 7L, 0L, 30.0);
         when(attendanceService.getSchoolSummary("year", null, null, SESSION))
                 .thenReturn(List.of(summaryRow));
 
@@ -226,9 +226,9 @@ class AttendanceReminderServiceTest {
         String withdrawnId = "WITHDRAWN_STU";
 
         ClassAttendanceSummaryDTO activeRow = new ClassAttendanceSummaryDTO(
-                activeId, "Active Student", "10", 10L, 3L, 7L, 30.0);
+                activeId, "Active Student", "10", 10L, 3L, 7L, 0L, 30.0);
         ClassAttendanceSummaryDTO withdrawnRow = new ClassAttendanceSummaryDTO(
-                withdrawnId, "Withdrawn Student", "10", 10L, 3L, 7L, 30.0);
+                withdrawnId, "Withdrawn Student", "10", 10L, 3L, 7L, 0L, 30.0);
         when(attendanceService.getSchoolSummary("year", null, null, SESSION))
                 .thenReturn(List.of(activeRow, withdrawnRow));
 

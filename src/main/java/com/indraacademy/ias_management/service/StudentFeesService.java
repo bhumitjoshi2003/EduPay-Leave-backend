@@ -716,7 +716,7 @@ public class StudentFeesService {
         long lateFeePaise = lateFee.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
         // Late fees are allocatable under the existing ledger semantics and therefore form
         // part of P. Additional/unapplied charges are A and are added by the controller after
-        // it obtains their authoritative value from AttendanceService.
+        // it obtains their authoritative value from AbsenceChargeService.
         long principalPaise = Math.addExact(schoolFeeDuePaise, lateFeePaise);
 
         CheckoutQuoteDto dto = new CheckoutQuoteDto();

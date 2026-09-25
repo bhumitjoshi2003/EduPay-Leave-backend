@@ -345,8 +345,7 @@ class StudentLifecyclePostgresIT {
         // Also seed attendance/leave rows the pre-guard cleanup would otherwise have deleted —
         // if the guard's ordering were wrong (destructive cleanup before the check), these
         // would already be gone by the time we assert.
-        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
-                "VALUES (?,?,?,CURRENT_DATE,'PRESENT',false)", SCHOOL, STUDENT, "9");
+        insertAttendanceRow();
 
         assertThatThrownBy(() -> studentService.deleteStudent(STUDENT, request))
                 .isInstanceOf(IllegalStateException.class)
@@ -361,8 +360,18 @@ class StudentLifecyclePostgresIT {
                 "SELECT count(*) FROM payment_student_fees_allocation WHERE payment_id=?", Integer.class, payment.getId()))
                 .isEqualTo(1);
         assertThat(jdbc.queryForObject(
-                "SELECT count(*) FROM attendance WHERE school_id=? AND student_id=?", Integer.class, SCHOOL, STUDENT))
+                "SELECT count(*) FROM student_attendance a JOIN attendance_session s ON s.id=a.attendance_session_id " +
+                "WHERE s.school_id=? AND a.student_id=?", Integer.class, SCHOOL, STUDENT))
                 .isEqualTo(1);
+    }
+
+    /** One explicit Attendance V2 row for STUDENT (its class/section submission on TODAY). */
+    private void insertAttendanceRow() {
+        Long submission = jdbc.queryForObject("INSERT INTO attendance_session (school_id,academic_session_id,class_id,section_id," +
+                "attendance_date,marked_by_user_id,marked_at,updated_at) VALUES (?,?,?,?,?,'admin',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) " +
+                "RETURNING id", Long.class, SCHOOL, SESSION, CLASS_ID, SECTION_ID, TODAY);
+        jdbc.update("INSERT INTO student_attendance (attendance_session_id,student_id,status,created_at,updated_at) " +
+                "VALUES (?,?,'PRESENT',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", submission, STUDENT);
     }
 
     /** The realistic case: an ordinarily-admitted student (the shared fixture() @BeforeEach
@@ -371,8 +380,7 @@ class StudentLifecyclePostgresIT {
      * history is retained the same way financial history is — recommending the exit workflow
      * instead. Nothing destructive may run before this rejection. */
     @Test void deleteStudent_ordinaryEnrolledStudent_isCleanlyRejected_recommendsExitWorkflow() {
-        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
-                "VALUES (?,?,?,CURRENT_DATE,'PRESENT',false)", SCHOOL, STUDENT, "9");
+        insertAttendanceRow();
 
         assertThatThrownBy(() -> studentService.deleteStudent(STUDENT, request))
                 .isInstanceOf(IllegalStateException.class)
@@ -382,7 +390,8 @@ class StudentLifecyclePostgresIT {
         assertThat(students.findByStudentIdAndSchoolId(STUDENT, SCHOOL)).isPresent();
         assertThat(history()).isNotEmpty();
         assertThat(jdbc.queryForObject(
-                "SELECT count(*) FROM attendance WHERE school_id=? AND student_id=?", Integer.class, SCHOOL, STUDENT))
+                "SELECT count(*) FROM student_attendance a JOIN attendance_session s ON s.id=a.attendance_session_id " +
+                "WHERE s.school_id=? AND a.student_id=?", Integer.class, SCHOOL, STUDENT))
                 .isEqualTo(1);
     }
 
@@ -393,14 +402,14 @@ class StudentLifecyclePostgresIT {
      * up exactly as before. */
     @Test void deleteStudent_trulyEmptyStudent_hardDeleteSucceeds() {
         jdbc.update("DELETE FROM student_enrollment WHERE school_id=? AND student_id=?", SCHOOL, STUDENT);
-        jdbc.update("INSERT INTO attendance (school_id, student_id, class_name, date, status, charge_paid) " +
-                "VALUES (?,?,?,CURRENT_DATE,'PRESENT',false)", SCHOOL, STUDENT, "9");
+        insertAttendanceRow();
 
         studentService.deleteStudent(STUDENT, request);
 
         assertThat(students.findByStudentIdAndSchoolId(STUDENT, SCHOOL)).isEmpty();
         assertThat(jdbc.queryForObject(
-                "SELECT count(*) FROM attendance WHERE school_id=? AND student_id=?", Integer.class, SCHOOL, STUDENT))
+                "SELECT count(*) FROM student_attendance a JOIN attendance_session s ON s.id=a.attendance_session_id " +
+                "WHERE s.school_id=? AND a.student_id=?", Integer.class, SCHOOL, STUDENT))
                 .isZero();
     }
 

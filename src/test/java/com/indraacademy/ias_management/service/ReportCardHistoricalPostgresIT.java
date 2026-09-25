@@ -46,6 +46,7 @@ import static org.mockito.Mockito.verify;
 @Import({ReportCardDataAssembler.class, MarkService.class, StudentTemporalMembershipResolver.class,
         AttendanceService.class, AcademicSessionService.class, ReportCardTemplateService.class,
         WeightageCalculationEngine.class, RemarksService.class, ReportCardPublicationService.class,
+        com.indraacademy.ias_management.config.ClockConfig.class,
         ReportCardHistoricalPostgresIT.RealObjectMapperConfig.class})
 @EnabledIfEnvironmentVariable(named = "DB_URL", matches = ".+")
 class ReportCardHistoricalPostgresIT {
@@ -81,11 +82,14 @@ class ReportCardHistoricalPostgresIT {
     @Autowired RemarksService remarksService;
     @Autowired ReportCardPublicationService publicationService;
     @Autowired StudentRepository studentRepository;
+    @MockBean ObjectStorageService objectStorageService; // ReportCardDataAssembler's logo lookup
     @MockBean SecurityUtil securityUtil;
     @MockBean AuditService auditService;
     @MockBean StudentService studentService;
     @MockBean BusinessNotificationService businessNotificationService;
     @MockBean ReportCardEmailBlastService reportCardEmailBlastService;
+    @MockBean TimetableSessionAccessService timetableSessionAccessService;
+    @MockBean TeacherClassScopeService teacherClassScopeService;
 
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
@@ -252,9 +256,10 @@ class ReportCardHistoricalPostgresIT {
     void reportCardAttendanceUsesRealAcademicSessionDates() {
         insertClosedEnrollment(STUDENT, SESSION_PRIOR, CLASS_9, SECTION_A,
                 LocalDate.of(2025, 4, 1), LocalDate.of(2026, 3, 31), "SESSION_COMPLETED");
-        insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 15));
-        insertAttendance("X", "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 16));
-        insertAttendance(STUDENT, "9", CLASS_9, SECTION_A, LocalDate.of(2025, 8, 16), "ABSENT");
+        markAttendance(STUDENT, CLASS_9, SECTION_A, LocalDate.of(2025, 8, 15), "PRESENT");
+        markAttendance(STUDENT, CLASS_9, SECTION_A, LocalDate.of(2025, 8, 16), "ABSENT");
+        // Outside the session's dates — must not leak into the report card.
+        markAttendance(STUDENT, CLASS_9, SECTION_A, LocalDate.of(2026, 4, 10), "ABSENT");
 
         ReportCardDataDTO dto = assembler.assemble(STUDENT, TEMPLATE, SESSION_PRIOR_LABEL);
 
@@ -333,7 +338,7 @@ class ReportCardHistoricalPostgresIT {
 
     private TableSignature signatures() {
         return new TableSignature(count("student"), count("student_enrollment"), count("exam_config"),
-                count("student_mark"), count("attendance"), count("report_card_publication"), count("report_card_remark"));
+                count("student_mark"), count("student_attendance"), count("report_card_publication"), count("report_card_remark"));
     }
 
     private long count(String table) {
@@ -423,13 +428,7 @@ class ReportCardHistoricalPostgresIT {
                 id, schoolId, studentId, examSubjectEntryId, marksObtained);
     }
 
-    private void insertAttendance(String studentId, String className, long classId, long sectionId, LocalDate date) {
-        insertAttendance(studentId, className, classId, sectionId, date, null);
-    }
-
-    private void insertAttendance(String studentId, String className, long classId, long sectionId, LocalDate date, String status) {
-        jdbc.update("INSERT INTO attendance (school_id,student_id,class_name,class_id,section_id,date,status,charge_paid) " +
-                        "VALUES (?,?,?,?,?,?,?,false)",
-                SCHOOL, studentId, className, classId, sectionId, date, status);
+    private void markAttendance(String studentId, long classId, Long sectionId, LocalDate date, String status) {
+        AttendanceV2Fixtures.mark(jdbc, SCHOOL, studentId, classId, sectionId, date, status);
     }
 }

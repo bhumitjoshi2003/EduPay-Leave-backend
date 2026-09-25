@@ -6,7 +6,11 @@ import com.indraacademy.ias_management.entity.LeaveStatus;
 import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.entity.Refund;
 import com.indraacademy.ias_management.entity.School;
-import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.AttendanceStatus;
+import com.indraacademy.ias_management.entity.SchoolClass;
+import com.indraacademy.ias_management.repository.AttendanceRow;
+import com.indraacademy.ias_management.dto.ClassStatsDto;
+import com.indraacademy.ias_management.dto.AttendanceTrendDto;
 import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.entity.TeacherStatus;
@@ -27,6 +31,10 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
@@ -45,7 +53,8 @@ class DashboardServiceTest {
     @Mock private PaymentRepository paymentRepository;
     @Mock private RefundRepository refundRepository;
     @Mock private StudentFeesRepository studentFeesRepository;
-    @Mock private AttendanceRepository attendanceRepository;
+    @Mock private StudentAttendanceRepository studentAttendanceRepository;
+    @Mock private SchoolClassRepository schoolClassRepository;
     @Mock private LeaveRepository leaveRepository;
     @Mock private SchoolRepository schoolRepository;
     @Mock private SecurityUtil securityUtil;
@@ -62,7 +71,8 @@ class DashboardServiceTest {
         ReflectionTestUtils.setField(service, "paymentRepository", paymentRepository);
         ReflectionTestUtils.setField(service, "refundRepository", refundRepository);
         ReflectionTestUtils.setField(service, "studentFeesRepository", studentFeesRepository);
-        ReflectionTestUtils.setField(service, "attendanceRepository", attendanceRepository);
+        ReflectionTestUtils.setField(service, "studentAttendanceRepository", studentAttendanceRepository);
+        ReflectionTestUtils.setField(service, "schoolClassRepository", schoolClassRepository);
         ReflectionTestUtils.setField(service, "leaveRepository", leaveRepository);
         ReflectionTestUtils.setField(service, "schoolRepository", schoolRepository);
         ReflectionTestUtils.setField(service, "securityUtil", securityUtil);
@@ -75,7 +85,7 @@ class DashboardServiceTest {
         lenient().when(studentRepository.countByStatusAndSchoolId(StudentStatus.ACTIVE, SCHOOL_ID)).thenReturn(10L);
         lenient().when(teacherRepository.countBySchoolIdAndStatus(SCHOOL_ID, TeacherStatus.ACTIVE)).thenReturn(2L);
         lenient().when(studentFeesRepository.countDistinctOverdueStudents(any(), any(), anyInt())).thenReturn(0L);
-        lenient().when(attendanceRepository.findByDateAndSchoolId(any(), any())).thenReturn(List.of());
+        lenient().when(studentAttendanceRepository.findSchoolRowsOnDate(any(), any())).thenReturn(List.of());
         lenient().when(leaveRepository.countByStatusAndSchoolId(LeaveStatus.PENDING, SCHOOL_ID)).thenReturn(0L);
     }
 
@@ -163,36 +173,66 @@ class DashboardServiceTest {
         assertThat(stats.getPendingLeaves()).isEqualTo(0L);
     }
 
+    // ─── Attendance V2: explicit rows only, one shared formula ────────────────
+
+    private static AttendanceRow row(String studentId, long classId, LocalDate date, AttendanceStatus status) {
+        return new AttendanceRow(1L, SCHOOL_ID, studentId, date, status, classId, null);
+    }
+
     @Test
-    void todayAttendance_allPresentMarker_isOneHundredPercent_andXIsNotAStudent() {
-        Attendance marker = attendance("X", "10", null, "PRESENT");
-        when(attendanceRepository.findByDateAndSchoolId(any(), any())).thenReturn(List.of(marker));
+    void todayAttendance_isPresentRowsOverAllSubmittedRows() {
+        LocalDate today = LocalDate.now();
+        when(studentAttendanceRepository.findSchoolRowsOnDate(eq(SCHOOL_ID), any())).thenReturn(List.of(
+                row("S1", 10, today, AttendanceStatus.PRESENT), row("S2", 10, today, AttendanceStatus.PRESENT),
+                row("S3", 10, today, AttendanceStatus.PRESENT), row("S4", 10, today, AttendanceStatus.ABSENT)));
+
+        assertThat(service.getStats().getTodayAttendanceRate()).isEqualTo(75.0);
+    }
+
+    @Test
+    void todayAttendance_isZeroUntilSomethingIsSubmitted() {
+        assertThat(service.getStats().getTodayAttendanceRate()).isEqualTo(0.0);
+    }
+
+    @Test
+    void classStats_useOneMonthQueryPerSchoolAndCountEachClassesSubmittedDays() {
+        LocalDate d1 = LocalDate.now().withDayOfMonth(1);
+        SchoolClass ten = new SchoolClass();
+        ten.setId(10L);
+        ten.setName("10");
+        when(schoolClassRepository.findBySchoolIdOrderByDisplayOrderAsc(SCHOOL_ID)).thenReturn(List.of(ten));
+        when(studentRepository.findDistinctActiveClassNamesBySchoolId(SCHOOL_ID)).thenReturn(List.of("10"));
         when(studentRepository.findByClassNameAndStatusAndSchoolId("10", StudentStatus.ACTIVE, SCHOOL_ID))
-                .thenReturn(List.of(new Student(), new Student(), new Student()));
+                .thenReturn(List.of(new Student(), new Student()));
+        when(studentAttendanceRepository.findSchoolRows(eq(SCHOOL_ID), isNull(), any(), any())).thenReturn(List.of(
+                row("S1", 10, d1, AttendanceStatus.PRESENT), row("S2", 10, d1, AttendanceStatus.ABSENT),
+                row("S1", 10, d1.plusDays(1), AttendanceStatus.PRESENT), row("S2", 10, d1.plusDays(1), AttendanceStatus.PRESENT),
+                row("X9", 99, d1, AttendanceStatus.ABSENT)));   // another class never leaks in
 
-        assertThat(service.getStats().getTodayAttendanceRate()).isEqualTo(100.0);
+        List<ClassStatsDto> stats = service.getClassStats();
+
+        assertThat(stats).singleElement().satisfies(c -> {
+            assertThat(c.getAttendanceRate()).isEqualTo(75.0);
+            assertThat(c.getWorkingDays()).isEqualTo(2);
+            assertThat(c.getStudentCount()).isEqualTo(2);
+        });
+        verify(studentAttendanceRepository, times(1)).findSchoolRows(eq(SCHOOL_ID), isNull(), any(), any());
     }
 
     @Test
-    void todayAttendance_sectionSubmission_doesNotTreatUnmarkedSectionsAsPresent() {
-        Attendance marker = attendance("X", "10", 11L, "PRESENT");
-        Attendance absent = attendance("S1", "10", 11L, "ABSENT");
-        when(attendanceRepository.findByDateAndSchoolId(any(), any())).thenReturn(List.of(marker, absent));
-        when(studentRepository.findByClassNameAndSectionIdAndStatusAndSchoolId(
-                "10", 11L, StudentStatus.ACTIVE, SCHOOL_ID))
-                .thenReturn(List.of(new Student(), new Student()));
+    void monthlyTrend_bucketsTheClassesRowsByMonth() {
+        LocalDate today = LocalDate.now();
+        SchoolClass ten = new SchoolClass();
+        ten.setId(10L);
+        when(schoolClassRepository.findBySchoolIdAndName(SCHOOL_ID, "10")).thenReturn(Optional.of(ten));
+        when(studentAttendanceRepository.findSchoolRows(eq(SCHOOL_ID), eq(10L), any(), any())).thenReturn(List.of(
+                row("S1", 10, today, AttendanceStatus.PRESENT), row("S2", 10, today, AttendanceStatus.ABSENT)));
 
-        assertThat(service.getStats().getTodayAttendanceRate()).isEqualTo(50.0);
-    }
+        List<AttendanceTrendDto> trend = service.getAttendanceTrend("10", "monthly");
 
-    private Attendance attendance(String studentId, String className, Long sectionId, String status) {
-        Attendance attendance = new Attendance();
-        attendance.setStudentId(studentId);
-        attendance.setClassName(className);
-        attendance.setSectionId(sectionId);
-        attendance.setStatus(status);
-        attendance.setDate(LocalDate.now());
-        return attendance;
+        assertThat(trend).hasSize(6);
+        assertThat(trend.get(5).getAttendanceRate()).isEqualTo(50.0);
+        assertThat(trend.get(0).getAttendanceRate()).isEqualTo(0.0);
     }
 
     @Test

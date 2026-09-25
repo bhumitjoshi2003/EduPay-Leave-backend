@@ -11,7 +11,7 @@ import com.indraacademy.ias_management.entity.Payment;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.PaymentOrderRepository;
 import com.indraacademy.ias_management.service.AuthService;
-import com.indraacademy.ias_management.service.AttendanceService;
+import com.indraacademy.ias_management.service.AbsenceChargeService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
 import com.indraacademy.ias_management.service.StudentFeesService;
@@ -51,7 +51,7 @@ public class PaymentController {
     @Autowired private SecurityUtil securityUtil;
     @Autowired private StudentFeesService studentFeesService;
     @Autowired private ParentPortalService parentPortalService;
-    @Autowired private AttendanceService attendanceService;
+    @Autowired private AbsenceChargeService absenceChargeService;
     @Autowired private PaymentPricingService paymentPricingService;
 
     /**
@@ -119,7 +119,7 @@ public class PaymentController {
         }
 
         long serverAdditionalChargesPaise = Math.multiplyExact(
-                attendanceService.getTotalUnappliedLeaveCount(req.getStudentId(), req.getSession()), 2_500L);
+                absenceChargeService.countChargeable(req.getStudentId(), req.getSession()), 2_500L);
         long principalPaise = quote.getSchoolLiabilityPrincipalPaise();
         if (principalPaise <= 0) {
             return ResponseEntity.badRequest().body(Map.of("error", "No allocatable school fee is due for the selected months."));

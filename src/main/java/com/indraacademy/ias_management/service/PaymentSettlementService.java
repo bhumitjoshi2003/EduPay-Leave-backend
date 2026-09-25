@@ -33,8 +33,8 @@ import org.springframework.transaction.annotation.Transactional;
  * before anything else in this method touches the database. {@link StudentFeesService#markFeesAsPaid}
  * acquires its own per-row {@code StudentFees} lock strictly after that, inside the same
  * transaction — so the order is always PaymentOrder → StudentFees, never the reverse.
- * {@link AttendanceService#updateChargePaidAfterPayment} does not lock StudentFees or
- * PaymentOrder at all (a plain bulk UPDATE on {@code attendance}), so it cannot introduce a
+ * {@link AbsenceChargeService#settleAfterPayment} does not lock StudentFees or PaymentOrder at
+ * all (idempotent inserts into {@code absence_charge_settlement}), so it cannot introduce a
  * reverse-order path either.
  */
 @Service
@@ -45,7 +45,7 @@ public class PaymentSettlementService {
     @Autowired private PaymentOrderRepository paymentOrderRepository;
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private StudentRepository studentRepository;
-    @Autowired private AttendanceService attendanceService;
+    @Autowired private AbsenceChargeService absenceChargeService;
     @Autowired private StudentFeesService studentFeesService;
 
     public enum Outcome { SETTLED, ALREADY_SETTLED, REJECTED }
@@ -164,9 +164,9 @@ public class PaymentSettlementService {
         // G. Join the same transaction (both @Transactional(REQUIRED) by default, and both
         // are different Spring beans so the proxy correctly enlists them) — a failure in
         // either rolls back the Payment insert and the PaymentOrder consumption above too.
-        attendanceService.updateChargePaidAfterPayment(studentId, paymentOrder.getSession(), schoolId);
+        absenceChargeService.settleAfterPayment(studentId, paymentOrder.getSession(), schoolId, null);
         studentFeesService.markFeesAsPaid(savedPayment);
-        log.debug("Attendance and StudentFees marked as paid.");
+        log.debug("Absence charges settled and StudentFees marked as paid.");
 
         return SettlementResult.settled(savedPayment);
     }

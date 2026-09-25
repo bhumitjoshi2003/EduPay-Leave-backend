@@ -11,7 +11,7 @@ import com.indraacademy.ias_management.entity.School;
 import com.indraacademy.ias_management.entity.StudentEnrollmentStatus;
 import com.indraacademy.ias_management.entity.StudentStatus;
 import com.indraacademy.ias_management.dto.StudentExitRequest;
-import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.StudentAttendanceRepository;
 import com.indraacademy.ias_management.repository.LeaveRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolClassRepository;
@@ -68,7 +68,7 @@ class StudentServiceTest {
     @Mock private SecurityUtil securityUtil;
     @Mock private AuditService auditService;
     @Mock private EntitlementService entitlementService;
-    @Mock private AttendanceRepository attendanceRepository;
+    @Mock private StudentAttendanceRepository studentAttendanceRepository;
     @Mock private StudentFeesRepository studentFeesRepository;
     @Mock private LeaveRepository leaveRepository;
     @Mock private PaymentRepository paymentRepository;
@@ -98,7 +98,7 @@ class StudentServiceTest {
         ReflectionTestUtils.setField(service, "entitlementService", entitlementService);
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
         ReflectionTestUtils.setField(service, "objectMapper", objectMapper);
-        ReflectionTestUtils.setField(service, "attendanceRepository", attendanceRepository);
+        ReflectionTestUtils.setField(service, "studentAttendanceRepository", studentAttendanceRepository);
         ReflectionTestUtils.setField(service, "studentFeesRepository", studentFeesRepository);
         ReflectionTestUtils.setField(service, "leaveRepository", leaveRepository);
         ReflectionTestUtils.setField(service, "paymentRepository", paymentRepository);

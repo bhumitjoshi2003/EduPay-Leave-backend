@@ -106,6 +106,31 @@ public interface StudentEnrollmentRepository extends JpaRepository<StudentEnroll
     List<String> findActiveStudentIdsInClass(@Param("schoolId") Long schoolId, @Param("sessionId") Long sessionId,
                                             @Param("classId") Long classId, @Param("date") LocalDate date);
 
+    /**
+     * Attendance V2 roster: students realized-enrolled (ACTIVE, or since CLOSED) on {@code date}
+     * in exactly this class and section — sectionId null means the class's section-less
+     * enrollments only. CLOSED covers a past date a student has since left or been moved from.
+     */
+    @Query("SELECT DISTINCT e.studentId FROM StudentEnrollment e WHERE e.schoolId = :schoolId " +
+            "AND e.academicSessionId = :sessionId AND e.classId = :classId " +
+            "AND ((:sectionId IS NULL AND e.sectionId IS NULL) OR e.sectionId = :sectionId) " +
+            "AND e.status IN (com.indraacademy.ias_management.entity.StudentEnrollmentStatus.ACTIVE, " +
+            "com.indraacademy.ias_management.entity.StudentEnrollmentStatus.CLOSED) " +
+            "AND e.effectiveFrom <= :date AND (e.effectiveUntil IS NULL OR e.effectiveUntil >= :date)")
+    List<String> findAttendanceRosterStudentIds(@Param("schoolId") Long schoolId, @Param("sessionId") Long sessionId,
+                                                @Param("classId") Long classId, @Param("sectionId") Long sectionId,
+                                                @Param("date") LocalDate date);
+
+    /** Same exact class/section scope, ACTIVE enrollments only (the current roster). */
+    @Query("SELECT DISTINCT e.studentId FROM StudentEnrollment e WHERE e.schoolId = :schoolId " +
+            "AND e.academicSessionId = :sessionId AND e.classId = :classId " +
+            "AND ((:sectionId IS NULL AND e.sectionId IS NULL) OR e.sectionId = :sectionId) " +
+            "AND e.status = com.indraacademy.ias_management.entity.StudentEnrollmentStatus.ACTIVE " +
+            "AND e.effectiveFrom <= :date AND (e.effectiveUntil IS NULL OR e.effectiveUntil >= :date)")
+    List<String> findActiveRosterStudentIds(@Param("schoolId") Long schoolId, @Param("sessionId") Long sessionId,
+                                            @Param("classId") Long classId, @Param("sectionId") Long sectionId,
+                                            @Param("date") LocalDate date);
+
     /** Students with an ACTIVE enrollment effective on {@code date} in one section of a class. */
     @Query("SELECT DISTINCT e.studentId FROM StudentEnrollment e WHERE e.schoolId = :schoolId " +
             "AND e.academicSessionId = :sessionId AND e.classId = :classId AND e.sectionId = :sectionId " +

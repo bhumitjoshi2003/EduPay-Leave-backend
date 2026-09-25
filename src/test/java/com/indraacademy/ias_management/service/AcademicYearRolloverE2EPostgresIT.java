@@ -154,6 +154,7 @@ class AcademicYearRolloverE2EPostgresIT {
     @Autowired StudentFeesService studentFeesService;
     @Autowired StudentEnrollmentService enrollmentService;
     @MockBean ParentPortalService parentPortal;
+    @MockBean ObjectStorageService objectStorageService; // ReportCardDataAssembler's logo lookup
     @MockBean SecurityUtil securityUtil;
     @MockBean AuditService auditService;
     @MockBean StudentService studentService;
@@ -227,7 +228,7 @@ class AcademicYearRolloverE2EPostgresIT {
             assertThat(baseline.studentFees()).isEqualTo(5);
             assertThat(baseline.payments()).isEqualTo(1);
             assertThat(baseline.allocations()).isEqualTo(1);
-            assertThat(baseline.attendance()).isEqualTo(6); // 5 "day held" markers + 1 real H-HISTORY row
+            assertThat(baseline.attendance()).isEqualTo(5); // H-HISTORY's explicit rows for 5 submitted days
             assertThat(baseline.examConfigs()).isEqualTo(1);
             assertThat(baseline.marks()).isEqualTo(1);
             assertThat(baseline.publications()).isEqualTo(1);
@@ -354,7 +355,7 @@ class AcademicYearRolloverE2EPostgresIT {
         AttendanceSummaryDTO attendance = attendanceService.getStudentSummary(S_HISTORY, "year", null, null, SESSION_2026_LABEL);
         assertThat(attendance.getClassName()).isEqualTo("8");
         assertThat(attendance.getTotalWorkingDays()).isEqualTo(5);
-        assertThat(attendance.getDaysAbsent()).isEqualTo(1.0);
+        assertThat(attendance.getDaysAbsent()).isEqualTo(1);
 
         List<ExamResultDTO> results = markService.getStudentResults(S_HISTORY, SESSION_2026_LABEL);
         assertThat(results).hasSize(1);
@@ -563,7 +564,7 @@ class AcademicYearRolloverE2EPostgresIT {
         assertThat(jdbc.queryForObject(
                 "SELECT count(*) FROM student_fees WHERE school_id=? AND year=?",
                 Integer.class, SCHOOL, SESSION_2026_LABEL)).isEqualTo(5);
-        assertThat(count("attendance")).isEqualTo(6);
+        assertThat(AttendanceV2Fixtures.countRows(jdbc, SCHOOL)).isEqualTo(5);
         assertThat(count("exam_config")).isEqualTo(1);
         assertThat(count("student_mark")).isEqualTo(1);
         assertThat(count("report_card_publication")).isEqualTo(1);
@@ -1389,7 +1390,7 @@ class AcademicYearRolloverE2EPostgresIT {
                 Integer.class, SCHOOL, SESSION_2026_LABEL)).isEqualTo(5);
         assertThat(count("payment")).isEqualTo(1);
         assertThat(countAllocations()).isEqualTo(1);
-        assertThat(count("attendance")).isEqualTo(6);
+        assertThat(AttendanceV2Fixtures.countRows(jdbc, SCHOOL)).isEqualTo(5);
         assertThat(count("exam_config")).isEqualTo(1);
         assertThat(count("student_mark")).isEqualTo(1);
         assertThat(count("report_card_publication")).isEqualTo(1);
@@ -1506,7 +1507,7 @@ class AcademicYearRolloverE2EPostgresIT {
         return new TableSignature(
                 count("student"), count("student_enrollment"), count("timetable_entry"),
                 count("class_teacher_responsibility"), count("fee_structure_rule"), count("student_fees"),
-                count("payment"), countAllocations(), count("attendance"), count("exam_config"),
+                count("payment"), countAllocations(), AttendanceV2Fixtures.countRows(jdbc, SCHOOL), count("exam_config"),
                 count("student_mark"), count("report_card_publication"));
     }
 
@@ -1573,11 +1574,11 @@ class AcademicYearRolloverE2EPostgresIT {
         long historyFeeId = insertStudentFees(S_HISTORY, CLASS_8, "8", 5000.00, true, 5000.00);
         insertPayment(historyFeeId);
 
-        // Working-day markers + H-HISTORY's own attendance for August 2026, Class 8.
+        // H-HISTORY's explicit Attendance V2 rows for five Class 8 submissions in August 2026.
         for (int d = 3; d <= 7; d++) {
-            insertAttendance("H-X", "8", CLASS_8, LocalDate.of(2026, 8, d), null);
+            AttendanceV2Fixtures.mark(jdbc, SCHOOL, S_HISTORY, CLASS_8, null, LocalDate.of(2026, 8, d),
+                    d == 5 ? "ABSENT" : "PRESENT");
         }
-        insertAttendance(S_HISTORY, "8", CLASS_8, LocalDate.of(2026, 8, 5), "ABSENT");
 
         long examConfig = insertExamConfig("8", "Half Yearly");
         long subjectEntry = insertSubjectEntry(examConfig, "Math", 100);
@@ -1678,11 +1679,6 @@ class AcademicYearRolloverE2EPostgresIT {
                 ALLOCATION_ID, PAYMENT_ID, studentFeesId, SCHOOL, S_HISTORY, SESSION_2026_LABEL);
     }
 
-    private void insertAttendance(String studentId, String className, long classId, LocalDate date, String status) {
-        jdbc.update("INSERT INTO attendance (school_id,student_id,class_name,class_id,section_id,date,status,charge_paid) " +
-                "VALUES (?,?,?,?,NULL,?,?,false)", SCHOOL, studentId, className, classId, date, status);
-    }
-
     private long examConfigSeq = -120801L;
 
     private long insertExamConfig(String className, String examName) {
@@ -1727,7 +1723,7 @@ class AcademicYearRolloverE2EPostgresIT {
                 "(SELECT id FROM report_card_template WHERE school_id=?)", SCHOOL);
         jdbc.update("DELETE FROM report_card_template WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM assessment_group WHERE school_id=?", SCHOOL);
-        jdbc.update("DELETE FROM attendance WHERE school_id=?", SCHOOL);
+        jdbc.update("DELETE FROM attendance_session WHERE school_id=?", SCHOOL);
         jdbc.update("DELETE FROM allocation_refund WHERE student_fees_id IN " +
                 "(SELECT id FROM student_fees WHERE school_id=?)", SCHOOL);
         jdbc.update("DELETE FROM refund WHERE school_id=?", SCHOOL);

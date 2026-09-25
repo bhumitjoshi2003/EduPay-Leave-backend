@@ -21,7 +21,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.WeekFields;
-import com.indraacademy.ias_management.entity.Attendance;
+import com.indraacademy.ias_management.entity.AttendanceStatus;
+import com.indraacademy.ias_management.entity.SchoolClass;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -36,7 +37,8 @@ public class DashboardService {
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private RefundRepository refundRepository;
     @Autowired private StudentFeesRepository studentFeesRepository;
-    @Autowired private AttendanceRepository attendanceRepository;
+    @Autowired private StudentAttendanceRepository studentAttendanceRepository;
+    @Autowired private SchoolClassRepository schoolClassRepository;
     @Autowired private LeaveRepository leaveRepository;
     @Autowired private SchoolRepository schoolRepository;
     @Autowired private SecurityUtil securityUtil;
@@ -70,36 +72,9 @@ public class DashboardService {
         long overdueStudents = studentFeesRepository
                 .countDistinctOverdueStudents(schoolId, currentSession, currentAcademicMonth);
 
-        // Today's attendance rate: (active students − absents today) / active students × 100.
-        // Returns 0 if attendance has not been marked yet today (no records in attendance table for today).
-        double todayAttendanceRate = 0.0;
-        if (totalStudents > 0) {
-            List<com.indraacademy.ias_management.entity.Attendance> todayRecords =
-                    attendanceRepository.findByDateAndSchoolId(today, schoolId);
-            if (!todayRecords.isEmpty()) {
-                Map<String, Set<Long>> markedScopes = todayRecords.stream()
-                        .filter(a -> "X".equals(a.getStudentId()) && a.getClassName() != null)
-                        .collect(Collectors.groupingBy(Attendance::getClassName,
-                                Collectors.mapping(Attendance::getSectionId, Collectors.toSet())));
-                long markedStudents = markedScopes.entrySet().stream().mapToLong(entry -> {
-                    // A legacy/global marker (null section) means the entire class was submitted.
-                    if (entry.getValue().contains(null)) {
-                        return studentRepository.findByClassNameAndStatusAndSchoolId(
-                                entry.getKey(), StudentStatus.ACTIVE, schoolId).size();
-                    }
-                    return entry.getValue().stream().mapToLong(sectionId -> studentRepository
-                            .findByClassNameAndSectionIdAndStatusAndSchoolId(
-                                    entry.getKey(), sectionId, StudentStatus.ACTIVE, schoolId).size()).sum();
-                }).sum();
-                double absenceEquivalent = todayRecords.stream()
-                        .filter(a -> !"X".equals(a.getStudentId()))
-                        .mapToDouble(this::absenceWeight).sum();
-                if (markedStudents > 0) {
-                    todayAttendanceRate = Math.round((markedStudents - absenceEquivalent)
-                            / markedStudents * 1000.0) / 10.0;
-                }
-            }
-        }
+        // Today's attendance rate (Attendance V2): PRESENT rows / all rows submitted today, school-wide,
+        // in the school's own timezone. 0 until some class has submitted attendance today.
+        double todayAttendanceRate = rate(studentAttendanceRepository.findSchoolRowsOnDate(schoolId, today));
 
         // Pending leaves: leave applications with PENDING status
         long pendingLeaves = leaveRepository.countByStatusAndSchoolId(LeaveStatus.PENDING, schoolId);
@@ -169,32 +144,27 @@ public class DashboardService {
 
     @Transactional(readOnly = true)
     public List<ClassStatsDto> getClassStats() {
-        LocalDate today = LocalDate.now();
-        int calYear  = today.getYear();
-        int calMonth = today.getMonthValue();
-
-        LocalDate monthStart = today.withDayOfMonth(1);
-        LocalDate monthEnd   = today.withDayOfMonth(today.lengthOfMonth());
-
         Long schoolId = securityUtil.getSchoolId();
-        List<String> classes = studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId);
+        LocalDate today = schoolToday(schoolId);
+        LocalDate monthStart = today.withDayOfMonth(1);
+        LocalDate monthEnd = today.withDayOfMonth(today.lengthOfMonth());
+
+        // One query for the whole month, grouped per class in memory (no per-class/per-day queries).
+        Map<Long, List<AttendanceRow>> byClass = studentAttendanceRepository
+                .findSchoolRows(schoolId, null, monthStart, monthEnd).stream()
+                .collect(Collectors.groupingBy(AttendanceRow::classId));
+        Map<String, Long> classIds = new HashMap<>();
+        for (SchoolClass c : schoolClassRepository.findBySchoolIdOrderByDisplayOrderAsc(schoolId)) classIds.put(c.getName(), c.getId());
 
         List<ClassStatsDto> result = new ArrayList<>();
-        for (String cls : classes) {
+        for (String cls : studentRepository.findDistinctActiveClassNamesBySchoolId(schoolId)) {
             long studentCount = studentRepository.findByClassNameAndStatusAndSchoolId(cls, StudentStatus.ACTIVE, schoolId).size();
             if (studentCount == 0) continue;
-
-            long workingDays = attendanceRepository.countWorkingDaysForClass(cls, schoolId, calYear, calMonth);
-            double attendanceRate = 0.0;
-            if (workingDays > 0) {
-                attendanceRate = calculateMarkedAttendanceRate(attendanceRepository
-                        .findByClassNameAndSchoolIdAndDateBetween(cls, schoolId, monthStart, monthEnd), schoolId);
-            }
-
-            result.add(new ClassStatsDto(cls, studentCount, attendanceRate, workingDays));
+            List<AttendanceRow> classRows = byClass.getOrDefault(classIds.get(cls), List.of());
+            long workingDays = classRows.stream().map(AttendanceRow::date).distinct().count();
+            result.add(new ClassStatsDto(cls, studentCount, rate(classRows), workingDays));
         }
 
-        // Sort by class name: numeric classes first (1-12), then non-numeric (LKG, UKG, etc.)
         result.sort(Comparator.comparing(dto -> {
             try {
                 return String.format("%02d", Integer.parseInt(dto.getClassName()));
@@ -206,53 +176,33 @@ public class DashboardService {
         return result;
     }
 
-    // ─── /api/dashboard/attendance-trend ─────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<AttendanceTrendDto> getAttendanceTrend(String className, String mode) {
-        LocalDate today = LocalDate.now();
         Long schoolId = securityUtil.getSchoolId();
-
-        long studentCount = studentRepository
-                .findByClassNameAndStatusAndSchoolId(className, StudentStatus.ACTIVE, schoolId)
-                .size();
-
+        LocalDate today = schoolToday(schoolId);
+        Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className).map(SchoolClass::getId).orElse(null);
         List<AttendanceTrendDto> result = new ArrayList<>();
+        boolean weekly = "weekly".equalsIgnoreCase(mode);
 
-        if ("weekly".equalsIgnoreCase(mode)) {
-            // Last 8 calendar weeks. Attendance rows already reflect the school's configured days.
-            LocalDate weekStart = today.with(DayOfWeek.MONDAY).minusWeeks(7);
+        LocalDate rangeStart = weekly ? today.with(DayOfWeek.MONDAY).minusWeeks(7) : today.minusMonths(5).withDayOfMonth(1);
+        List<AttendanceRow> classRows = classId == null ? List.of()
+                : studentAttendanceRepository.findSchoolRows(schoolId, classId, rangeStart, today);
+
+        if (weekly) {
             DateTimeFormatter weekLabelFmt = DateTimeFormatter.ofPattern("d MMM");
-
             for (int i = 0; i < 8; i++) {
-                LocalDate wStart = weekStart.plusWeeks(i);
-                LocalDate wEnd   = wStart.plusDays(6);
-
-                long workingDays = attendanceRepository.countDistinctWorkingDays(className, schoolId, wStart, wEnd);
-                double rate = 0.0;
-                if (workingDays > 0 && studentCount > 0) {
-                    rate = calculateMarkedAttendanceRate(attendanceRepository
-                            .findByClassNameAndSchoolIdAndDateBetween(className, schoolId, wStart, wEnd), schoolId);
-                }
-
-                String label = wStart.format(weekLabelFmt) + "–" + wEnd.format(weekLabelFmt);
-                result.add(new AttendanceTrendDto(label, rate));
+                LocalDate wStart = rangeStart.plusWeeks(i);
+                LocalDate wEnd = wStart.plusDays(6);
+                result.add(new AttendanceTrendDto(wStart.format(weekLabelFmt) + "–" + wEnd.format(weekLabelFmt),
+                        rate(between(classRows, wStart, wEnd))));
             }
         } else {
-            // Monthly — last 6 calendar months
             for (int i = 5; i >= 0; i--) {
-                LocalDate monthDate  = today.minusMonths(i);
+                LocalDate monthDate = today.minusMonths(i);
                 LocalDate monthStart = monthDate.withDayOfMonth(1);
-                LocalDate monthEnd   = monthDate.withDayOfMonth(monthDate.lengthOfMonth());
-
-                long workingDays = attendanceRepository.countDistinctWorkingDays(className, schoolId, monthStart, monthEnd);
-                double rate = 0.0;
-                if (workingDays > 0 && studentCount > 0) {
-                    rate = calculateMarkedAttendanceRate(attendanceRepository
-                            .findByClassNameAndSchoolIdAndDateBetween(className, schoolId, monthStart, monthEnd), schoolId);
-                }
-
-                result.add(new AttendanceTrendDto(monthDate.format(TREND_FMT), rate));
+                LocalDate monthEnd = monthDate.withDayOfMonth(monthDate.lengthOfMonth());
+                result.add(new AttendanceTrendDto(monthDate.format(TREND_FMT), rate(between(classRows, monthStart, monthEnd))));
             }
         }
 
@@ -260,7 +210,20 @@ public class DashboardService {
         return result;
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────
+    /** Attendance V2 group rate: PRESENT rows / all submitted rows (the shared AttendanceMath formula). */
+    private static double rate(List<AttendanceRow> rows) {
+        long present = rows.stream().filter(r -> r.status() == AttendanceStatus.PRESENT).count();
+        return AttendanceMath.percentage(present, rows.size());
+    }
+
+    private static List<AttendanceRow> between(List<AttendanceRow> rows, LocalDate from, LocalDate to) {
+        return rows.stream().filter(r -> !r.date().isBefore(from) && !r.date().isAfter(to)).toList();
+    }
+
+    private LocalDate schoolToday(Long schoolId) {
+        School school = schoolRepository.findById(schoolId).orElse(null);
+        return LocalDate.now(com.indraacademy.ias_management.util.SchoolTimeUtil.zoneId(school));
+    }
 
     /**
      * Returns the academic session for the given date, using the school's configured start month.
@@ -277,40 +240,5 @@ public class DashboardService {
     /** Calendar month (1=Jan…12=Dec) → academic month (1 = startMonth). */
     private int calendarToAcademicMonth(int calendarMonth, int startMonth) {
         return ((calendarMonth - startMonth + 12) % 12) + 1;
-    }
-
-    private double absenceWeight(Attendance attendance) {
-        String status = attendance.getStatus();
-        if (status == null || "ABSENT".equalsIgnoreCase(status)) return 1.0;
-        if ("HALF_DAY".equalsIgnoreCase(status)) return 0.5;
-        return 0.0;
-    }
-
-    /** Calculates only from class/section scopes that were actually submitted (the X marker). */
-    private double calculateMarkedAttendanceRate(List<Attendance> records, Long schoolId) {
-        double possible = 0.0;
-        double absent = 0.0;
-        Map<LocalDate, List<Attendance>> byDate = records.stream()
-                .filter(a -> a.getDate() != null).collect(Collectors.groupingBy(Attendance::getDate));
-        for (List<Attendance> day : byDate.values()) {
-            Map<String, Set<Long>> scopes = day.stream()
-                    .filter(a -> "X".equals(a.getStudentId()) && a.getClassName() != null)
-                    .collect(Collectors.groupingBy(Attendance::getClassName,
-                            Collectors.mapping(Attendance::getSectionId, Collectors.toSet())));
-            for (Map.Entry<String, Set<Long>> scope : scopes.entrySet()) {
-                if (scope.getValue().contains(null)) {
-                    possible += studentRepository.findByClassNameAndStatusAndSchoolId(
-                            scope.getKey(), StudentStatus.ACTIVE, schoolId).size();
-                } else {
-                    possible += scope.getValue().stream().mapToLong(sectionId -> studentRepository
-                            .findByClassNameAndSectionIdAndStatusAndSchoolId(
-                                    scope.getKey(), sectionId, StudentStatus.ACTIVE, schoolId).size()).sum();
-                }
-            }
-            absent += day.stream().filter(a -> !"X".equals(a.getStudentId()))
-                    .mapToDouble(this::absenceWeight).sum();
-        }
-        if (possible == 0.0) return 0.0;
-        return Math.round(Math.max(0.0, possible - absent) / possible * 1000.0) / 10.0;
     }
 }

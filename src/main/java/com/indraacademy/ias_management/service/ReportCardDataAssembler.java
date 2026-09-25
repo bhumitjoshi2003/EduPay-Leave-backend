@@ -410,7 +410,7 @@ public class ReportCardDataAssembler {
 
         return new ReportCardDataDTO.AttendanceBlock(
                 (int) summary.getTotalWorkingDays(),
-                (int) Math.round(summary.getDaysPresent()),
+                (int) summary.getDaysPresent(),
                 summary.getAttendancePercentage());
     }
 }

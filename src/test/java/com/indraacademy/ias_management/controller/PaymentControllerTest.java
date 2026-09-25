@@ -7,7 +7,7 @@ import com.indraacademy.ias_management.entity.StudentFees;
 import com.indraacademy.ias_management.repository.PaymentOrderRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.service.AuthService;
-import com.indraacademy.ias_management.service.AttendanceService;
+import com.indraacademy.ias_management.service.AbsenceChargeService;
 import com.indraacademy.ias_management.service.ParentPortalService;
 import com.indraacademy.ias_management.service.PaymentService;
 import com.indraacademy.ias_management.service.RazorpayService;
@@ -60,7 +60,7 @@ class PaymentControllerTest {
     @Mock private SecurityUtil securityUtil;
     @Mock private StudentFeesService studentFeesService;
     @Mock private ParentPortalService parentPortalService;
-    @Mock private AttendanceService attendanceService;
+    @Mock private AbsenceChargeService absenceChargeService;
     @Mock private PaymentPricingService paymentPricingService;
 
     private PaymentController controller;
@@ -79,11 +79,11 @@ class PaymentControllerTest {
         ReflectionTestUtils.setField(controller, "securityUtil", securityUtil);
         ReflectionTestUtils.setField(controller, "studentFeesService", studentFeesService);
         ReflectionTestUtils.setField(controller, "parentPortalService", parentPortalService);
-        ReflectionTestUtils.setField(controller, "attendanceService", attendanceService);
+        ReflectionTestUtils.setField(controller, "absenceChargeService", absenceChargeService);
         ReflectionTestUtils.setField(controller, "paymentPricingService", paymentPricingService);
 
         lenient().when(authService.getRole()).thenReturn(Role.ADMIN);
-        lenient().when(attendanceService.getTotalUnappliedLeaveCount(anyString(), anyString())).thenReturn(0L);
+        lenient().when(absenceChargeService.countChargeable(anyString(), anyString())).thenReturn(0L);
         lenient().when(razorpayService.calculateOutstandingBalancePaise(anyString(), anyString())).thenReturn(500000L);
         // OnlinePaymentPricingCalculator.calculate is a pure static method now (no instance
         // state to mock) — only the pricing INPUTS (rate/tax/fee/configId) need mocking, via
@@ -184,14 +184,14 @@ class PaymentControllerTest {
 
     /** The backend is the sole pricing authority: whatever leave charge the client submits is
      * never trusted or even compared against — createOrder recomputes it itself from
-     * AttendanceService and passes ONLY that server-derived figure into pricing/order creation.
+     * AbsenceChargeService and passes ONLY that server-derived figure into pricing/order creation.
      * A manipulated client value must be silently ignored, never cause a rejection (there is
      * nothing to "reject" once the client's own figure is never read for this purpose). */
     @Test
     void createOrder_ignoresClientSuppliedLeaveCharge_alwaysUsesServerComputedValue() {
         CreateOrderRequest req = request("6A", "100000000000", 1025_00);
         req.setAdditionalCharges(999_999); // a wildly wrong client-submitted value
-        when(attendanceService.getTotalUnappliedLeaveCount(STUDENT_ID, SESSION)).thenReturn(1L);
+        when(absenceChargeService.countChargeable(STUDENT_ID, SESSION)).thenReturn(1L);
         CheckoutQuoteDto quote = new CheckoutQuoteDto();
         quote.setUnresolvedMonths(List.of());
         quote.setSchoolLiabilityPrincipalPaise(1000_00L);

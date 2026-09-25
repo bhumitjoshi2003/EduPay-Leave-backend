@@ -9,7 +9,7 @@ import com.indraacademy.ias_management.entity.User;
 import com.indraacademy.ias_management.entity.AcademicSession;
 import com.indraacademy.ias_management.entity.StudentEnrollment;
 import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
-import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.StudentAttendanceRepository;
 import com.indraacademy.ias_management.repository.LeaveRepository;
 import com.indraacademy.ias_management.repository.PaymentRepository;
 import com.indraacademy.ias_management.repository.SchoolRepository;
@@ -51,7 +51,7 @@ public class StudentService {
     @Autowired private AuditService auditService;
     @Autowired private EntitlementService entitlementService;
     @Autowired private ObjectMapper objectMapper;
-    @Autowired private AttendanceRepository attendanceRepository;
+    @Autowired private StudentAttendanceRepository studentAttendanceRepository;
     @Autowired private StudentFeesRepository studentFeesRepository;
     @Autowired private LeaveRepository leaveRepository;
     @Autowired private PaymentRepository paymentRepository;
@@ -647,7 +647,7 @@ public class StudentService {
 
         // 1. Delete related records (cascading cleanup) — StudentFees is deliberately never
         // touched here: the guard above already proved none exist for this student.
-        attendanceRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
+        studentAttendanceRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
         leaveRepository.deleteByStudentIdAndSchoolId(studentId, schoolId);
         // Note: Payment records are intentionally kept for financial audit trail
 

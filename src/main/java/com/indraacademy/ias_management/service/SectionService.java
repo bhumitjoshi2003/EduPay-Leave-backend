@@ -2,7 +2,7 @@ package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.dto.SectionDTO;
 import com.indraacademy.ias_management.entity.Section;
-import com.indraacademy.ias_management.repository.AttendanceRepository;
+import com.indraacademy.ias_management.repository.AttendanceSessionRepository;
 import com.indraacademy.ias_management.repository.ClassTeacherResponsibilityRepository;
 import com.indraacademy.ias_management.repository.SectionRepository;
 import com.indraacademy.ias_management.repository.StudentEnrollmentRepository;
@@ -50,7 +50,7 @@ public class SectionService {
     private TeacherRepository teacherRepository;
 
     @Autowired
-    private AttendanceRepository attendanceRepository;
+    private AttendanceSessionRepository attendanceSessionRepository;
 
     @Autowired
     private SecurityUtil securityUtil;
@@ -152,7 +152,7 @@ public class SectionService {
      * without these explicit pre-checks, deleting a referenced section would fail with a raw,
      * unhandled DB constraint violation instead of a clean application error. The same
      * "preserve historical/live references" policy is extended here to two columns with no DB FK
-     * at all ({@code teacher_class_grant.section_id}, {@code attendance.section_id}) and one live
+     * at all ({@code teacher_class_grant.section_id}, {@code attendance_session.section_id}) and one live
      * authorization projection ({@code Teacher.classTeacherSectionId}), since nothing in this
      * codebase cleans those up when a section is removed and silently orphaning them would leave
      * {@code TeacherClassScopeService}/reporting code reading a dangling id. Legacy Student
@@ -192,7 +192,7 @@ public class SectionService {
                     "Cannot delete this section because a teacher is currently assigned as its class-teacher. " +
                     "Reassign or clear that class-teacher assignment first.");
         }
-        if (attendanceRepository.existsBySchoolIdAndSectionId(schoolId, id)) {
+        if (attendanceSessionRepository.existsBySchoolIdAndSectionId(schoolId, id)) {
             throw new IllegalStateException(
                     "Cannot delete this section because attendance history references it. " +
                     "Historical attendance references must be preserved.");
