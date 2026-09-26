@@ -190,6 +190,11 @@ public class ReportCardDataAssembler {
         // Overall grade + CGPA
         double overallPct = weightedResult.getWeightedPercentage();
         dto.setOverallGrade(gradeFromPct(overallPct, gradingSystem));
+        // Subject grades come from the same policy — clients never grade on their own.
+        if (weightedResult.getMarksTable() != null && weightedResult.getMarksTable().getSubjectRows() != null) {
+            weightedResult.getMarksTable().getSubjectRows()
+                    .forEach(row -> row.setGrade(gradeFromPct(row.getWeightedPercentage(), gradingSystem)));
+        }
         if ("CBSE".equalsIgnoreCase(gradingSystem)) {
             dto.setCgpa(computeCgpa(weightedResult, gradingSystem));
         }
@@ -200,40 +205,11 @@ public class ReportCardDataAssembler {
     // ── Grade helpers ─────────────────────────────────────────────────────
 
     private String gradeFromPct(double pct, String gradingSystem) {
-        switch (gradingSystem == null ? "CBSE" : gradingSystem.toUpperCase()) {
-            case "PERCENTAGE": return Math.round(pct) + "%";
-            case "LETTER":
-                if (pct >= 90) return "A+";
-                if (pct >= 80) return "A";
-                if (pct >= 70) return "B+";
-                if (pct >= 60) return "B";
-                if (pct >= 50) return "C+";
-                if (pct >= 40) return "C";
-                if (pct >= 33) return "D";
-                return "F";
-            default: // CBSE
-                if (pct >= 91) return "A1";
-                if (pct >= 81) return "A2";
-                if (pct >= 71) return "B1";
-                if (pct >= 61) return "B2";
-                if (pct >= 51) return "C1";
-                if (pct >= 41) return "C2";
-                if (pct >= 33) return "D";
-                return "E";
-        }
+        return GradingPolicy.grade(pct, gradingSystem);
     }
 
     private double cbseGradePoint(String grade) {
-        switch (grade) {
-            case "A1": return 10.0;
-            case "A2": return 9.0;
-            case "B1": return 8.0;
-            case "B2": return 7.0;
-            case "C1": return 6.0;
-            case "C2": return 5.0;
-            case "D":  return 4.0;
-            default:   return 0.0; // E / absent
-        }
+        return GradingPolicy.cbseGradePoint(grade);
     }
 
     private Double computeCgpa(WeightedGroupResultDTO result, String gradingSystem) {

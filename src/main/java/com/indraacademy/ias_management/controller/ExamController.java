@@ -23,19 +23,37 @@ public class ExamController {
     private static final Logger log = LoggerFactory.getLogger(ExamController.class);
 
     @Autowired private ExamConfigService examConfigService;
+    @Autowired private com.indraacademy.ias_management.util.SecurityUtil securityUtil;
+    @Autowired private com.indraacademy.ias_management.service.TeacherClassScopeService teacherClassScopeService;
 
     // ─── ExamConfig ───────────────────────────────────────────────────────────
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping
-    public ResponseEntity<List<ExamConfig>> getExams(
+    public ResponseEntity<?> getExams(
             @RequestParam(required = false) String session,
             @RequestParam(required = false) String className) {
         log.info("GET /api/exams?session={}&className={}", session, className);
+        if (Role.TEACHER.equals(securityUtil.getRole())) {
+            // A teacher only sees the exams of the class they are class teacher of (ADMIN stays
+            // school-wide). Exams are class-level; a section assignment only has to be valid.
+            Long schoolId = securityUtil.getSchoolId();
+            String teacherId = securityUtil.getUsername();
+            String requested = className;
+            if (requested == null || requested.isBlank()) {
+                requested = teacherClassScopeService.resolveOwnScope(teacherId, schoolId).className();
+                if (requested == null || requested.isBlank()) return ResponseEntity.ok(List.of());
+            }
+            var access = teacherClassScopeService.authorizeAndScopeToClass(Role.TEACHER, teacherId, schoolId, requested, null);
+            if (!access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message", access.errorMessage()));
+            }
+            className = requested;
+        }
         return ResponseEntity.ok(examConfigService.getExams(session, className));
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping
     public ResponseEntity<?> addExam(@RequestBody Map<String, String> body) {
         String session   = body.get("session");
@@ -46,7 +64,7 @@ public class ExamController {
         return new ResponseEntity<>(saved, HttpStatus.CREATED);
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteExam(@PathVariable Long id) {
         log.info("DELETE /api/exams/{}", id);
@@ -54,9 +72,27 @@ public class ExamController {
         return ResponseEntity.noContent().build();
     }
 
+    // ─── Result publishing (ADMIN only; teachers never publish) ──────────────
+
+    /** Makes the exam's results visible to students and parents and locks its marks. */
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{id}/publish")
+    public ResponseEntity<ExamConfig> publishResults(@PathVariable Long id, jakarta.servlet.http.HttpServletRequest request) {
+        log.info("POST /api/exams/{}/publish", id);
+        return ResponseEntity.ok(examConfigService.publishResults(id, request.getRemoteAddr()));
+    }
+
+    /** Hides the exam's results from students and parents again (marks become editable). */
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @PostMapping("/{id}/unpublish")
+    public ResponseEntity<ExamConfig> unpublishResults(@PathVariable Long id, jakarta.servlet.http.HttpServletRequest request) {
+        log.info("POST /api/exams/{}/unpublish", id);
+        return ResponseEntity.ok(examConfigService.unpublishResults(id, request.getRemoteAddr()));
+    }
+
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "', '" + Role.TEACHER + "')")
+    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     @GetMapping("/{examId}/subjects")
     public ResponseEntity<?> getExamSubjects(@PathVariable Long examId) {
         log.info("GET /api/exams/{}/subjects", examId);
@@ -67,7 +103,7 @@ public class ExamController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PostMapping("/{examId}/subjects")
     public ResponseEntity<?> addExamSubject(@PathVariable Long examId,
                                             @RequestBody Map<String, Object> body) {
@@ -85,7 +121,7 @@ public class ExamController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PutMapping("/{examId}/subjects/bulk")
     public ResponseEntity<?> bulkSyncExamSubjects(@PathVariable Long examId,
                                                    @RequestBody List<Map<String, Object>> body) {
@@ -108,7 +144,7 @@ public class ExamController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @PutMapping("/subjects/{entryId}")
     public ResponseEntity<?> updateExamSubject(@PathVariable Long entryId,
                                                @RequestBody Map<String, Object> body) {
@@ -125,7 +161,7 @@ public class ExamController {
         }
     }
 
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @DeleteMapping("/subjects/{entryId}")
     public ResponseEntity<?> deleteExamSubject(@PathVariable Long entryId) {
         log.info("DELETE /api/exams/subjects/{}", entryId);

@@ -20,11 +20,10 @@ import java.util.stream.Collectors;
 /**
  * Handles all mark entry, retrieval, and results computation.
  *
- * Rank algorithm: standard competition ranking ("1224" / sports ranking).
- *   rank = 1 + count of students who scored strictly more than this student.
- *   Ties share the same rank; the next rank after a tie group skips numbers.
- *
- * A rank of 0 indicates the student has no mark entered (null marksObtained).
+ * Results Phase 1: every percentage, grade, pass/fail and rank comes from {@link ResultCalculator}
+ * over an {@link ExamSheet} — one exam's whole class with each student's applicable subjects — so
+ * My Results, Class Results, the AI endpoints and report cards agree. Ranks are competition ranks by
+ * percentage within the same exam, class and section; incomplete results are not ranked.
  */
 @Service
 public class MarkService {
@@ -48,6 +47,10 @@ public class MarkService {
     @Autowired private StudentEnrollmentRepository studentEnrollmentRepository;
     @Autowired private AcademicSessionRepository academicSessionRepository;
     @Autowired private SchoolClassRepository schoolClassRepository;
+    @Autowired private SchoolRepository schoolRepository;
+    @Autowired private SectionRepository sectionRepository;
+    @Autowired private TimetableSessionAccessService sessionAccess;
+    @Autowired private TeacherClassScopeService teacherClassScopeService;
 
     // ─── Mark Entry Mode A: by subject ───────────────────────────────────────
 
@@ -101,39 +104,8 @@ public class MarkService {
                 .filter(e -> schoolId.equals(e.getSchoolId()))
                 .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + examConfigId));
 
-        List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examConfigId, schoolId);
-
-        // Check if student has a stream selection — if so, filter by stream subjects
-        Set<String> studentStreamSubjects = loadStudentSubjectSet(studentId);
-        if (!studentStreamSubjects.isEmpty()) {
-            entries = entries.stream()
-                    .filter(e -> studentStreamSubjects.contains(e.getSubjectName().toLowerCase()))
-                    .collect(Collectors.toList());
-        } else {
-            // No stream: filter out elective subjects the student isn't enrolled in. Uses
-            // exam.getClassName() — the exam's own, historically-correct class — never the
-            // student's current class, which can differ after a promotion that happened since
-            // this exam was held.
-            List<ClassSubject> electivesInClass = classSubjectRepository
-                    .findByClassNameAndOptionalTrueAndSchoolId(exam.getClassName(), schoolId);
-            if (!electivesInClass.isEmpty()) {
-                Set<String> electiveNames = electivesInClass.stream()
-                        .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
-                // StudentElectiveEnrollment is itself recorded per-class — filter to the exam's
-                // class so a same-named elective chosen in a different class the student was
-                // previously (or later) in never leaks into this exam's subject list.
-                Set<String> enrolledSubjects = studentElectiveEnrollmentRepository
-                        .findByStudentIdAndSchoolId(studentId, schoolId)
-                        .stream()
-                        .filter(en -> exam.getClassName().equals(en.getClassName()))
-                        .map(StudentElectiveEnrollment::getSubjectName)
-                        .collect(Collectors.toSet());
-                entries = entries.stream()
-                        .filter(e -> !electiveNames.contains(e.getSubjectName())
-                                || enrolledSubjects.contains(e.getSubjectName()))
-                        .collect(Collectors.toList());
-            }
-        }
+        List<ExamSubjectEntry> entries = applicableEntriesForStudent(studentId, exam,
+                examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examConfigId, schoolId));
 
         List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
 
@@ -149,57 +121,145 @@ public class MarkService {
                 .collect(Collectors.toList());
     }
 
-    // ─── Bulk mark save (upsert) ──────────────────────────────────────────────
+    // ─── Bulk mark save (atomic upsert) ───────────────────────────────────────
 
+    /**
+     * Saves a batch of marks all-or-nothing. Every entry is validated first — school, exam status
+     * (published results are locked), academic session, teacher class/section scope, the student's
+     * enrollment in the exam's class, that the student takes the subject, 0 ≤ marks ≤ max and no
+     * duplicates — and if any entry fails, nothing is saved and every reason is reported
+     * ({@link MarkValidationException}). A concurrent change to the same mark fails the whole
+     * request (optimistic locking / the unique index) and rolls back.
+     */
+    @Transactional
     public MarkBulkResultDTO bulkSaveMarks(List<MarkEntryRequest> requests, HttpServletRequest httpRequest) {
-        int saved = 0, updated = 0;
-        List<MarkBulkResultDTO.MarkError> errors = new ArrayList<>();
+        Long schoolId = securityUtil.getSchoolId();
         String callerUserId = securityUtil.getUsername();
-        String callerRole   = securityUtil.getRole();
-        String ip           = httpRequest.getRemoteAddr();
+        String callerRole = securityUtil.getRole();
+        String ip = httpRequest != null ? httpRequest.getRemoteAddr() : null;
+        if (schoolId == null) throw new IllegalArgumentException("No school context for the current session.");
+        boolean teacher = com.indraacademy.ias_management.config.Role.TEACHER.equals(callerRole);
+        if (!teacher && !com.indraacademy.ias_management.config.Role.ADMIN.equals(callerRole)) {
+            throw new org.springframework.security.access.AccessDeniedException("Only teachers and admins can enter marks.");
+        }
+        if (requests == null || requests.isEmpty()) throw new IllegalArgumentException("Request body must be a non-empty list.");
 
-        for (MarkEntryRequest req : requests) {
-            try {
-                validateMarkEntry(req);
-
-                Optional<StudentMark> existing = studentMarkRepository
-                        .findByStudentIdAndExamSubjectEntryIdAndSchoolId(req.getStudentId(), req.getExamSubjectEntryId(), securityUtil.getSchoolId());
-
-                if (existing.isPresent()) {
-                    StudentMark mark = existing.get();
-                    String oldJson = toJson(mark);
-                    mark.setMarksObtained(req.getMarksObtained());
-                    mark.setEnteredBy(callerUserId);
-                    mark.setSchoolId(securityUtil.getSchoolId());
-                    studentMarkRepository.save(mark);
-                    auditService.logUpdate(callerUserId, callerRole, "UPDATE_STUDENT_MARK",
-                            "STUDENT_MARK", mark.getId().toString(), oldJson, toJson(mark), ip);
-                    updated++;
-                } else {
-                    StudentMark mark = new StudentMark();
-                    mark.setStudentId(req.getStudentId());
-                    mark.setExamSubjectEntryId(req.getExamSubjectEntryId());
-                    mark.setMarksObtained(req.getMarksObtained());
-                    mark.setEnteredBy(callerUserId);
-                    mark.setSchoolId(securityUtil.getSchoolId());
-                    studentMarkRepository.save(mark);
-                    auditService.log(callerUserId, callerRole, "CREATE_STUDENT_MARK",
-                            "STUDENT_MARK", mark.getId().toString(), null, toJson(mark), ip);
-                    saved++;
-                }
-
-            } catch (IllegalArgumentException | NoSuchElementException e) {
-                String sid = req != null && req.getStudentId() != null ? req.getStudentId() : "unknown";
-                log.warn("Mark entry rejected for studentId={}: {}", sid, e.getMessage());
-                errors.add(new MarkBulkResultDTO.MarkError(sid, e.getMessage()));
-            } catch (Exception e) {
-                String sid = req != null && req.getStudentId() != null ? req.getStudentId() : "unknown";
-                log.error("Unexpected error saving mark for studentId={}", sid, e);
-                errors.add(new MarkBulkResultDTO.MarkError(sid, "Unexpected error: " + e.getMessage()));
+        TeacherClassScopeService.TeacherScope teacherScope = null;
+        if (teacher) {
+            teacherScope = teacherClassScopeService.resolveOwnScope(callerUserId, schoolId);
+            if (!teacherScope.hasClassResponsibility()) {
+                throw new org.springframework.security.access.AccessDeniedException("You are not assigned as a class teacher.");
+            }
+            if (teacherScope.sectionRequiredButMissing()) {
+                throw new org.springframework.security.access.AccessDeniedException(TeacherClassScopeService.SECTION_REQUIRED_MESSAGE);
             }
         }
 
-        return new MarkBulkResultDTO(saved, updated, errors);
+        // Bulk-load every referenced subject entry and exam once.
+        Set<Long> entryIds = requests.stream().filter(Objects::nonNull).map(MarkEntryRequest::getExamSubjectEntryId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, ExamSubjectEntry> entryById = new HashMap<>();
+        for (ExamSubjectEntry e : examSubjectEntryRepository.findAllById(entryIds)) {
+            if (schoolId.equals(e.getSchoolId())) entryById.put(e.getId(), e);
+        }
+        Map<Long, ExamConfig> examById = new HashMap<>();
+        for (ExamConfig e : examConfigRepository.findAllById(entryById.values().stream().map(ExamSubjectEntry::getExamConfigId).collect(Collectors.toSet()))) {
+            if (schoolId.equals(e.getSchoolId())) examById.put(e.getId(), e);
+        }
+        AcademicSession currentSession = sessionAccess.currentSessionOrNull(schoolId);
+
+        List<MarkBulkResultDTO.MarkError> errors = new ArrayList<>();
+        Map<Long, ExamSheet> sheetByExam = new HashMap<>();
+        Map<Long, String> examProblem = new HashMap<>();
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < requests.size(); i++) {
+            MarkEntryRequest req = requests.get(i);
+            String sid = req != null ? req.getStudentId() : null;
+            Long entryId = req != null ? req.getExamSubjectEntryId() : null;
+            String problem = null;
+            if (req == null || sid == null || sid.isBlank()) problem = "studentId is required.";
+            else if (entryId == null) problem = "examSubjectEntryId is required.";
+            else if (req.getMarksObtained() == null) problem = "Marks are required.";
+            ExamSubjectEntry entry = entryId != null ? entryById.get(entryId) : null;
+            ExamConfig exam = entry != null ? examById.get(entry.getExamConfigId()) : null;
+            if (problem == null && (entry == null || exam == null)) problem = "This exam subject was not found in your school.";
+            if (problem == null) {
+                final TeacherClassScopeService.TeacherScope scope = teacherScope;
+                problem = examProblem.computeIfAbsent(exam.getId(), id -> examLevelProblem(exam, scope, currentSession, schoolId));
+                if (problem != null && problem.isEmpty()) problem = null;
+            }
+            if (problem == null && !seen.add(sid + "|" + entryId)) problem = "This mark appears more than once in the request.";
+            if (problem == null) {
+                ExamSheet sheet = sheetByExam.computeIfAbsent(exam.getId(), id -> buildExamSheet(exam,
+                        examSubjectEntryRepository.findByExamConfigIdAndSchoolId(exam.getId(), schoolId)));
+                SheetRow row = sheet.row(sid);
+                if (row == null) {
+                    problem = "Student " + sid + " is not enrolled in class " + exam.getClassName() + " for this exam.";
+                } else if (teacher && teacherScope.sectionId() != null && !teacherScope.sectionId().equals(row.sectionId())) {
+                    problem = "Student " + sid + " is not in your section.";
+                } else if (row.entries().stream().noneMatch(e -> e.getId().equals(entryId))) {
+                    problem = "Student " + sid + " does not take " + entry.getSubjectName() + ".";
+                } else if (req.getMarksObtained() < 0 || req.getMarksObtained() > entry.getMaxMarks()) {
+                    problem = "Marks for " + entry.getSubjectName() + " must be between 0 and " + entry.getMaxMarks() + ".";
+                }
+            }
+            if (problem != null) errors.add(new MarkBulkResultDTO.MarkError(i, sid, entryId, problem));
+        }
+        if (!errors.isEmpty()) throw new MarkValidationException(errors);
+
+        // Save everything in this one transaction.
+        Map<String, StudentMark> existing = new HashMap<>();
+        for (StudentMark m : studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(new ArrayList<>(entryIds), schoolId)) {
+            existing.put(m.getStudentId() + "|" + m.getExamSubjectEntryId(), m);
+        }
+        int saved = 0, updated = 0;
+        for (MarkEntryRequest req : requests) {
+            StudentMark mark = existing.get(req.getStudentId() + "|" + req.getExamSubjectEntryId());
+            if (mark != null) {
+                if (Objects.equals(mark.getMarksObtained(), req.getMarksObtained())) continue;
+                String oldJson = toJson(mark);
+                mark.setMarksObtained(req.getMarksObtained());
+                mark.setUpdatedBy(callerUserId);
+                studentMarkRepository.save(mark);
+                auditService.logUpdate(callerUserId, callerRole, "UPDATE_STUDENT_MARK",
+                        "STUDENT_MARK", String.valueOf(mark.getId()), oldJson, toJson(mark), ip);
+                updated++;
+            } else {
+                mark = new StudentMark();
+                mark.setSchoolId(schoolId);
+                mark.setStudentId(req.getStudentId());
+                mark.setExamSubjectEntryId(req.getExamSubjectEntryId());
+                mark.setMarksObtained(req.getMarksObtained());
+                mark.setCreatedBy(callerUserId);
+                mark.setUpdatedBy(callerUserId);
+                mark = studentMarkRepository.save(mark);
+                auditService.log(callerUserId, callerRole, "CREATE_STUDENT_MARK",
+                        "STUDENT_MARK", String.valueOf(mark.getId()), null, toJson(mark), ip);
+                saved++;
+            }
+        }
+        return new MarkBulkResultDTO(saved, updated, List.of());
+    }
+
+    /** Why no mark of this exam can be saved by the caller, or "" when the exam is writable. */
+    private String examLevelProblem(ExamConfig exam, TeacherClassScopeService.TeacherScope teacherScope,
+                                    AcademicSession currentSession, Long schoolId) {
+        if (exam.isPublished()) {
+            return "Results for " + exam.getExamName() + " are published and locked. Ask an admin to unpublish before changing marks.";
+        }
+        Optional<AcademicSession> examSession = academicSessionRepository.findBySchoolIdAndLabel(schoolId, exam.getSession());
+        if (examSession.isEmpty()) {
+            return "The exam's academic session " + exam.getSession() + " does not exist in your school.";
+        }
+        if (teacherScope != null) {
+            if (currentSession == null || !currentSession.getId().equals(examSession.get().getId())) {
+                return "Teachers can only enter marks for the current academic session.";
+            }
+            if (!exam.getClassName().equals(teacherScope.className())) {
+                return "You can only enter marks for your own class.";
+            }
+        }
+        return "";
     }
 
     // ─── Student results view ─────────────────────────────────────────────────
@@ -209,6 +269,15 @@ public class MarkService {
      */
     @Transactional(readOnly = true)
     public List<ExamResultDTO> getStudentResults(String studentId, String session) {
+        return getStudentResults(studentId, session, true);
+    }
+
+    /**
+     * @param includeDrafts true for staff (admin/teacher); false for students and parents, who
+     *                      only ever receive PUBLISHED exams — drafts never leave the server.
+     */
+    @Transactional(readOnly = true)
+    public List<ExamResultDTO> getStudentResults(String studentId, String session, boolean includeDrafts) {
         Long schoolId = securityUtil.getSchoolId();
         Student student = studentService.getStudent(studentId)
                 .filter(s -> schoolId.equals(s.getSchoolId()))
@@ -290,6 +359,8 @@ public class MarkService {
             }
         }
 
+        if (!includeDrafts) exams.removeIf(e -> !e.isPublished());
+
         // Load stream subject set once — works for any class with stream selections, and is
         // itself student-scoped with no class dimension (a stream selection is a single choice
         // for the whole 11-12 duration — see StudentStreamSelection.studentId being unique),
@@ -313,6 +384,7 @@ public class MarkService {
         for (ExamConfig exam : exams) {
             List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(exam.getId(), schoolId);
             if (entries.isEmpty()) continue;
+            List<ExamSubjectEntry> allEntries = entries;
 
             // Filter to the student's own subjects
             if (isStreamStudent) {
@@ -341,52 +413,48 @@ public class MarkService {
             }
             if (entries.isEmpty()) continue;
 
-            List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
+            // Canonical figures: the exam's whole-class sheet decides the student's applicable
+            // subjects, score and rank exactly as Class Results does. A student outside today's
+            // class roster (legacy history) still gets their own score, just without a rank.
+            ExamSheet sheet = buildExamSheet(exam, allEntries);
+            SheetRow row = sheet.row(studentId);
+            List<ExamSubjectEntry> ownEntries = row != null ? row.entries() : entries;
+            Map<Long, Double> ownMarks = row != null ? row.marks() : studentMarkRepository
+                    .findByStudentIdAndExamSubjectEntryIdInAndSchoolId(studentId,
+                            entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList()), schoolId)
+                    .stream().collect(Collectors.toMap(StudentMark::getExamSubjectEntryId, StudentMark::getMarksObtained, (a, b) -> a));
+            ResultCalculator.Score score = row != null ? row.score() : sheet.scoreOf(ownEntries, ownMarks);
+            Long rankSection = row != null ? row.sectionId() : student.getSectionId();
+            List<SheetRow> peers = sheet.rows().stream().filter(r -> Objects.equals(r.sectionId(), rankSection)).toList();
 
-            // Student's marks
-            Map<Long, Double> studentMarkMap = studentMarkRepository
-                    .findByStudentIdAndExamSubjectEntryIdInAndSchoolId(studentId, entryIds, schoolId)
-                    .stream()
-                    .collect(Collectors.toMap(StudentMark::getExamSubjectEntryId, StudentMark::getMarksObtained));
-
-            // All marks for this exam (for class average + per-subject rank)
-            List<StudentMark> allMarks = studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(entryIds, schoolId);
-            Map<Long, List<StudentMark>> marksByEntry = allMarks.stream()
-                    .collect(Collectors.groupingBy(StudentMark::getExamSubjectEntryId));
-
-            // Total per student for overall rank
-            Map<String, Double> totalByStudent = computeTotalsByStudent(allMarks);
-
-            double studentTotal = 0;
-            double maxTotal = 0;
             List<SubjectResultDTO> subjectResults = new ArrayList<>();
-
-            for (ExamSubjectEntry entry : entries) {
-                Double marksObtained = studentMarkMap.get(entry.getId());
-                List<StudentMark> entryMarks = marksByEntry.getOrDefault(entry.getId(), Collections.emptyList());
-
-                double avg = entryMarks.stream()
-                        .filter(m -> m.getMarksObtained() != null)
-                        .mapToDouble(StudentMark::getMarksObtained)
-                        .average().orElse(0.0);
-                avg = round2(avg);
-
-                int rank = computeRank(marksObtained, entryMarks);
-
-                subjectResults.add(new SubjectResultDTO(
-                        entry.getSubjectName(), entry.getMaxMarks(), entry.getExamDate(),
-                        marksObtained, avg, rank));
-
-                if (marksObtained != null) studentTotal += marksObtained;
-                maxTotal += entry.getMaxMarks();
+            for (ExamSubjectEntry entry : ownEntries) {
+                Double marksObtained = ownMarks.get(entry.getId());
+                Map<String, Double> peerMarks = new HashMap<>();
+                for (SheetRow peer : peers) {
+                    Double m = peer.marks().get(entry.getId());
+                    if (m != null) peerMarks.put(peer.student().getStudentId(), m);
+                }
+                Double avg = peerMarks.isEmpty() ? null
+                        : ResultCalculator.round2(peerMarks.values().stream().mapToDouble(Double::doubleValue).average().orElse(0));
+                Integer subjectRank = marksObtained == null || row == null ? null
+                        : ResultCalculator.competitionRanks(peerMarks).get(studentId);
+                SubjectResultDTO subjectDto = new SubjectResultDTO(entry.getSubjectName(), entry.getMaxMarks(), entry.getExamDate(),
+                        marksObtained, avg, subjectRank);
+                if (marksObtained != null && entry.getMaxMarks() != null && entry.getMaxMarks() > 0) {
+                    double subjectPct = marksObtained / entry.getMaxMarks() * 100.0;
+                    subjectDto.setGrade(GradingPolicy.grade(subjectPct, sheet.gradingSystem()));
+                    subjectDto.setPassed(GradingPolicy.passed(subjectPct));
+                }
+                subjectResults.add(subjectDto);
             }
 
-            double percentage = maxTotal > 0 ? round2(studentTotal / maxTotal * 100) : 0.0;
-            int overallRank = computeOverallRank(studentId, totalByStudent);
-
-            results.add(new ExamResultDTO(
+            ExamResultDTO dto = new ExamResultDTO(
                     exam.getId(), exam.getExamName(), exam.getClassName(), exam.getSession(),
-                    student.getName(), subjectResults, studentTotal, maxTotal, percentage, overallRank));
+                    student.getName(), subjectResults, score.obtained(), score.max(), score.percentage(),
+                    row != null ? sheet.ranks().get(studentId) : null);
+            applyScore(dto, exam, score);
+            results.add(dto);
         }
 
         return results;
@@ -397,99 +465,35 @@ public class MarkService {
     @Transactional(readOnly = true)
     public List<ClassStudentResultDTO> getClassResults(String className, Long examConfigId, Long sectionId) {
         Long schoolId = securityUtil.getSchoolId();
+        ExamConfig exam = examConfigRepository.findById(examConfigId)
+                .filter(e -> schoolId.equals(e.getSchoolId()) && e.getClassName().equals(className))
+                .orElseThrow(() -> new NoSuchElementException("Exam " + examConfigId + " not found for class " + className + "."));
         List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examConfigId, schoolId);
-        List<Student> liveStudents = (sectionId != null)
-                ? studentService.getActiveStudentsByClassAndSection(className, sectionId)
-                : studentService.getActiveStudentsByClass(className);
-        Map<String, Student> roster = new LinkedHashMap<>();
-        liveStudents.forEach(s -> roster.put(s.getStudentId(), s));
-        // Enrollment-authoritative augmentation (E6D): a student realized-enrolled in this
-        // class(+section) for this exam's own dates remains part of the class results even if
-        // since promoted, transferred, or withdrawn.
-        examConfigRepository.findById(examConfigId)
-                .filter(e -> schoolId.equals(e.getSchoolId()))
-                .ifPresent(exam -> augmentRosterWithEnrollment(roster, schoolId, exam, className, sectionId, entries));
-        List<Student> students = new ArrayList<>(roster.values());
+        if (entries.isEmpty()) return Collections.emptyList();
 
-        if (students.isEmpty() || entries.isEmpty()) return Collections.emptyList();
-
-        // Determine per-student subject filtering strategy:
-        // 1. Check if any students have stream selections (stream-based classes like 9-12)
-        // 2. Otherwise check for elective enrollments (classes 1-10 with optional subjects)
-        Map<String, Set<String>> streamSubjectsByStudent = batchLoadStudentSubjectSets(students);
-        boolean hasStreamStudents = streamSubjectsByStudent.values().stream().anyMatch(s -> !s.isEmpty());
-
-        // Load elective info for the class (used when no stream selections exist)
-        List<ClassSubject> classElectives = hasStreamStudents
-                ? List.of()
-                : classSubjectRepository.findByClassNameAndOptionalTrueAndSchoolId(className, schoolId);
-        Set<String> electiveNames = classElectives.stream()
-                .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
-
-        Map<String, Set<String>> enrollmentsByStudent = new HashMap<>();
-        if (!electiveNames.isEmpty()) {
-            studentElectiveEnrollmentRepository.findByClassNameAndSchoolId(className, schoolId)
-                    .forEach(e -> enrollmentsByStudent
-                            .computeIfAbsent(e.getStudentId(), k -> new HashSet<>())
-                            .add(e.getSubjectName()));
-        }
-
-        List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
-        List<StudentMark> allMarks = studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(entryIds, schoolId);
-
-        // studentId → (entryId → marksObtained)
-        Map<String, Map<Long, Double>> markMap = new HashMap<>();
-        for (StudentMark m : allMarks) {
-            markMap.computeIfAbsent(m.getStudentId(), k -> new HashMap<>())
-                    .put(m.getExamSubjectEntryId(), m.getMarksObtained());
-        }
-
-        // First pass: compute percentage per student for fair ranking.
-        Map<String, Double> percentageByStudent = new HashMap<>();
-        for (Student student : students) {
-            Map<Long, Double> sMarks = markMap.getOrDefault(student.getStudentId(), Collections.emptyMap());
-            List<ExamSubjectEntry> studentEntries = filterEntriesForStudent(
-                    entries, student, hasStreamStudents, streamSubjectsByStudent, electiveNames, enrollmentsByStudent);
-
-            boolean hasMarks = studentEntries.stream().anyMatch(e -> sMarks.containsKey(e.getId()));
-            if (hasMarks) {
-                double total = studentEntries.stream()
-                        .map(e -> sMarks.get(e.getId()))
-                        .filter(Objects::nonNull)
-                        .mapToDouble(Double::doubleValue).sum();
-                double maxTotal = studentEntries.stream().mapToInt(ExamSubjectEntry::getMaxMarks).sum();
-                if (maxTotal > 0) {
-                    percentageByStudent.put(student.getStudentId(), round2(total / maxTotal * 100));
-                }
-            }
-        }
-
-        // Second pass: build results with percentage-based ranking
+        ExamSheet sheet = buildExamSheet(exam, entries);
+        Map<Long, String> sectionNames = sectionNames(schoolId, sheet);
         List<ClassStudentResultDTO> results = new ArrayList<>();
-        for (Student student : students) {
-            Map<Long, Double> sMarks = markMap.getOrDefault(student.getStudentId(), Collections.emptyMap());
-            List<ExamSubjectEntry> studentEntries = filterEntriesForStudent(
-                    entries, student, hasStreamStudents, streamSubjectsByStudent, electiveNames, enrollmentsByStudent);
-
-            List<ClassStudentResultDTO.SubjectMarkDTO> subjectMarks = studentEntries.stream()
-                    .map(e -> new ClassStudentResultDTO.SubjectMarkDTO(
-                            e.getSubjectName(), e.getMaxMarks(), e.getExamDate(), sMarks.get(e.getId())))
+        for (SheetRow row : sheet.rows()) {
+            if (sectionId != null && !row.inSection(sectionId)) continue;
+            List<ClassStudentResultDTO.SubjectMarkDTO> subjectMarks = row.entries().stream()
+                    .map(e -> new ClassStudentResultDTO.SubjectMarkDTO(e.getSubjectName(), e.getMaxMarks(), e.getExamDate(),
+                            row.marks().get(e.getId())))
                     .collect(Collectors.toList());
-
-            double total = subjectMarks.stream()
-                    .filter(s -> s.getMarksObtained() != null)
-                    .mapToDouble(ClassStudentResultDTO.SubjectMarkDTO::getMarksObtained)
-                    .sum();
-            double maxTotal = studentEntries.stream().mapToInt(ExamSubjectEntry::getMaxMarks).sum();
-            double pct = maxTotal > 0 ? round2(total / maxTotal * 100) : 0.0;
-            int rank = computeOverallRank(student.getStudentId(), percentageByStudent);
-
-            results.add(new ClassStudentResultDTO(
-                    student.getStudentId(), student.getName(),
-                    subjectMarks, total, maxTotal, pct, rank));
+            ResultCalculator.Score score = row.score();
+            ClassStudentResultDTO dto = new ClassStudentResultDTO(row.student().getStudentId(), row.student().getName(),
+                    subjectMarks, score.obtained(), score.max(), score.percentage(), sheet.ranks().get(row.student().getStudentId()));
+            dto.setResultStatus(exam.getResultStatus().name());
+            dto.setComplete(score.complete());
+            dto.setMarksMissing(score.marksMissing());
+            dto.setGrade(score.grade());
+            dto.setPassed(score.passed());
+            dto.setSectionName(row.sectionId() != null ? sectionNames.get(row.sectionId()) : null);
+            results.add(dto);
         }
-
-        results.sort(Comparator.comparingInt(ClassStudentResultDTO::getRank));
+        results.sort(Comparator.comparing((ClassStudentResultDTO r) -> r.getRank() == null)
+                .thenComparing(r -> r.getRank() == null ? Integer.MAX_VALUE : r.getRank())
+                .thenComparing(r -> r.getStudentName() == null ? "" : r.getStudentName(), String.CASE_INSENSITIVE_ORDER));
         return results;
     }
 
@@ -513,10 +517,9 @@ public class MarkService {
 
     /**
      * Aggregates one class's one exam into class average, ranked student list, and
-     * subject averages. A rank of 0 (see computeOverallRank) means no mark was
-     * entered for that student — those students are excluded from the ranking and
-     * averages and listed separately in studentsWithNoMarksEntered instead, so they
-     * don't silently drag the class average down as if they'd scored zero.
+     * subject averages. Incomplete results (a mark not entered) are excluded from the
+     * ranking and averages and listed in studentsWithNoMarksEntered instead, so they
+     * never drag the class average down as if they'd scored zero.
      */
     @Transactional(readOnly = true)
     public ClassExamPerformanceDTO computeClassExamPerformance(String className, ExamConfig exam) {
@@ -527,10 +530,10 @@ public class MarkService {
         List<ClassStudentResultDTO> results = getClassResults(className, exam.getId(), sectionId);
 
         List<ClassStudentResultDTO> scored = results.stream()
-                .filter(r -> r.getRank() != null && r.getRank() > 0)
+                .filter(ClassStudentResultDTO::isComplete)
                 .collect(Collectors.toList());
         List<String> noMarksEntered = results.stream()
-                .filter(r -> r.getRank() == null || r.getRank() == 0)
+                .filter(r -> !r.isComplete())
                 .map(ClassStudentResultDTO::getStudentName)
                 .collect(Collectors.toList());
 
@@ -555,7 +558,9 @@ public class MarkService {
         subjectScores.forEach((subject, scoresList) ->
                 subjectAverages.put(subject, round2(scoresList.stream().mapToDouble(Double::doubleValue).average().orElse(0))));
 
-        return new ClassExamPerformanceDTO(className, exam.getExamName(), classAvg, ranked, noMarksEntered, subjectAverages);
+        ClassExamPerformanceDTO dto = new ClassExamPerformanceDTO(className, exam.getExamName(), classAvg, ranked, noMarksEntered, subjectAverages);
+        dto.setResultStatus(exam.getResultStatus().name());
+        return dto;
     }
 
     /** Every active class's own latest exam performance, in one call — see ClassExamPerformanceDTO. */
@@ -624,6 +629,161 @@ public class MarkService {
         }
 
         return entries;
+    }
+
+    // ─── Canonical exam sheet (Results Phase 1) ────────────────────────────────
+
+    /** One student's applicable subjects, marks and canonical score within an exam. */
+    public record SheetRow(Student student, Long sectionId, Set<Long> sections, List<ExamSubjectEntry> entries,
+                           Map<Long, Double> marks, ResultCalculator.Score score) {
+        /** Whether the student belonged to this section for the exam (any realized segment). */
+        public boolean inSection(Long sectionId) {
+            return sections.contains(sectionId);
+        }
+    }
+
+    /**
+     * One exam's whole class: every student who should sit it, the subjects each takes, their
+     * marks, canonical scores and ranks (competition rank by percentage within the same section).
+     */
+    public record ExamSheet(ExamConfig exam, List<ExamSubjectEntry> entries, List<SheetRow> rows,
+                            Map<String, Integer> ranks, String gradingSystem) {
+        public SheetRow row(String studentId) {
+            for (SheetRow r : rows) if (r.student().getStudentId().equals(studentId)) return r;
+            return null;
+        }
+
+        public ResultCalculator.Score scoreOf(List<ExamSubjectEntry> applicable, Map<Long, Double> marks) {
+            return ResultCalculator.score(applicable.stream()
+                    .map(e -> new ResultCalculator.SubjectMark(e.getMaxMarks(), marks.get(e.getId()))).toList(), gradingSystem);
+        }
+    }
+
+    /**
+     * Builds the canonical sheet in a few bulk queries (roster, stream/elective subject sets, all
+     * marks of the exam). The roster is the class's current ACTIVE students for a current-session
+     * exam, plus anyone realized-enrolled in the class for the exam's dates; a past-session exam
+     * uses enrollment history only (falling back to today's class only for legacy data with no
+     * enrollment records), so a class's later students never appear in an old exam.
+     */
+    public ExamSheet buildExamSheet(ExamConfig exam, List<ExamSubjectEntry> entries) {
+        Long schoolId = securityUtil.getSchoolId();
+        String gradingSystem = gradingSystem(schoolId);
+        String className = exam.getClassName();
+
+        Map<String, Student> roster = new LinkedHashMap<>();
+        AcademicSession current = sessionAccess != null ? sessionAccess.currentSessionOrNull(schoolId) : null;
+        boolean pastSessionExam = current != null && !current.getLabel().equals(exam.getSession())
+                && academicSessionRepository.findBySchoolIdAndLabel(schoolId, exam.getSession()).isPresent();
+        if (!pastSessionExam) {
+            studentService.getActiveStudentsByClass(className).forEach(st -> roster.put(st.getStudentId(), st));
+        }
+        Set<String> live = new HashSet<>(roster.keySet());
+        List<StudentEnrollment> enrollmentRows = augmentRosterWithEnrollment(roster, schoolId, exam, className, null, entries);
+        if (pastSessionExam && roster.isEmpty()) {
+            studentService.getActiveStudentsByClass(className).forEach(st -> { roster.put(st.getStudentId(), st); live.add(st.getStudentId()); });
+        }
+        // Section(s) for the exam: every realized enrollment segment in this class overlapping the
+        // exam; the rank section is the latest segment's (the live section for legacy students).
+        Map<String, List<StudentEnrollment>> segmentsByStudent = enrollmentRows.stream()
+                .collect(Collectors.groupingBy(StudentEnrollment::getStudentId));
+        List<Student> students = new ArrayList<>(roster.values());
+        if (students.isEmpty() || entries.isEmpty()) return new ExamSheet(exam, entries, List.of(), Map.of(), gradingSystem);
+
+        Map<String, Set<String>> streamSubjectsByStudent = batchLoadStudentSubjectSets(students);
+        boolean hasStreamStudents = streamSubjectsByStudent.values().stream().anyMatch(v -> !v.isEmpty());
+        Set<String> electiveNames = hasStreamStudents ? Set.of()
+                : classSubjectRepository.findByClassNameAndOptionalTrueAndSchoolId(className, schoolId).stream()
+                        .map(ClassSubject::getSubjectName).collect(Collectors.toSet());
+        Map<String, Set<String>> enrollmentsByStudent = new HashMap<>();
+        if (!electiveNames.isEmpty()) {
+            studentElectiveEnrollmentRepository.findByClassNameAndSchoolId(className, schoolId)
+                    .forEach(e -> enrollmentsByStudent.computeIfAbsent(e.getStudentId(), k -> new HashSet<>()).add(e.getSubjectName()));
+        }
+
+        Map<String, Map<Long, Double>> markMap = new HashMap<>();
+        for (StudentMark m : studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(
+                entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList()), schoolId)) {
+            if (m.getMarksObtained() != null) {
+                markMap.computeIfAbsent(m.getStudentId(), k -> new HashMap<>()).put(m.getExamSubjectEntryId(), m.getMarksObtained());
+            }
+        }
+
+        List<SheetRow> rows = new ArrayList<>();
+        Map<String, Double> percentageByStudent = new HashMap<>();
+        Map<String, Long> sectionByStudent = new HashMap<>();
+        for (Student student : students) {
+            List<ExamSubjectEntry> applicable = filterEntriesForStudent(entries, student, hasStreamStudents,
+                    streamSubjectsByStudent, electiveNames, enrollmentsByStudent);
+            Map<Long, Double> own = new HashMap<>();
+            Map<Long, Double> all = markMap.getOrDefault(student.getStudentId(), Map.of());
+            applicable.forEach(e -> { if (all.containsKey(e.getId())) own.put(e.getId(), all.get(e.getId())); });
+            ResultCalculator.Score score = ResultCalculator.score(applicable.stream()
+                    .map(e -> new ResultCalculator.SubjectMark(e.getMaxMarks(), own.get(e.getId()))).toList(), gradingSystem);
+            List<StudentEnrollment> segments = segmentsByStudent.getOrDefault(student.getStudentId(), List.of());
+            Set<Long> sections = new HashSet<>();
+            segments.forEach(seg -> sections.add(seg.getSectionId()));
+            Long rankSection = segments.stream()
+                    .max(Comparator.comparing(StudentEnrollment::getEffectiveFrom, Comparator.nullsFirst(Comparator.naturalOrder())))
+                    .map(StudentEnrollment::getSectionId)
+                    .orElse(student.getSectionId());
+            if (live.contains(student.getStudentId())) {
+                sections.add(student.getSectionId());
+                if (segments.isEmpty()) rankSection = student.getSectionId();
+            }
+            if (sections.isEmpty()) sections.add(rankSection);
+            rows.add(new SheetRow(student, rankSection, sections, applicable, own, score));
+            percentageByStudent.put(student.getStudentId(), score.percentage());
+            sectionByStudent.put(student.getStudentId(), rankSection);
+        }
+        Map<String, Integer> ranks = ResultCalculator.competitionRanksWithin(percentageByStudent, sectionByStudent::get);
+        return new ExamSheet(exam, entries, rows, ranks, gradingSystem);
+    }
+
+    /**
+     * The subjects of an exam one student actually takes: their stream's subjects (classes 11–12)
+     * or every non-elective subject plus the electives they enrolled in for the exam's own class.
+     * Shared with the report-card engine so both use the same applicability rule.
+     */
+    @Transactional(readOnly = true)
+    public List<ExamSubjectEntry> applicableEntriesForStudent(String studentId, ExamConfig exam, List<ExamSubjectEntry> entries) {
+        Long schoolId = securityUtil.getSchoolId();
+        Set<String> streamSubjects = loadStudentSubjectSet(studentId);
+        if (!streamSubjects.isEmpty()) {
+            return entries.stream().filter(e -> streamSubjects.contains(e.getSubjectName().toLowerCase())).collect(Collectors.toList());
+        }
+        Set<String> electiveNames = classSubjectRepository.findByClassNameAndOptionalTrueAndSchoolId(exam.getClassName(), schoolId)
+                .stream().map(ClassSubject::getSubjectName).collect(Collectors.toSet());
+        if (electiveNames.isEmpty()) return entries;
+        Set<String> enrolled = studentElectiveEnrollmentRepository.findByStudentIdAndSchoolId(studentId, schoolId).stream()
+                .filter(en -> exam.getClassName().equals(en.getClassName()))
+                .map(StudentElectiveEnrollment::getSubjectName).collect(Collectors.toSet());
+        return entries.stream().filter(e -> !electiveNames.contains(e.getSubjectName()) || enrolled.contains(e.getSubjectName()))
+                .collect(Collectors.toList());
+    }
+
+    /** The school's grading system (CBSE / LETTER / PERCENTAGE), as used on report cards. */
+    public String gradingSystem(Long schoolId) {
+        if (schoolId == null || schoolRepository == null) return null;
+        return schoolRepository.findById(schoolId).map(School::getGradingSystem).orElse(null);
+    }
+
+    private Map<Long, String> sectionNames(Long schoolId, ExamSheet sheet) {
+        Set<Long> ids = sheet.rows().stream().map(SheetRow::sectionId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, String> names = new HashMap<>();
+        if (ids.isEmpty() || sectionRepository == null) return names;
+        for (Section section : sectionRepository.findAllById(ids)) {
+            if (schoolId.equals(section.getSchoolId())) names.put(section.getId(), section.getName());
+        }
+        return names;
+    }
+
+    private static void applyScore(ExamResultDTO dto, ExamConfig exam, ResultCalculator.Score score) {
+        dto.setResultStatus(exam.getResultStatus() != null ? exam.getResultStatus().name() : ExamResultStatus.DRAFT.name());
+        dto.setComplete(score.complete());
+        dto.setMarksMissing(score.marksMissing());
+        dto.setGrade(score.grade());
+        dto.setPassed(score.passed());
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────────────
@@ -790,17 +950,17 @@ public class MarkService {
      *  date range — even if since promoted, transferred, or withdrawn — to the given live-roster
      *  map (keyed by studentId, mutated in place). No-ops gracefully when the exam's session or
      *  class can't be resolved (leaves the live-only roster untouched, exactly as before E6D). */
-    private void augmentRosterWithEnrollment(Map<String, Student> roster, Long schoolId, ExamConfig exam,
+    private List<StudentEnrollment> augmentRosterWithEnrollment(Map<String, Student> roster, Long schoolId, ExamConfig exam,
                                              String className, Long sectionId, List<ExamSubjectEntry> entries) {
         Optional<AcademicSession> sessionOpt = academicSessionRepository.findBySchoolIdAndLabel(schoolId, exam.getSession());
         Long classId = schoolClassRepository.findBySchoolIdAndName(schoolId, className).map(SchoolClass::getId).orElse(null);
-        if (sessionOpt.isEmpty() || classId == null) return;
+        if (sessionOpt.isEmpty() || classId == null) return List.of();
         AcademicSession session = sessionOpt.get();
         LocalDate from = entries.stream().map(ExamSubjectEntry::getExamDate).filter(Objects::nonNull)
                 .min(LocalDate::compareTo).orElse(session.getStartDate());
         LocalDate to = entries.stream().map(ExamSubjectEntry::getExamDate).filter(Objects::nonNull)
                 .max(LocalDate::compareTo).orElse(session.getEndDate());
-        if (from == null || to == null || to.isBefore(from)) return;
+        if (from == null || to == null || to.isBefore(from)) return List.of();
 
         List<StudentEnrollment> rows;
         try {
@@ -811,12 +971,13 @@ public class MarkService {
                             schoolId, session.getId(), classId, from, to);
         } catch (RuntimeException e) {
             log.error("Failed to resolve realized enrollment roster for class {} exam {}", className, exam.getId(), e);
-            return;
+            return List.of();
         }
         for (StudentEnrollment row : rows) {
             roster.computeIfAbsent(row.getStudentId(), sid -> studentRepository.findByStudentIdAndSchoolId(sid, schoolId).orElse(null));
         }
         roster.values().removeIf(Objects::isNull);
+        return rows;
     }
 
     private List<Student> resolveStudentsForSubject(ExamConfig exam, ExamSubjectEntry entry, Long sectionId) {
@@ -948,65 +1109,8 @@ public class MarkService {
         return result;
     }
 
-    private void validateMarkEntry(MarkEntryRequest req) {
-        if (req.getStudentId() == null || req.getStudentId().isBlank()) {
-            throw new IllegalArgumentException("studentId is required.");
-        }
-        if (req.getExamSubjectEntryId() == null) {
-            throw new IllegalArgumentException("examSubjectEntryId is required.");
-        }
-        ExamSubjectEntry entry = examSubjectEntryRepository.findByIdAndSchoolId(req.getExamSubjectEntryId(), securityUtil.getSchoolId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        "ExamSubjectEntry not found: " + req.getExamSubjectEntryId()));
-        if (req.getMarksObtained() == null) {
-            throw new IllegalArgumentException("marksObtained is required.");
-        }
-        if (req.getMarksObtained() < 0 || req.getMarksObtained() > entry.getMaxMarks()) {
-            throw new IllegalArgumentException(
-                    "marksObtained must be between 0 and " + entry.getMaxMarks()
-                            + " (maxMarks for this subject).");
-        }
-    }
-
-    /**
-     * Sums marks per student across all provided marks (used for overall rank computation).
-     * Students with no marks entered are absent from the map.
-     */
-    private Map<String, Double> computeTotalsByStudent(List<StudentMark> marks) {
-        Map<String, Double> totals = new HashMap<>();
-        for (StudentMark m : marks) {
-            if (m.getMarksObtained() != null) {
-                totals.merge(m.getStudentId(), m.getMarksObtained(), Double::sum);
-            }
-        }
-        return totals;
-    }
-
-    /**
-     * Standard competition rank: 1 + count of students who scored strictly more.
-     * Returns 0 if marksObtained is null (not ranked).
-     */
-    private int computeRank(Double marksObtained, List<StudentMark> allMarks) {
-        if (marksObtained == null) return 0;
-        long higher = allMarks.stream()
-                .filter(m -> m.getMarksObtained() != null && m.getMarksObtained() > marksObtained)
-                .count();
-        return (int) higher + 1;
-    }
-
-    /**
-     * Overall rank within an exam based on total marks.
-     * Returns 0 if the student has no total (no marks entered).
-     */
-    private int computeOverallRank(String studentId, Map<String, Double> totalByStudent) {
-        Double studentTotal = totalByStudent.get(studentId);
-        if (studentTotal == null) return 0;
-        long higher = totalByStudent.values().stream().filter(t -> t > studentTotal).count();
-        return (int) higher + 1;
-    }
-
     private double round2(double value) {
-        return Math.round(value * 100.0) / 100.0;
+        return ResultCalculator.round2(value);
     }
 
     private String toJson(Object obj) {

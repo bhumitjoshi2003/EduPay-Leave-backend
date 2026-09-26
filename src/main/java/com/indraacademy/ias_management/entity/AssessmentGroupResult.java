@@ -8,7 +8,8 @@ import java.time.LocalDateTime;
 /** Cached computed weighted result for one student in one assessment group.
  *  Invalidated and recomputed whenever marks change or weightage config changes. */
 @Entity
-@Table(name = "assessment_group_result")
+@Table(name = "assessment_group_result",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"school_id", "student_id", "assessment_group_id", "session"}))
 @Data
 public class AssessmentGroupResult {
 

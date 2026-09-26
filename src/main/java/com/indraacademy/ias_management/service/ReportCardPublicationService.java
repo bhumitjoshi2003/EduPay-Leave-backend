@@ -46,6 +46,10 @@ public class ReportCardPublicationService {
     @Autowired private SchoolClassRepository                                       schoolClassRepository;
     @Autowired private AcademicSessionRepository                                   academicSessionRepository;
     @Autowired private StudentEnrollmentRepository                                 studentEnrollmentRepository;
+    @Autowired private com.indraacademy.ias_management.repository.ReportCardTemplateRepository templateRepository;
+    @Autowired private com.indraacademy.ias_management.repository.AssessmentGroupExamMappingRepository examMappingRepository;
+    @Autowired private com.indraacademy.ias_management.repository.AssessmentGroupCompositionRepository compositionRepository;
+    @Autowired private com.indraacademy.ias_management.repository.ExamConfigRepository examConfigRepository;
 
     // ── Status ─────────────────────────────────────────────────────────────
 
@@ -66,10 +70,48 @@ public class ReportCardPublicationService {
 
     // ── Publish ────────────────────────────────────────────────────────────
 
+    /**
+     * Names of the exams feeding this template (through its assessment-group tree) whose results
+     * are still DRAFT. A report card must never expose draft marks: it cannot be published while
+     * any are listed, and students/parents are refused if one is unpublished later.
+     */
+    @Transactional(readOnly = true)
+    public List<String> draftExamNames(Long templateId) {
+        return draftExamNames(templateId, securityUtil.getSchoolId());
+    }
+
+    /** School-explicit form for callers without a school context (public QR verification). */
+    @Transactional(readOnly = true)
+    public List<String> draftExamNames(Long templateId, Long schoolId) {
+        if (templateId == null || schoolId == null) return List.of();
+        var template = templateRepository.findByIdAndSchoolId(templateId, schoolId).orElse(null);
+        if (template == null) return List.of();
+        java.util.Set<Long> examIds = new java.util.LinkedHashSet<>();
+        collectExamIds(template.getAssessmentGroupId(), schoolId, examIds, 0);
+        List<String> drafts = new ArrayList<>();
+        for (var exam : examConfigRepository.findAllById(examIds)) {
+            if (schoolId.equals(exam.getSchoolId()) && !exam.isPublished()) drafts.add(exam.getExamName());
+        }
+        return drafts;
+    }
+
+    private void collectExamIds(Long groupId, Long schoolId, java.util.Set<Long> examIds, int depth) {
+        if (groupId == null || depth > 5) return;
+        examMappingRepository.findByAssessmentGroupIdAndSchoolIdOrderByDisplayOrderAsc(groupId, schoolId)
+                .forEach(m -> examIds.add(m.getExamConfigId()));
+        compositionRepository.findByParentGroupIdAndSchoolIdOrderByDisplayOrderAsc(groupId, schoolId)
+                .forEach(c -> collectExamIds(c.getChildGroupId(), schoolId, examIds, depth + 1));
+    }
+
     @Transactional
     public ReportCardPublicationDTO publish(Long templateId, String session, String className) {
         Long schoolId = securityUtil.getSchoolId();
         String username = securityUtil.getUsername();
+        List<String> drafts = draftExamNames(templateId);
+        if (!drafts.isEmpty()) {
+            throw new IllegalStateException("Publish the results of " + String.join(", ", drafts)
+                    + " before publishing this report card.");
+        }
 
         ReportCardPublication pub = pubRepo
             .findBySchoolIdAndTemplateIdAndSessionAndClassName(schoolId, templateId, session, className)
@@ -169,6 +211,9 @@ public class ReportCardPublicationService {
             return VerifyRcDTO.invalid("Invalid verification link.");
         }
         return pubRepo.findByVerificationToken(token)
+            // A card whose results were unpublished after it was issued is no longer valid: answer
+            // exactly as for an unknown token, so nothing about the card or its exams is revealed.
+            .filter(pub -> draftExamNames(pub.getTemplateId(), pub.getSchoolId()).isEmpty())
             .map(pub -> {
                 String schoolName = schoolRepository.findById(pub.getSchoolId())
                     .map(s -> s.getName())

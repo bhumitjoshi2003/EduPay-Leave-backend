@@ -2,10 +2,14 @@ package com.indraacademy.ias_management.entity;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
+/**
+ * One student's marks for one exam subject (V82: FK to exam_subject_entry, created/updated
+ * metadata and an optimistic-lock revision). marks_obtained is never null once saved — a subject
+ * with no row is "not entered", never an implicit zero.
+ */
 @Entity
 @Table(name = "student_mark",
         uniqueConstraints = @UniqueConstraint(columnNames = {"student_id", "exam_subject_entry_id"}))
@@ -16,7 +20,10 @@ public class StudentMark {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "school_id")
+    @Version
+    private long revision;
+
+    @Column(name = "school_id", nullable = false)
     private Long schoolId;
 
     @Column(name = "student_id", nullable = false)
@@ -28,29 +35,29 @@ public class StudentMark {
     @Column(name = "marks_obtained")
     private Double marksObtained;
 
-    @Column(name = "entered_by")
-    private String enteredBy;
+    @Column(name = "created_by")
+    private String createdBy;
 
-    @UpdateTimestamp
-    @Column(name = "updated_at")
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_by")
+    private String updatedBy;
+
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
     public StudentMark() {}
 
-    public Long getId() { return id; }
-    public String getStudentId() { return studentId; }
-    public Long getExamSubjectEntryId() { return examSubjectEntryId; }
-    public Double getMarksObtained() { return marksObtained; }
-    public String getEnteredBy() { return enteredBy; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    @PrePersist
+    void onCreate() {
+        LocalDateTime now = LocalDateTime.now();
+        if (createdAt == null) createdAt = now;
+        updatedAt = now;
+    }
 
-    public void setId(Long id) { this.id = id; }
-    public void setStudentId(String studentId) { this.studentId = studentId; }
-    public void setExamSubjectEntryId(Long examSubjectEntryId) { this.examSubjectEntryId = examSubjectEntryId; }
-    public void setMarksObtained(Double marksObtained) { this.marksObtained = marksObtained; }
-    public void setEnteredBy(String enteredBy) { this.enteredBy = enteredBy; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
-
-    public Long getSchoolId() { return schoolId; }
-    public void setSchoolId(Long schoolId) { this.schoolId = schoolId; }
+    @PreUpdate
+    void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
 }

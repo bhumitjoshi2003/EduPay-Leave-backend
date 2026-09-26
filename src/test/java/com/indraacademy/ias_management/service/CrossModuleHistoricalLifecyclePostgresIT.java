@@ -451,7 +451,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
 
     private long insertExamConfig(String session, String className, String examName) {
         long id = examConfigSeq--;
-        jdbc.update("INSERT INTO exam_config (id,school_id,session,class_name,exam_name) VALUES (?,?,?,?,?)",
+        jdbc.update("INSERT INTO exam_config (id,school_id,session,class_name,exam_name,result_status) VALUES (?,?,?,?,?,'PUBLISHED')",
                 id, SCHOOL, session, className, examName);
         examConfigSchool.put(id, SCHOOL);
         return id;
@@ -470,7 +470,7 @@ class CrossModuleHistoricalLifecyclePostgresIT {
 
     private void insertMark(String studentId, long examSubjectEntryId, double marksObtained) {
         long id = markSeq--;
-        jdbc.update("INSERT INTO student_mark (id,school_id,student_id,exam_subject_entry_id,marks_obtained) VALUES (?,?,?,?,?)",
+        jdbc.update("INSERT INTO student_mark (id,school_id,student_id,exam_subject_entry_id,created_at,updated_at,marks_obtained) VALUES (?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)",
                 id, SCHOOL, studentId, examSubjectEntryId, marksObtained);
     }
 

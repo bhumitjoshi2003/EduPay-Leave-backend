@@ -30,7 +30,6 @@ import java.util.stream.Collectors;
 public class ClassOverviewService {
 
     private static final Logger log = LoggerFactory.getLogger(ClassOverviewService.class);
-    private static final double PASS_THRESHOLD = 33.0;
 
     @Autowired private ReportCardTemplateService    templateService;
     @Autowired private WeightageCalculationEngine   engine;
@@ -88,7 +87,7 @@ public class ClassOverviewService {
         for (StudentGroupResultDTO r : computed) {
             double pct    = round1(r.getWeightedPercentage());
             String grade  = gradeFromPct(pct, gradingSystem);
-            boolean passed = pct >= PASS_THRESHOLD;
+            boolean passed = GradingPolicy.passed(pct);
             students.add(new ClassOverviewDTO.StudentSummaryDTO(
                     r.getStudentId(), r.getStudentName(), pct, grade, r.getRank(), passed));
         }
@@ -145,29 +144,7 @@ public class ClassOverviewService {
     // ── Grade helpers ──────────────────────────────────────────────────────
 
     private String gradeFromPct(double pct, String system) {
-        switch (system != null ? system : "CBSE") {
-            case "PERCENTAGE" -> { return String.format("%.0f%%", pct); }
-            case "LETTER" -> {
-                if (pct >= 90) return "A+";
-                if (pct >= 80) return "A";
-                if (pct >= 70) return "B+";
-                if (pct >= 60) return "B";
-                if (pct >= 50) return "C+";
-                if (pct >= 40) return "C";
-                if (pct >= 33) return "D";
-                return "F";
-            }
-            default -> {  // CBSE
-                if (pct >= 91) return "A1";
-                if (pct >= 81) return "A2";
-                if (pct >= 71) return "B1";
-                if (pct >= 61) return "B2";
-                if (pct >= 51) return "C1";
-                if (pct >= 41) return "C2";
-                if (pct >= 33) return "D";
-                return "E";
-            }
-        }
+        return GradingPolicy.grade(pct, system);
     }
 
     private List<String> orderedGrades(String system) {

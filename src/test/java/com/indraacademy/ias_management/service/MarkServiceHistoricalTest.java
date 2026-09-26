@@ -162,7 +162,7 @@ class MarkServiceHistoricalTest {
         when(examConfigRepository.findBySessionAndClassNameAndSchoolId("2025-2026", "9", SCHOOL_ID))
                 .thenReturn(List.of(class9Exam));
         when(examSubjectEntryRepository.findByExamConfigIdAndSchoolId(1L, SCHOOL_ID)).thenReturn(List.of(mathEntry));
-        when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
+        lenient().when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
                 .thenReturn(List.of(mathMark));
 
         List<ExamResultDTO> results = service.getStudentResults(STUDENT_ID, "2025-2026");
@@ -193,7 +193,7 @@ class MarkServiceHistoricalTest {
         when(examConfigRepository.findBySessionAndClassNameAndSchoolId("2026-2027", "10", SCHOOL_ID))
                 .thenReturn(List.of(class10Exam));
         when(examSubjectEntryRepository.findByExamConfigIdAndSchoolId(2L, SCHOOL_ID)).thenReturn(List.of(entry));
-        when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(20L)), eq(SCHOOL_ID)))
+        lenient().when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(20L)), eq(SCHOOL_ID)))
                 .thenReturn(List.of());
 
         List<ExamResultDTO> results = service.getStudentResults(STUDENT_ID, "2026-2027");
@@ -359,7 +359,7 @@ class MarkServiceHistoricalTest {
         when(examConfigRepository.findBySessionAndClassNameAndSchoolId("2025-2026", "9", SCHOOL_ID))
                 .thenReturn(List.of(class9Exam));
         when(examSubjectEntryRepository.findByExamConfigIdAndSchoolId(1L, SCHOOL_ID)).thenReturn(List.of(mathEntry));
-        when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
+        lenient().when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
                 .thenReturn(List.of());
 
         List<ExamResultDTO> results = service.getStudentResults(STUDENT_ID, "2025-2026");
@@ -428,7 +428,7 @@ class MarkServiceHistoricalTest {
         when(examConfigRepository.findBySessionAndClassNameAndSchoolId("2025-2026", "9", SCHOOL_ID))
                 .thenReturn(List.of(class9Exam));
         when(examSubjectEntryRepository.findByExamConfigIdAndSchoolId(1L, SCHOOL_ID)).thenReturn(List.of(mathEntry));
-        when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
+        lenient().when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
                 .thenReturn(List.of(mathMark));
 
         List<ExamResultDTO> results = service.getStudentResults(STUDENT_ID, "2025-2026");
@@ -466,7 +466,7 @@ class MarkServiceHistoricalTest {
         when(examSubjectEntryRepository.findByExamConfigIdAndSchoolId(1L, SCHOOL_ID)).thenReturn(List.of(mathEntry));
         when(studentMarkRepository.findByStudentIdAndExamSubjectEntryIdInAndSchoolId(eq(STUDENT_ID), anyList(), eq(SCHOOL_ID)))
                 .thenReturn(List.of());
-        when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
+        lenient().when(studentMarkRepository.findByExamSubjectEntryIdInAndSchoolId(eq(List.of(10L)), eq(SCHOOL_ID)))
                 .thenReturn(List.of());
 
         List<ExamResultDTO> results = service.getStudentResults(STUDENT_ID, null);

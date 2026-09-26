@@ -1683,7 +1683,7 @@ class AcademicYearRolloverE2EPostgresIT {
 
     private long insertExamConfig(String className, String examName) {
         long id = examConfigSeq--;
-        jdbc.update("INSERT INTO exam_config (id,school_id,session,class_name,exam_name) VALUES (?,?,?,?,?)",
+        jdbc.update("INSERT INTO exam_config (id,school_id,session,class_name,exam_name,result_status) VALUES (?,?,?,?,?,'PUBLISHED')",
                 id, SCHOOL, SESSION_2026_LABEL, className, examName);
         return id;
     }
@@ -1701,7 +1701,7 @@ class AcademicYearRolloverE2EPostgresIT {
 
     private void insertMark(String studentId, long examSubjectEntryId, double marksObtained) {
         long id = markSeq--;
-        jdbc.update("INSERT INTO student_mark (id,school_id,student_id,exam_subject_entry_id,marks_obtained) VALUES (?,?,?,?,?)",
+        jdbc.update("INSERT INTO student_mark (id,school_id,student_id,exam_subject_entry_id,created_at,updated_at,marks_obtained) VALUES (?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)",
                 id, SCHOOL, studentId, examSubjectEntryId, marksObtained);
     }
 

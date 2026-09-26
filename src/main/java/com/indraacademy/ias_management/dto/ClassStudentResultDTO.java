@@ -37,6 +37,31 @@ public class ClassStudentResultDTO {
     public Double getPercentage() { return percentage; }
     public Integer getRank() { return rank; }
 
+
+    // ── Results Phase 1: canonical result metadata (see ResultCalculator) ──
+    /** DRAFT or PUBLISHED. Students/parents only ever receive PUBLISHED exams. */
+    private String resultStatus;
+    /** False while any applicable subject has no mark; percentage/grade/passed/rank are then null. */
+    private boolean complete;
+    private int marksMissing;
+    private String grade;
+    private Boolean passed;
+
+    public String getResultStatus() { return resultStatus; }
+    public void setResultStatus(String resultStatus) { this.resultStatus = resultStatus; }
+    public boolean isComplete() { return complete; }
+    public void setComplete(boolean complete) { this.complete = complete; }
+    public int getMarksMissing() { return marksMissing; }
+    public void setMarksMissing(int marksMissing) { this.marksMissing = marksMissing; }
+    public String getGrade() { return grade; }
+    public void setGrade(String grade) { this.grade = grade; }
+    public Boolean getPassed() { return passed; }
+    public void setPassed(Boolean passed) { this.passed = passed; }
+    /** The student's section (ranks are computed within a section). */
+    private String sectionName;
+    public String getSectionName() { return sectionName; }
+    public void setSectionName(String sectionName) { this.sectionName = sectionName; }
+
     public static class SubjectMarkDTO {
         private String subjectName;
         private Integer maxMarks;

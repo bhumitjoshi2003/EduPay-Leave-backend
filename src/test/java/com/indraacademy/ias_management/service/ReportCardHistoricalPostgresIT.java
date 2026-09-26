@@ -31,6 +31,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /**
  * Phase E6E: real-PostgreSQL coverage for enrollment-authoritative historical report cards.
@@ -78,6 +79,7 @@ class ReportCardHistoricalPostgresIT {
     }
 
     @Autowired JdbcTemplate jdbc;
+    @Autowired jakarta.persistence.EntityManager entityManager;
     @Autowired ReportCardDataAssembler assembler;
     @Autowired RemarksService remarksService;
     @Autowired ReportCardPublicationService publicationService;
@@ -253,6 +255,60 @@ class ReportCardHistoricalPostgresIT {
     }
 
     @Test
+    void subjectAndOverallGradesComeFromTheBackendGradingPolicy() {
+        insertClosedEnrollment(STUDENT, SESSION_PRIOR, CLASS_9, SECTION_A,
+                LocalDate.of(2025, 4, 1), LocalDate.of(2026, 3, 31), "SESSION_COMPLETED");
+        long exam = insertExamConfig(SCHOOL, SESSION_PRIOR_LABEL, "9", "Half Yearly");
+        jdbc.update("INSERT INTO assessment_group_exam_mapping (school_id,assessment_group_id,exam_config_id,weightage,display_order) VALUES (?,?,?,?,0)",
+                SCHOOL, ASSESSMENT_GROUP, exam, 1.0);
+        insertMark(STUDENT, insertSubjectEntry(exam, "Math", 100, null), 95.0);
+        insertMark(STUDENT, insertSubjectEntry(exam, "Science", 100, null), 20.0);
+
+        ReportCardDataDTO dto = assembler.assemble(STUDENT, TEMPLATE, SESSION_PRIOR_LABEL);
+
+        var rows = dto.getWeightedResult().getMarksTable().getSubjectRows();
+        assertThat(rows).hasSize(2);
+        for (var row : rows) {
+            assertThat(row.getGrade()).isNotBlank()
+                    .isEqualTo(GradingPolicy.grade(row.getWeightedPercentage(), dto.getGradingSystem()));
+        }
+        assertThat(rows).extracting(r -> r.getGrade()).doesNotHaveDuplicates();
+        assertThat(dto.getOverallGrade())
+                .isEqualTo(GradingPolicy.grade(dto.getWeightedResult().getWeightedPercentage(), dto.getGradingSystem()));
+    }
+
+    @Test
+    void publicVerificationRefusesACardWhoseExamWasUnpublished() {
+        long exam = insertExamConfig(SCHOOL, SESSION_PRIOR_LABEL, "9", "Annual Exam");
+        jdbc.update("INSERT INTO assessment_group_exam_mapping (school_id,assessment_group_id,exam_config_id,weightage,display_order) VALUES (?,?,?,?,0)",
+                SCHOOL, ASSESSMENT_GROUP, exam, 1.0);
+        publicationService.publish(TEMPLATE, SESSION_PRIOR_LABEL, "9");
+        String token = jdbc.queryForObject("SELECT verification_token FROM report_card_publication WHERE school_id = ? AND template_id = ?",
+                String.class, SCHOOL, TEMPLATE);
+
+        var valid = publicationService.verifyByToken(token);
+        assertThat(valid.isValid()).isTrue();
+        assertThat(valid.getClassName()).isEqualTo("9");
+
+        // The public QR endpoint has no school context: the draft check must use the card's own school.
+        when(securityUtil.getSchoolId()).thenReturn(null);
+        jdbc.update("UPDATE exam_config SET result_status = 'DRAFT' WHERE id = ?", exam);
+        entityManager.clear(); // a new request sees the committed row, not this test's cached entity
+        var refused = publicationService.verifyByToken(token);
+        assertThat(refused.isValid()).isFalse();
+        assertThat(refused.getSchoolName()).isNull();
+        assertThat(refused.getClassName()).isNull();
+        assertThat(refused.getSession()).isNull();
+        assertThat(refused.getPublishedBy()).isNull();
+        // Indistinguishable from an unknown token — nothing reveals that a draft exists.
+        assertThat(refused.getMessage()).isEqualTo(publicationService.verifyByToken("no-such-token").getMessage());
+
+        jdbc.update("UPDATE exam_config SET result_status = 'PUBLISHED' WHERE id = ?", exam);
+        entityManager.clear(); // a new request sees the committed row, not this test's cached entity
+        assertThat(publicationService.verifyByToken(token).isValid()).isTrue();
+    }
+
+    @Test
     void reportCardAttendanceUsesRealAcademicSessionDates() {
         insertClosedEnrollment(STUDENT, SESSION_PRIOR, CLASS_9, SECTION_A,
                 LocalDate.of(2025, 4, 1), LocalDate.of(2026, 3, 31), "SESSION_COMPLETED");
@@ -403,7 +459,7 @@ class ReportCardHistoricalPostgresIT {
 
     private long insertExamConfig(long schoolId, String session, String className, String examName) {
         long id = examConfigSeq--;
-        jdbc.update("INSERT INTO exam_config (id,school_id,session,class_name,exam_name) VALUES (?,?,?,?,?)",
+        jdbc.update("INSERT INTO exam_config (id,school_id,session,class_name,exam_name,result_status) VALUES (?,?,?,?,?,'PUBLISHED')",
                 id, schoolId, session, className, examName);
         examConfigSchool.put(id, schoolId);
         return id;
@@ -424,7 +480,7 @@ class ReportCardHistoricalPostgresIT {
     private void insertMark(String studentId, long examSubjectEntryId, double marksObtained) {
         long id = markSeq--;
         Long schoolId = jdbc.queryForObject("SELECT school_id FROM exam_subject_entry WHERE id = ?", Long.class, examSubjectEntryId);
-        jdbc.update("INSERT INTO student_mark (id,school_id,student_id,exam_subject_entry_id,marks_obtained) VALUES (?,?,?,?,?)",
+        jdbc.update("INSERT INTO student_mark (id,school_id,student_id,exam_subject_entry_id,created_at,updated_at,marks_obtained) VALUES (?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?)",
                 id, schoolId, studentId, examSubjectEntryId, marksObtained);
     }
 

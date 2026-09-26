@@ -31,4 +31,14 @@ public class SubjectResultDTO {
     public Double getMarksObtained() { return marksObtained; }
     public Double getClassAverage() { return classAverage; }
     public Integer getRank() { return rank; }
+
+    /** Subject grade from the school's grading system (GradingPolicy); null when not entered. */
+    private String grade;
+    public String getGrade() { return grade; }
+    public void setGrade(String grade) { this.grade = grade; }
+
+    /** Subject pass/fail from GradingPolicy; null when not entered. */
+    private Boolean passed;
+    public Boolean getPassed() { return passed; }
+    public void setPassed(Boolean passed) { this.passed = passed; }
 }

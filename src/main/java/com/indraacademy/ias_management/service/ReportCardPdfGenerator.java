@@ -974,7 +974,7 @@ public class ReportCardPdfGenerator {
 
         // Data rows — parchment background, bottom border only
         for (WeightedGroupResultDTO.MarksTableDTO.SubjectRowDTO row : mt.getSubjectRows()) {
-            boolean failed = row.getWeightedPercentage() < 33.0;
+            boolean failed = !GradingPolicy.passed(row.getWeightedPercentage());
             Font subjectFont = failed
                     ? FontFactory.getFont(FontFactory.TIMES_ITALIC, markFontSize, FAIL_COLOR)
                     : FontFactory.getFont(FontFactory.TIMES_ROMAN, markFontSize, TEXT_DARK);
@@ -1701,43 +1701,13 @@ public class ReportCardPdfGenerator {
 
     // ── Grade helpers ─────────────────────────────────────────────────────
 
+    /** Delegates to the single grading rule (GradingPolicy). */
     String gradeFromPct(double pct, String gradingSystem) {
-        switch (gradingSystem != null ? gradingSystem : "CBSE") {
-            case "PERCENTAGE" -> { return DF0.format(pct) + "%"; }
-            case "LETTER" -> {
-                if (pct >= 90) return "A+";
-                if (pct >= 80) return "A";
-                if (pct >= 70) return "B+";
-                if (pct >= 60) return "B";
-                if (pct >= 50) return "C+";
-                if (pct >= 40) return "C";
-                if (pct >= 33) return "D";
-                return "F";
-            }
-            default -> { // CBSE
-                if (pct >= 91) return "A1";
-                if (pct >= 81) return "A2";
-                if (pct >= 71) return "B1";
-                if (pct >= 61) return "B2";
-                if (pct >= 51) return "C1";
-                if (pct >= 41) return "C2";
-                if (pct >= 33) return "D";
-                return "E";
-            }
-        }
+        return GradingPolicy.grade(pct, gradingSystem);
     }
 
     private double cbseGradePoint(String grade) {
-        return switch (grade) {
-            case "A1" -> 10.0;
-            case "A2" ->  9.0;
-            case "B1" ->  8.0;
-            case "B2" ->  7.0;
-            case "C1" ->  6.0;
-            case "C2" ->  5.0;
-            case "D"  ->  4.0;
-            default   ->  0.0;
-        };
+        return GradingPolicy.cbseGradePoint(grade);
     }
 
     private Font gradeFont(double pct) {

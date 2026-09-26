@@ -58,6 +58,15 @@ public class WeightedGroupResultDTO {
     public int getRank() { return rank; }
     public void setRank(int rank) { this.rank = rank; }
 
+    /**
+     * Results Phase 1: applicable subject marks not yet entered across the group's exams. Report
+     * cards count a missing mark as absent ("Ab", 0) — this makes that explicit rather than silent.
+     */
+    private int marksMissing;
+    public int getMarksMissing() { return marksMissing; }
+    public void setMarksMissing(int marksMissing) { this.marksMissing = marksMissing; }
+    public boolean isComplete() { return marksMissing == 0; }
+
     // ── Nested: SubjectWeightedResultDTO ──────────────────────────────
 
     public static class SubjectWeightedResultDTO {
@@ -183,6 +192,11 @@ public class WeightedGroupResultDTO {
             public String getSubjectName() { return subjectName; }
             public List<SubjectExamMarkDTO> getExamMarks() { return examMarks; }
             public double getWeightedPercentage() { return weightedPercentage; }
+
+            /** Subject grade from GradingPolicy, filled by ReportCardDataAssembler (school grading system). */
+            private String grade;
+            public String getGrade() { return grade; }
+            public void setGrade(String grade) { this.grade = grade; }
         }
 
         public static class SubjectExamMarkDTO {

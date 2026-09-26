@@ -31,6 +31,12 @@ import java.util.stream.Collectors;
  *   For each exam in the group:
  *     exam_pct = sum(obtained) / sum(max) * 100   (normalised, avoids scale bias)
  *   weighted_pct = Σ (exam_pct * exam_weightage)
+ *
+ * Results Phase 1: a student's subjects in an exam are the ones they actually take
+ * (MarkService.applicableEntriesForStudent — the same rule as My Results/Class Results), never
+ * "subjects they happen to have a mark for". A missing mark in an applicable subject counts as
+ * absent (0, shown as "Ab" on the card) via ResultCalculator and is reported in marksMissing.
+ * Class ranks are ResultCalculator competition ranks; nothing here writes to the database.
  */
 @Service
 public class WeightageCalculationEngine {
@@ -40,7 +46,7 @@ public class WeightageCalculationEngine {
     @Autowired private AssessmentGroupRepository groupRepo;
     @Autowired private AssessmentGroupExamMappingRepository mappingRepo;
     @Autowired private AssessmentGroupCompositionRepository compositionRepo;
-    @Autowired private AssessmentGroupResultRepository resultRepo;
+    @Autowired private MarkService markService;
     @Autowired private ExamConfigRepository examConfigRepo;
     @Autowired private ExamSubjectEntryRepository subjectEntryRepo;
     @Autowired private StudentMarkRepository markRepo;
@@ -62,11 +68,11 @@ public class WeightageCalculationEngine {
     }
 
     /**
-     * Compute weighted results for all students in a class for a given group,
-     * assign competition ranks, and persist to assessment_group_result.
-     * Idempotent — upserts on unique(student_id, group_id, session).
+     * Weighted results for every student in a class for a group, with competition ranks by
+     * weighted percentage. Read-only: the result is computed on demand and never persisted from a
+     * read request (the assessment_group_result cache is no longer written).
      */
-    @Transactional
+    @Transactional(readOnly = true)
     public List<StudentGroupResultDTO> computeAndRankForClass(
             List<String> studentIds, Map<String, String> studentNames,
             Long groupId, String session) {
@@ -77,7 +83,6 @@ public class WeightageCalculationEngine {
 
         log.info("Computing class results for group={} session={} students={}", groupId, session, studentIds.size());
 
-        // Compute weighted % for each student
         List<StudentGroupResultDTO> results = new ArrayList<>();
         for (String studentId : studentIds) {
             try {
@@ -90,29 +95,10 @@ public class WeightageCalculationEngine {
             }
         }
 
-        // Assign competition ranks: rank = 1 + count(students with strictly higher score)
-        for (StudentGroupResultDTO r : results) {
-            int rank = 1 + (int) results.stream()
-                    .filter(other -> other.getWeightedPercentage() > r.getWeightedPercentage())
-                    .count();
-            r.setRank(rank);
-        }
-
-        // Upsert into assessment_group_result
-        for (StudentGroupResultDTO r : results) {
-            AssessmentGroupResult entity = resultRepo
-                    .findByStudentIdAndAssessmentGroupIdAndSession(r.getStudentId(), groupId, session)
-                    .orElseGet(AssessmentGroupResult::new);
-            entity.setSchoolId(schoolId);
-            entity.setStudentId(r.getStudentId());
-            entity.setAssessmentGroupId(groupId);
-            entity.setSession(session);
-            entity.setWeightedScore(BigDecimal.valueOf(r.getWeightedPercentage()));
-            entity.setRankPosition(r.getRank());
-            entity.setComputedAt(LocalDateTime.now());
-            resultRepo.save(entity);
-        }
-
+        Map<String, Double> pct = new HashMap<>();
+        results.forEach(r -> pct.put(r.getStudentId(), r.getWeightedPercentage()));
+        Map<String, Integer> ranks = ResultCalculator.competitionRanks(pct);
+        results.forEach(r -> r.setRank(ranks.getOrDefault(r.getStudentId(), 0)));
         return results;
     }
 
@@ -153,27 +139,9 @@ public class WeightageCalculationEngine {
                 .collect(Collectors.toList());
 
         // Batch: load all marks for this student across all subject entries
-        Map<Long, StudentMark> markBySubjectEntryId = Collections.emptyMap();
-        Set<Long> studentSubjectEntryIds = Collections.emptySet();
-        if (!allSubjectEntryIds.isEmpty()) {
-            List<StudentMark> marks = markRepo.findByStudentIdAndExamSubjectEntryIdInAndSchoolId(
-                    studentId, allSubjectEntryIds, schoolId);
-            markBySubjectEntryId = marks.stream()
-                    .collect(Collectors.toMap(StudentMark::getExamSubjectEntryId, m -> m));
-            // Track which subject entries this student has any mark record for.
-            // If a student never took an elective, no mark record exists at all → exclude it.
-            studentSubjectEntryIds = marks.stream()
-                    .map(StudentMark::getExamSubjectEntryId)
-                    .collect(Collectors.toSet());
-        }
-        final Set<Long> studentEntryIds = studentSubjectEntryIds;
-
-        // Derive the set of subject NAMES this student is enrolled in (has any mark record).
-        // This filters out elective subjects the student didn't choose.
-        final Set<String> studentEnrolledSubjects = allSubjects.stream()
-                .filter(e -> studentEntryIds.contains(e.getId()))
-                .map(ExamSubjectEntry::getSubjectName)
-                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+        Map<Long, StudentMark> markBySubjectEntryId = allSubjectEntryIds.isEmpty() ? Collections.emptyMap()
+                : markRepo.findByStudentIdAndExamSubjectEntryIdInAndSchoolId(studentId, allSubjectEntryIds, schoolId)
+                        .stream().collect(Collectors.toMap(StudentMark::getExamSubjectEntryId, m -> m, (a, b) -> a));
 
         // Group subjects by examConfigId
         Map<Long, List<ExamSubjectEntry>> subjectsByExam = allSubjects.stream()
@@ -190,12 +158,14 @@ public class WeightageCalculationEngine {
         Map<Long, Map<String, MarksTableDTO.SubjectExamMarkDTO>> perExamPerSubjectMarks = new LinkedHashMap<>();
         Set<String> orderedSubjectNames = new LinkedHashSet<>();
 
+        int marksMissing = 0;
         for (AssessmentGroupExamMapping mapping : mappings) {
             Optional<ExamConfig> examOpt = examConfigRepo.findById(mapping.getExamConfigId());
             if (examOpt.isEmpty() || !schoolId.equals(examOpt.get().getSchoolId())) continue;
             ExamConfig exam = examOpt.get();
 
-            List<ExamSubjectEntry> subjects = subjectsByExam.getOrDefault(exam.getId(), Collections.emptyList());
+            List<ExamSubjectEntry> subjects = markService.applicableEntriesForStudent(studentId, exam,
+                    subjectsByExam.getOrDefault(exam.getId(), Collections.emptyList()));
             if (subjects.isEmpty()) continue;
 
             orderedExams.add(exam);
@@ -203,14 +173,12 @@ public class WeightageCalculationEngine {
             double examObtained = 0.0;
             double examMax = 0.0;
 
+            List<ResultCalculator.SubjectMark> canonical = new ArrayList<>();
             for (ExamSubjectEntry subject : subjects) {
-                // Skip subjects the student didn't enrol in (no mark record across any exam).
-                // Core subjects always have mark records; electives not chosen by the student don't.
-                if (!studentEnrolledSubjects.contains(subject.getSubjectName())) continue;
-
                 StudentMark mark = markBySubjectEntryId.get(subject.getId());
                 Double obtained = (mark != null) ? mark.getMarksObtained() : null;
                 double obtainedVal = (obtained != null) ? obtained : 0.0;
+                canonical.add(new ResultCalculator.SubjectMark(subject.getMaxMarks(), obtained));
                 examObtained += obtainedVal;
                 examMax += subject.getMaxMarks();
 
@@ -228,7 +196,9 @@ public class WeightageCalculationEngine {
                 orderedSubjectNames.add(subject.getSubjectName());
             }
 
-            double examPct = examMax > 0 ? (examObtained / examMax * 100.0) : 0.0;
+            ResultCalculator.Score examScore = ResultCalculator.score(canonical, null);
+            marksMissing += examScore.marksMissing();
+            double examPct = examScore.percentageCountingMissingAsAbsent();
             double weight = mapping.getWeightage().doubleValue();
             double contribution = examPct * weight;
             totalWeightedPct += contribution;
@@ -276,9 +246,11 @@ public class WeightageCalculationEngine {
 
         MarksTableDTO marksTable = new MarksTableDTO(examColumns, subjectRows, examTotals);
 
-        return new WeightedGroupResultDTO(
+        WeightedGroupResultDTO result = new WeightedGroupResultDTO(
                 group.getId(), group.getName(), group.getGroupType(),
                 totalWeightedPct, subjectResults, examBreakdowns, null, marksTable, 0);
+        result.setMarksMissing(marksMissing);
+        return result;
     }
 
     private WeightedGroupResultDTO computeGroupBased(String studentId, AssessmentGroup group,
@@ -292,6 +264,7 @@ public class WeightageCalculationEngine {
 
         List<GroupBreakdownDTO> groupBreakdowns = new ArrayList<>();
         double totalWeightedPct = 0.0;
+        int marksMissing = 0;
 
         for (AssessmentGroupComposition comp : compositions) {
             AssessmentGroup childGroup = groupRepo.findByIdAndSchoolId(comp.getChildGroupId(), schoolId)
@@ -299,6 +272,7 @@ public class WeightageCalculationEngine {
             if (childGroup == null) continue;
 
             WeightedGroupResultDTO childResult = compute(studentId, childGroup, session, schoolId, depth + 1);
+            marksMissing += childResult.getMarksMissing();
             double weight = comp.getWeightage().doubleValue();
             double contribution = childResult.getWeightedPercentage() * weight;
             totalWeightedPct += contribution;
@@ -308,9 +282,11 @@ public class WeightageCalculationEngine {
                     childResult.getWeightedPercentage(), weight, contribution));
         }
 
-        return new WeightedGroupResultDTO(
+        WeightedGroupResultDTO result = new WeightedGroupResultDTO(
                 group.getId(), group.getName(), group.getGroupType(),
                 totalWeightedPct, Collections.emptyList(), null, groupBreakdowns, null, 0);
+        result.setMarksMissing(marksMissing);
+        return result;
     }
 
     private WeightedGroupResultDTO emptyResult(AssessmentGroup group) {

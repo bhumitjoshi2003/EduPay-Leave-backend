@@ -16,6 +16,7 @@ public class ClassExamPerformanceDTO {
     private Double classAveragePercentage;
     /** Only students with a percentage, sorted descending — first = top scorer, last = lowest scorer. */
     private List<StudentScoreDTO> studentsRanked;
+    /** Students whose result is incomplete (at least one applicable mark not entered) — not ranked. */
     private List<String> studentsWithNoMarksEntered;
     /** subjectName -> class average percentage for that subject. */
     private Map<String, Double> subjectAverages;
@@ -30,6 +31,11 @@ public class ClassExamPerformanceDTO {
         this.studentsWithNoMarksEntered = studentsWithNoMarksEntered;
         this.subjectAverages = subjectAverages;
     }
+
+    /** DRAFT or PUBLISHED — staff-only endpoint, so drafts are included and labelled. */
+    private String resultStatus;
+    public String getResultStatus() { return resultStatus; }
+    public void setResultStatus(String resultStatus) { this.resultStatus = resultStatus; }
 
     public String getClassName() { return className; }
     public String getExamName() { return examName; }

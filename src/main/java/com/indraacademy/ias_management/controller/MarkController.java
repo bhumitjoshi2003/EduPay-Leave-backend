@@ -98,9 +98,9 @@ public class MarkController {
     // ─── Bulk mark save ───────────────────────────────────────────────────────
 
     /**
-     * Upserts marks for multiple students. Each entry is saved independently.
-     * TEACHER: validated to only save marks for their own class (first entry's className is used).
-     * ADMIN: full access.
+     * Saves marks all-or-nothing. The service validates every entry (school, published lock,
+     * session, teacher class/section scope, enrollment, subject, range) before saving anything;
+     * a rejected batch returns 400 with every per-row reason and saves nothing.
      */
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "')")
     @PostMapping("/bulk")
@@ -110,40 +110,20 @@ public class MarkController {
         if (requests == null || requests.isEmpty()) {
             return ResponseEntity.badRequest().body("Request body must be a non-empty list.");
         }
-        // For TEACHER, verify ALL entries belong to the teacher's own class AND section — a
-        // class-level match alone isn't enough, since the exam's class can be shared across
-        // sections; each entry's actual studentId must also be in the teacher's own section.
-        if (Role.TEACHER.equals(securityUtil.getRole())) {
-            Long schoolId = securityUtil.getSchoolId();
-            for (MarkEntryRequest req : requests) {
-                if (req.getExamSubjectEntryId() == null) continue;
-                String className = examConfigService
-                        .resolveClassName(req.getExamSubjectEntryId()).orElse(null);
-                ScopedAccess classCheck = checkTeacherClassAccess(className);
-                if (!classCheck.allowed()) {
-                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(classCheck.errorMessage());
-                }
-                Student student = studentRepository.findByStudentIdAndSchoolId(req.getStudentId(), schoolId).orElse(null);
-                String studentClass = student != null ? student.getClassName() : null;
-                Long studentSectionId = student != null ? student.getSectionId() : null;
-                ScopedAccess studentCheck = teacherClassScopeService.authorizeAndScopeToStudent(
-                        securityUtil.getRole(), securityUtil.getUsername(), schoolId, studentClass, studentSectionId);
-                if (!studentCheck.allowed()) {
-                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(studentCheck.errorMessage());
-                }
-            }
+        try {
+            return ResponseEntity.ok(markService.bulkSaveMarks(requests, request));
+        } catch (com.indraacademy.ias_management.service.MarkValidationException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "status", 400, "error", "Bad Request", "message", e.getMessage(), "errors", e.getErrors()));
         }
-
-        MarkBulkResultDTO result = markService.bulkSaveMarks(requests, request);
-        return ResponseEntity.ok(result);
     }
 
     // ─── Student results view ─────────────────────────────────────────────────
 
     /**
      * Full exam results for a student in a session (grouped by exam).
-     * STUDENT: can only view their own results.
-     * TEACHER + ADMIN: can view any student.
+     * STUDENT: only their own results; PARENT: a linked child with RESULTS permission — both only
+     * ever see PUBLISHED exams. TEACHER (own class/section) and ADMIN also see DRAFT exams.
      */
     @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.TEACHER + "', '" + Role.STUDENT + "', '" + Role.PARENT + "')")
     @GetMapping("/student/{studentId}/results")
@@ -176,7 +156,9 @@ public class MarkController {
             }
         }
 
-        List<ExamResultDTO> results = markService.getStudentResults(studentId, session);
+        // Students and parents only ever receive PUBLISHED exams; staff also see drafts.
+        boolean includeDrafts = Role.ADMIN.equals(callerRole) || Role.TEACHER.equals(callerRole);
+        List<ExamResultDTO> results = markService.getStudentResults(studentId, session, includeDrafts);
         return ResponseEntity.ok(results);
     }
 
@@ -250,7 +232,7 @@ public class MarkController {
      * See MarkService.getSchoolPerformanceSummary for why "no exam configured" and
      * "exam configured but no marks entered" are kept as separate lists.
      */
-    @PreAuthorize("hasAnyRole('" + Role.ADMIN + "', '" + Role.SUPER_ADMIN + "')")
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
     @GetMapping("/school/performance-summary")
     public ResponseEntity<?> getSchoolPerformanceSummary(@RequestParam String session) {
         log.info("GET /api/marks/school/performance-summary?session={}", session);

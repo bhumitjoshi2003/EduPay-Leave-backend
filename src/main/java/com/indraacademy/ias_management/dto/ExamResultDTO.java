@@ -6,7 +6,8 @@ import java.util.List;
  * Full results for a student in one exam — returned by
  * GET /api/marks/student/{studentId}/results?session=
  *
- * overallRank = 0 means the student has no marks entered for this exam.
+ * percentage/overallRank/grade/passed are null while the result is incomplete (a mark is missing).
+ * overallRank is the competition rank by percentage within the same exam, class and section.
  */
 public class ExamResultDTO {
 
@@ -47,4 +48,24 @@ public class ExamResultDTO {
     public Double getTotalMaxMarks() { return totalMaxMarks; }
     public Double getPercentage() { return percentage; }
     public Integer getOverallRank() { return overallRank; }
+
+    // ── Results Phase 1: canonical result metadata (see ResultCalculator) ──
+    /** DRAFT or PUBLISHED. Students/parents only ever receive PUBLISHED exams. */
+    private String resultStatus;
+    /** False while any applicable subject has no mark; percentage/grade/passed/rank are then null. */
+    private boolean complete;
+    private int marksMissing;
+    private String grade;
+    private Boolean passed;
+
+    public String getResultStatus() { return resultStatus; }
+    public void setResultStatus(String resultStatus) { this.resultStatus = resultStatus; }
+    public boolean isComplete() { return complete; }
+    public void setComplete(boolean complete) { this.complete = complete; }
+    public int getMarksMissing() { return marksMissing; }
+    public void setMarksMissing(int marksMissing) { this.marksMissing = marksMissing; }
+    public String getGrade() { return grade; }
+    public void setGrade(String grade) { this.grade = grade; }
+    public Boolean getPassed() { return passed; }
+    public void setPassed(Boolean passed) { this.passed = passed; }
 }

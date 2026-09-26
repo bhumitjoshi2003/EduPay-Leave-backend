@@ -27,6 +27,9 @@ public class AssessmentGroupController {
 
     @Autowired private AssessmentGroupService groupService;
     @Autowired private WeightageCalculationEngine weightageEngine;
+    @Autowired private com.indraacademy.ias_management.util.SecurityUtil securityUtil;
+    @Autowired private com.indraacademy.ias_management.repository.StudentRepository studentRepository;
+    @Autowired private com.indraacademy.ias_management.service.TeacherClassScopeService teacherClassScopeService;
 
     // ── List all groups for a session + class ──────────────────────────
 
@@ -119,6 +122,18 @@ public class AssessmentGroupController {
             @RequestParam String studentId,
             @RequestParam String session) {
         log.info("GET /api/assessment-groups/{}/compute?studentId={}&session={}", id, studentId, session);
+        // TEACHER: only a student of their own class-teacher class/section (previously unscoped —
+        // any teacher could compute any student's result in the school).
+        if (Role.TEACHER.equals(securityUtil.getRole())) {
+            Long schoolId = securityUtil.getSchoolId();
+            var student = studentRepository.findByStudentIdAndSchoolId(studentId, schoolId).orElse(null);
+            var access = teacherClassScopeService.authorizeAndScopeToStudent(Role.TEACHER, securityUtil.getUsername(),
+                    schoolId, student != null ? student.getClassName() : null, student != null ? student.getSectionId() : null);
+            if (student == null || !access.allowed()) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("message",
+                        access.errorMessage() != null ? access.errorMessage() : "You can only view results for students in your own class."));
+            }
+        }
         try {
             WeightedGroupResultDTO result = weightageEngine.computeForStudent(studentId, id, session);
             return ResponseEntity.ok(result);

@@ -5,7 +5,7 @@ import lombok.Data;
 
 @Entity
 @Table(name = "class_subject",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"class_name", "subject_name"}))
+        uniqueConstraints = @UniqueConstraint(columnNames = {"school_id", "class_name", "subject_name"}))
 @Data
 public class ClassSubject {
 

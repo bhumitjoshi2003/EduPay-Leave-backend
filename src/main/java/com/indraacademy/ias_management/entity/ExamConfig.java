@@ -5,7 +5,7 @@ import lombok.Data;
 
 @Entity
 @Table(name = "exam_config",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"session", "class_name", "exam_name"}))
+        uniqueConstraints = @UniqueConstraint(columnNames = {"school_id", "session", "class_name", "exam_name"}))
 @Data
 public class ExamConfig {
 
@@ -13,7 +13,7 @@ public class ExamConfig {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "school_id")
+    @Column(name = "school_id", nullable = false)
     private Long schoolId;
 
     @Column(name = "session", nullable = false)
@@ -27,6 +27,22 @@ public class ExamConfig {
 
     @Column(name = "exam_name", nullable = false)
     private String examName;
+
+    /** DRAFT until an admin publishes; students/parents only ever see PUBLISHED results (V82). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "result_status", nullable = false, length = 20)
+    private ExamResultStatus resultStatus = ExamResultStatus.DRAFT;
+
+    @Column(name = "published_at")
+    private java.time.LocalDateTime publishedAt;
+
+    @Column(name = "published_by")
+    private String publishedBy;
+
+    @Version
+    private long revision;
+
+    public boolean isPublished() { return resultStatus == ExamResultStatus.PUBLISHED; }
 
     public ExamConfig() {}
 

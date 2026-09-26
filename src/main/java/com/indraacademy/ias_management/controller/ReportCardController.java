@@ -415,6 +415,11 @@ public class ReportCardController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Report card has not been published yet.");
         }
+        // Results Phase 1: an exam's results unpublished after the card was published hide it again.
+        if (!publicationService.draftExamNames(templateId).isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Results for this report card are not published yet.");
+        }
     }
 
     /** Translates the assembler's context-resolution exceptions into the appropriate HTTP

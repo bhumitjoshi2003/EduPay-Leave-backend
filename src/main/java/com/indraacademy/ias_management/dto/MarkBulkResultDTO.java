@@ -23,11 +23,23 @@ public class MarkBulkResultDTO {
         private String studentId;
         private String reason;
 
+        /** Position of the rejected entry in the request and its subject entry (Results Phase 1). */
+        private Integer index;
+        private Long examSubjectEntryId;
+
         public MarkError(String studentId, String reason) {
             this.studentId = studentId;
             this.reason = reason;
         }
 
+        public MarkError(int index, String studentId, Long examSubjectEntryId, String reason) {
+            this(studentId, reason);
+            this.index = index;
+            this.examSubjectEntryId = examSubjectEntryId;
+        }
+
+        public Integer getIndex() { return index; }
+        public Long getExamSubjectEntryId() { return examSubjectEntryId; }
         public String getStudentId() { return studentId; }
         public String getReason() { return reason; }
     }

@@ -1,6 +1,8 @@
 package com.indraacademy.ias_management.service;
 
 import com.indraacademy.ias_management.entity.ExamConfig;
+import com.indraacademy.ias_management.entity.ExamResultStatus;
+import com.indraacademy.ias_management.repository.AssessmentGroupExamMappingRepository;
 import com.indraacademy.ias_management.entity.ExamSubjectEntry;
 import com.indraacademy.ias_management.repository.ClassSubjectRepository;
 import com.indraacademy.ias_management.repository.ExamConfigRepository;
@@ -35,6 +37,10 @@ public class ExamConfigService {
     @Autowired private StudentMarkRepository studentMarkRepository;
     @Autowired private ClassSubjectRepository classSubjectRepository;
     @Autowired private SecurityUtil securityUtil;
+    @Autowired private AssessmentGroupExamMappingRepository assessmentGroupExamMappingRepository;
+    @Autowired private AuditService auditService;
+    @Autowired private com.indraacademy.ias_management.repository.AcademicSessionRepository academicSessionRepository;
+    @Autowired private com.indraacademy.ias_management.repository.SchoolClassRepository schoolClassRepository;
 
     // ─── ExamConfig ───────────────────────────────────────────────────────────
 
@@ -60,6 +66,15 @@ public class ExamConfigService {
             throw new IllegalArgumentException("session, className, and examName are required.");
         }
         Long schoolId = securityUtil.getSchoolId();
+        session = session.trim();
+        className = className.trim();
+        examName = examName.trim();
+        if (academicSessionRepository.findBySchoolIdAndLabel(schoolId, session).isEmpty()) {
+            throw new IllegalArgumentException("Academic session " + session + " does not exist in your school.");
+        }
+        com.indraacademy.ias_management.entity.SchoolClass schoolClass = schoolClassRepository.findBySchoolIdAndName(schoolId, className)
+                .orElse(null);
+        if (schoolClass == null) throw new IllegalArgumentException("Class " + className + " does not exist in your school.");
         if (examConfigRepository.existsBySessionAndClassNameAndExamNameAndSchoolId(session, className, examName, schoolId)) {
             throw new IllegalArgumentException(
                     "Exam '" + examName + "' already exists for class " + className
@@ -70,29 +85,105 @@ public class ExamConfigService {
         config.setClassName(className);
         config.setExamName(examName);
         config.setSchoolId(schoolId);
+        config.setClassId(schoolClass.getId());
         ExamConfig saved = examConfigRepository.save(config);
         log.info("Created ExamConfig id={} ({} / {} / {})", saved.getId(), session, className, examName);
         return saved;
     }
 
+    /**
+     * Deletes an exam that holds no results. An exam with marks, a published result, or a place in
+     * a report-card assessment group is refused — marks are never wiped as a side effect of one
+     * delete confirmation (the database also RESTRICTs it, V82).
+     */
     @CacheEvict(value = "exam-config", allEntries = true)
     @Transactional
     public void deleteExam(Long id) {
         Long schoolId = securityUtil.getSchoolId();
-        ExamConfig exam = examConfigRepository.findById(id)
-                .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + id));
-        if (!schoolId.equals(exam.getSchoolId())) {
-            throw new SecurityException("Access denied: exam does not belong to your school.");
+        ExamConfig exam = ownedExam(id, schoolId);
+        if (exam.isPublished()) {
+            throw new IllegalStateException("Unpublish the results of '" + exam.getExamName() + "' before deleting the exam.");
         }
-        // Delete all marks referencing this exam's subject entries first
         List<ExamSubjectEntry> entries = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(id, schoolId);
-        if (!entries.isEmpty()) {
-            List<Long> entryIds = entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList());
-            studentMarkRepository.deleteByExamSubjectEntryIdInAndSchoolId(entryIds, schoolId);
+        long marks = entries.isEmpty() ? 0 : studentMarkRepository.countByExamSubjectEntryIdInAndSchoolId(
+                entries.stream().map(ExamSubjectEntry::getId).collect(Collectors.toList()), schoolId);
+        if (marks > 0) {
+            throw new IllegalStateException("'" + exam.getExamName() + "' already has " + marks
+                    + " mark(s) entered, so it cannot be deleted. Marks are never deleted automatically.");
+        }
+        if (assessmentGroupExamMappingRepository.existsByExamConfigIdAndSchoolId(id, schoolId)) {
+            throw new IllegalStateException("'" + exam.getExamName()
+                    + "' is used by a report-card assessment group. Remove it from the group first.");
         }
         examSubjectEntryRepository.deleteByExamConfigIdAndSchoolId(id, schoolId);
-        examConfigRepository.deleteById(id);
-        log.info("Deleted ExamConfig id={}, its subject entries, and related marks", id);
+        examConfigRepository.delete(exam);
+        log.info("Deleted ExamConfig id={} (no marks)", id);
+    }
+
+    // ─── Result publishing ────────────────────────────────────────────────────
+
+    /** ADMIN: makes the exam's results visible to students and parents and locks its marks. */
+    @CacheEvict(value = "exam-config", allEntries = true)
+    @Transactional
+    public ExamConfig publishResults(Long id, String ipAddress) {
+        Long schoolId = securityUtil.getSchoolId();
+        ExamConfig exam = ownedExam(id, schoolId);
+        if (exam.isPublished()) return exam;
+        if (examSubjectEntryRepository.findByExamConfigIdAndSchoolId(id, schoolId).isEmpty()) {
+            throw new IllegalStateException("Add subjects to '" + exam.getExamName() + "' before publishing its results.");
+        }
+        exam.setResultStatus(ExamResultStatus.PUBLISHED);
+        exam.setPublishedAt(java.time.LocalDateTime.now());
+        exam.setPublishedBy(securityUtil.getUsername());
+        ExamConfig saved = examConfigRepository.save(exam);
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "PUBLISH_EXAM_RESULTS", "ExamConfig",
+                String.valueOf(id), "DRAFT", "PUBLISHED", ipAddress);
+        return saved;
+    }
+
+    /** ADMIN: hides the exam's results from students and parents again and unlocks marks. */
+    @CacheEvict(value = "exam-config", allEntries = true)
+    @Transactional
+    public ExamConfig unpublishResults(Long id, String ipAddress) {
+        Long schoolId = securityUtil.getSchoolId();
+        ExamConfig exam = ownedExam(id, schoolId);
+        if (!exam.isPublished()) return exam;
+        exam.setResultStatus(ExamResultStatus.DRAFT);
+        exam.setPublishedAt(null);
+        exam.setPublishedBy(null);
+        ExamConfig saved = examConfigRepository.save(exam);
+        auditService.log(securityUtil.getUsername(), securityUtil.getRole(), "UNPUBLISH_EXAM_RESULTS", "ExamConfig",
+                String.valueOf(id), "PUBLISHED", "DRAFT", ipAddress);
+        return saved;
+    }
+
+    private ExamConfig ownedExam(Long id, Long schoolId) {
+        return examConfigRepository.findById(id)
+                .filter(e -> schoolId != null && schoolId.equals(e.getSchoolId()))
+                .orElseThrow(() -> new NoSuchElementException("ExamConfig not found: " + id));
+    }
+
+    private static void requireDraft(ExamConfig exam) {
+        if (exam.isPublished()) {
+            throw new IllegalStateException("Results of '" + exam.getExamName()
+                    + "' are published. Unpublish them before changing the exam's subjects.");
+        }
+    }
+
+    private void requireNoMarks(ExamSubjectEntry entry, Long schoolId, String action) {
+        long marks = studentMarkRepository.countByExamSubjectEntryIdInAndSchoolId(List.of(entry.getId()), schoolId);
+        if (marks > 0) {
+            throw new IllegalStateException("'" + entry.getSubjectName() + "' already has " + marks
+                    + " mark(s) entered, so it cannot be " + action + ". Marks are never deleted automatically.");
+        }
+    }
+
+    private void requireMaxNotBelowMarks(ExamSubjectEntry entry, int newMax, Long schoolId) {
+        Double highest = studentMarkRepository.findHighestMark(entry.getId(), schoolId);
+        if (highest != null && highest > newMax) {
+            throw new IllegalStateException("Max marks for '" + entry.getSubjectName() + "' cannot be below the highest mark already entered ("
+                    + (highest % 1 == 0 ? String.valueOf(highest.intValue()) : String.valueOf(highest)) + ").");
+        }
     }
 
     // ─── ExamSubjectEntry ─────────────────────────────────────────────────────
@@ -119,6 +210,7 @@ public class ExamConfigService {
             throw new SecurityException("Access denied: exam does not belong to your school.");
         }
 
+        requireDraft(exam);
         if (subjectName == null || subjectName.isBlank()) {
             throw new IllegalArgumentException("subjectName is required.");
         }
@@ -156,8 +248,10 @@ public class ExamConfigService {
         ExamSubjectEntry entry = examSubjectEntryRepository.findByIdAndSchoolId(entryId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("ExamSubjectEntry not found: " + entryId));
 
+        requireDraft(ownedExam(entry.getExamConfigId(), schoolId));
         if (maxMarks != null) {
             if (maxMarks <= 0) throw new IllegalArgumentException("maxMarks must be positive.");
+            requireMaxNotBelowMarks(entry, maxMarks, schoolId);
             entry.setMaxMarks(maxMarks);
         }
         if (examDate != null) {
@@ -174,8 +268,9 @@ public class ExamConfigService {
         Long schoolId = securityUtil.getSchoolId();
         ExamSubjectEntry entry = examSubjectEntryRepository.findByIdAndSchoolId(entryId, schoolId)
                 .orElseThrow(() -> new NoSuchElementException("ExamSubjectEntry not found: " + entryId));
-        studentMarkRepository.deleteByExamSubjectEntryIdAndSchoolId(entryId, schoolId);
-        examSubjectEntryRepository.deleteById(entryId);
+        requireDraft(ownedExam(entry.getExamConfigId(), schoolId));
+        requireNoMarks(entry, schoolId, "removed");
+        examSubjectEntryRepository.delete(entry);
         log.info("Deleted ExamSubjectEntry id={}", entryId);
     }
 
@@ -197,6 +292,7 @@ public class ExamConfigService {
             throw new SecurityException("Access denied: exam does not belong to your school.");
         }
 
+        requireDraft(exam);
         List<ExamSubjectEntry> existing = examSubjectEntryRepository.findByExamConfigIdAndSchoolId(examId, schoolId);
         Map<String, ExamSubjectEntry> existingByName = new HashMap<>();
         for (ExamSubjectEntry e : existing) {
@@ -217,6 +313,7 @@ public class ExamConfigService {
             ExamSubjectEntry entry = existingByName.get(name);
             if (entry != null) {
                 // Update existing
+                requireMaxNotBelowMarks(entry, req.maxMarks, schoolId);
                 entry.setMaxMarks(req.maxMarks);
                 entry.setExamDate(req.examDate);
                 result.add(examSubjectEntryRepository.save(entry));
@@ -235,8 +332,8 @@ public class ExamConfigService {
         // Remove subjects that were in the exam but not in the incoming list
         for (ExamSubjectEntry e : existing) {
             if (!incomingNames.contains(e.getSubjectName())) {
-                studentMarkRepository.deleteByExamSubjectEntryIdAndSchoolId(e.getId(), schoolId);
-                examSubjectEntryRepository.deleteById(e.getId());
+                requireNoMarks(e, schoolId, "removed");
+                examSubjectEntryRepository.delete(e);
             }
         }
 
