@@ -3,6 +3,7 @@ package com.indraacademy.ias_management.controller;
 import com.indraacademy.ias_management.config.Role;
 import com.indraacademy.ias_management.dto.AttendanceSheetDtos.SheetView;
 import com.indraacademy.ias_management.dto.AttendanceSheetDtos.SubmitRequest;
+import com.indraacademy.ias_management.dto.AttendanceInsightsDtos;
 import com.indraacademy.ias_management.dto.AttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ClassAttendanceSummaryDTO;
 import com.indraacademy.ias_management.dto.ConsecutiveAbsenceDTO;
@@ -11,6 +12,7 @@ import com.indraacademy.ias_management.entity.Student;
 import com.indraacademy.ias_management.repository.SchoolRepository;
 import com.indraacademy.ias_management.repository.StudentRepository;
 import com.indraacademy.ias_management.service.AbsenceChargeService;
+import com.indraacademy.ias_management.service.AttendanceInsightsService;
 import com.indraacademy.ias_management.service.AttendanceService;
 import com.indraacademy.ias_management.service.AuthService;
 import com.indraacademy.ias_management.service.ParentPortalService;
@@ -45,6 +47,7 @@ public class AttendanceController {
 
     @Autowired private AttendanceService attendanceService;
     @Autowired private AbsenceChargeService absenceChargeService;
+    @Autowired private AttendanceInsightsService attendanceInsightsService;
     @Autowired private AuthService authService;
     @Autowired private StudentRepository studentRepository;
     @Autowired private SchoolRepository schoolRepository;
@@ -208,6 +211,38 @@ public class AttendanceController {
             if (rangeError != null) return rangeError;
         }
         return ResponseEntity.ok(attendanceService.getSchoolSummary(type, month, year, session));
+    }
+
+    // ─── Insights (read-only, current session) ───────────────────────────
+
+    /** The signed-in student's own attendance insights. */
+    @PreAuthorize("hasRole('" + Role.STUDENT + "')")
+    @GetMapping("/insights/me")
+    public AttendanceInsightsDtos.StudentInsights getMyInsights() {
+        return attendanceInsightsService.studentInsights(authService.getUserId());
+    }
+
+    /** One student's insights — same access rules as the other per-student endpoints (own/linked child/own class). */
+    @GetMapping("/insights/student/{studentId}")
+    public ResponseEntity<?> getStudentInsights(@PathVariable String studentId) {
+        ResponseEntity<?> deniedResponse = checkStudentDataAccess(studentId);
+        if (deniedResponse != null) return deniedResponse;
+        return ResponseEntity.ok(attendanceInsightsService.studentInsights(studentId));
+    }
+
+    /** A teacher's own class-teacher class/section — no class or section parameters are accepted. */
+    @PreAuthorize("hasRole('" + Role.TEACHER + "')")
+    @GetMapping("/insights/class")
+    public AttendanceInsightsDtos.ClassInsights getMyClassInsights() {
+        return attendanceInsightsService.teacherClassInsights();
+    }
+
+    /** An admin's insights for one class of their school (sectionId omitted = the whole class). */
+    @PreAuthorize("hasRole('" + Role.ADMIN + "')")
+    @GetMapping("/insights/class/{classId}")
+    public AttendanceInsightsDtos.ClassInsights getClassInsights(@PathVariable Long classId,
+                                                                 @RequestParam(required = false) Long sectionId) {
+        return attendanceInsightsService.adminClassInsights(classId, sectionId);
     }
 
     /**

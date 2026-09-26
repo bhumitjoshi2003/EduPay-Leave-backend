@@ -330,14 +330,7 @@ public class AttendanceService {
 
         LocalDate today = schoolToday(requireSchoolEntity(schoolId));
         int lookback = lookbackDays != null && lookbackDays > 0 ? lookbackDays : DEFAULT_ABSENCE_LOOKBACK_DAYS;
-        List<Long> scopeSections = new ArrayList<>();
-        if (sectionId != null) {
-            scopeSections.add(sectionId);
-        } else {
-            List<Section> classSections = sections.findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(schoolId, cls.get().getId(), true);
-            if (classSections.isEmpty()) scopeSections.add(null);
-            else classSections.forEach(s -> scopeSections.add(s.getId()));
-        }
+        Map<String, AbsenceStreak> streaks = currentAbsenceStreaks(schoolId, cls.get().getId(), sectionId, current, today, lookback);
 
         Map<String, ClassAttendanceSummaryDTO> cumulative = new HashMap<>();
         if (session != null && !session.isBlank()) {
@@ -346,19 +339,61 @@ public class AttendanceService {
             }
         }
 
+        List<String> flagged = streaks.entrySet().stream()
+                .filter(e -> e.getValue().dates().size() >= minConsecutiveDays).map(Map.Entry::getKey).toList();
+        Map<String, String> names = studentNames(schoolId, flagged);
         List<ConsecutiveAbsenceDTO> result = new ArrayList<>();
+        for (String studentId : flagged) {
+            AbsenceStreak streak = streaks.get(studentId);
+            ClassAttendanceSummaryDTO total = cumulative.get(studentId);
+            result.add(new ConsecutiveAbsenceDTO(studentId, names.get(studentId), className, streak.dates().size(),
+                    streak.dates().stream().map(LocalDate::toString).toList(),
+                    streak.approvedLeaveDates().stream().map(LocalDate::toString).toList(),
+                    total != null ? total.getTotalWorkingDays() : 0, total != null ? total.getDaysPresent() : 0,
+                    total != null ? total.getDaysAbsent() : 0, total != null ? total.getAttendancePercentage() : 0.0));
+        }
+        result.sort(Comparator.comparingInt(ConsecutiveAbsenceDTO::getConsecutiveAbsentDays).reversed());
+        return result;
+    }
+
+    /** A student's trailing run of ABSENT submitted days (oldest first) and the ones covered by approved leave. */
+    public record AbsenceStreak(List<LocalDate> dates, List<LocalDate> approvedLeaveDates) {
+        public static final AbsenceStreak NONE = new AbsenceStreak(List.of(), List.of());
+    }
+
+    /**
+     * The current absence streak of every student currently enrolled in a class (sectionId null =
+     * each of its sections, or the class itself when it has none), walking back through that
+     * class/section's own submissions within the lookback window. A PRESENT day or a submitted day
+     * without a row for the student ends the streak; approved leave is still absent. Bulk: a few
+     * queries per section, never per student.
+     */
+    public Map<String, AbsenceStreak> currentAbsenceStreaks(Long schoolId, Long classId, Long sectionId,
+                                                            AcademicSession current, LocalDate today, int lookbackDays) {
+        List<Long> scopeSections = new ArrayList<>();
+        if (sectionId != null) {
+            scopeSections.add(sectionId);
+        } else {
+            List<Section> classSections = sections.findBySchoolIdAndClassIdAndActiveOrderByDisplayOrderAsc(schoolId, classId, true);
+            if (classSections.isEmpty()) scopeSections.add(null);
+            else classSections.forEach(s -> scopeSections.add(s.getId()));
+        }
+        Map<String, AbsenceStreak> result = new LinkedHashMap<>();
         for (Long scopeSection : scopeSections) {
-            List<AttendanceSession> days = submissions.findForScopeBetweenDesc(schoolId, cls.get().getId(), scopeSection,
-                    today.minusDays(lookback), today);
-            if (days.size() < minConsecutiveDays) continue;
+            List<String> roster = enrollments.findActiveRosterStudentIds(schoolId, current.getId(), classId, scopeSection, today);
+            if (roster.isEmpty()) continue;
+            List<AttendanceSession> days = submissions.findForScopeBetweenDesc(schoolId, classId, scopeSection,
+                    today.minusDays(lookbackDays), today);
+            if (days.isEmpty()) {
+                roster.forEach(id -> result.put(id, AbsenceStreak.NONE));
+                continue;
+            }
             Map<Long, Map<String, AttendanceStatus>> bySubmission = new HashMap<>();
             for (StudentAttendance row : rows.findByAttendanceSessionIdIn(days.stream().map(AttendanceSession::getId).toList())) {
                 bySubmission.computeIfAbsent(row.getAttendanceSession().getId(), k -> new HashMap<>())
                         .put(row.getStudentId(), row.getStatus());
             }
             Set<String> leave = approvedLeaveKeys(schoolId, days.get(days.size() - 1).getAttendanceDate(), today);
-            List<String> roster = enrollments.findActiveRosterStudentIds(schoolId, current.getId(), cls.get().getId(), scopeSection, today);
-            Map<String, String> names = studentNames(schoolId, roster);
             for (String studentId : roster) {
                 List<LocalDate> streak = new ArrayList<>();
                 for (AttendanceSession day : days) {
@@ -366,17 +401,11 @@ public class AttendanceService {
                     if (status != AttendanceStatus.ABSENT) break;   // PRESENT or no row: the streak ends
                     streak.add(day.getAttendanceDate());
                 }
-                if (streak.size() < minConsecutiveDays) continue;
                 Collections.reverse(streak);
-                ClassAttendanceSummaryDTO total = cumulative.get(studentId);
-                result.add(new ConsecutiveAbsenceDTO(studentId, names.get(studentId), className, streak.size(),
-                        streak.stream().map(LocalDate::toString).toList(),
-                        streak.stream().filter(d -> leave.contains(leaveKey(studentId, d))).map(LocalDate::toString).toList(),
-                        total != null ? total.getTotalWorkingDays() : 0, total != null ? total.getDaysPresent() : 0,
-                        total != null ? total.getDaysAbsent() : 0, total != null ? total.getAttendancePercentage() : 0.0));
+                result.put(studentId, new AbsenceStreak(List.copyOf(streak),
+                        streak.stream().filter(d -> leave.contains(leaveKey(studentId, d))).toList()));
             }
         }
-        result.sort(Comparator.comparingInt(ConsecutiveAbsenceDTO::getConsecutiveAbsentDays).reversed());
         return result;
     }
 
@@ -580,7 +609,7 @@ public class AttendanceService {
     }
 
     /** Per-student counts for a school (classId null), class (sectionId null) or section, in two bulk queries. */
-    private Map<String, Counts> countsByStudent(Long schoolId, Long classId, Long sectionId, LocalDate from, LocalDate to) {
+    public Map<String, Counts> countsByStudent(Long schoolId, Long classId, Long sectionId, LocalDate from, LocalDate to) {
         if (to.isBefore(from)) return Map.of();
         Map<String, long[]> tally = new HashMap<>();
         for (AttendanceStatusCount c : rows.countByStudentAndStatus(schoolId, classId, sectionId, from, to)) {

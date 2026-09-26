@@ -28,6 +28,7 @@ class AttendanceControllerScopeTest {
 
     @Mock private AttendanceService attendanceService;
     @Mock private AbsenceChargeService absenceChargeService;
+    @Mock private com.indraacademy.ias_management.service.AttendanceInsightsService attendanceInsightsService;
     @Mock private AuthService authService;
     @Mock private StudentRepository studentRepository;
     @Mock private SecurityUtil securityUtil;
@@ -103,5 +104,16 @@ class AttendanceControllerScopeTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).containsEntry("message",
                 "Invalid attendance request. Each student's status must be PRESENT or ABSENT.");
+    }
+
+    @Test
+    void studentInsightsFollowTheSamePerStudentAccessRules() {
+        when(authService.getRole()).thenReturn("STUDENT");
+        when(authService.getUserId()).thenReturn("S1");
+        assertThat(controller.getStudentInsights("S2").getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        verifyNoInteractions(attendanceInsightsService);
+
+        controller.getMyInsights();
+        verify(attendanceInsightsService).studentInsights("S1");   // /me is always the caller's own id
     }
 }
